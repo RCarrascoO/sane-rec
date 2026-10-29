@@ -1,14 +1,57 @@
-// sane-rec: Material Design 3 (M3 Expressive) Main Window
+// sane-rec: Material Design 3 (M3 Expressive) Main Window with Navigation Rail
 import { M3Theme } from "theme.slint";
-import { M3Card, M3Button, M3Switch, M3StatusChip, M3ProfileTile, M3SegmentItem, M3PresetChip } from "components.slint";
+import {
+    M3Card,
+    M3Button,
+    M3Switch,
+    M3StatusChip,
+    M3ProfileTile,
+    M3SegmentItem,
+    M3PresetChip,
+    M3NavItem,
+    M3NavigationRail,
+    M3MetricTile,
+    M3OptionItem,
+    M3DropdownCard,
+    M3ClipCard
+} from "components.slint";
 import { ScrollView, Slider } from "std-widgets.slint";
+
+export struct ClipEntry {
+    filename: string,
+    file-size: string,
+    date-text: string,
+    duration-text: string,
+    filepath: string,
+}
+
+export struct OutputEntry {
+    name: string,
+    description: string,
+    badge: string,
+    resolution: string,
+}
+
+export struct WindowEntry {
+    id: int,
+    title: string,
+    app-id: string,
+    badge: string,
+}
+
+export struct AudioDeviceEntry {
+    name: string,
+    description: string,
+    badge: string,
+    is-default: bool,
+}
 
 export component AppWindow inherits Window {
     title: "sane-rec — Instant Replay & Screen Recorder";
-    min-width: 640px;
-    preferred-width: 760px;
-    min-height: 600px;
-    preferred-height: 840px;
+    min-width: 880px;
+    preferred-width: 1000px;
+    min-height: 640px;
+    preferred-height: 740px;
     background: M3Theme.surface;
     default-font-family: M3Theme.font-family;
 
@@ -17,616 +60,1209 @@ export component AppWindow inherits Window {
     // -------------------------------------------------------------------------
     callback save-clip();
     callback toggle-replay();
+    callback toggle-recording();
     callback select-output-dir();
     callback select-profile(string);
+    callback play-clip(string);
+    callback open-clip-folder(string);
+    callback open-output-folder();
+    callback refresh-windows();
+    callback select-area-slurp();
+    callback refresh-gallery();
+    callback select-screen(string, string);
+    callback select-window(string, string);
+    callback select-audio-sink(string);
+    callback select-audio-mic(string);
 
     // -------------------------------------------------------------------------
     // Propiedades públicas para bindings con Rust
     // -------------------------------------------------------------------------
+    in-out property <int> active-view: 0; // 0: Dashboard, 1: Fuentes, 2: Audio, 3: Ajustes, 4: Galería
+
     in-out property <string> active-profile: "sane-safe";
     in-out property <bool> is-running: false;
+    in-out property <bool> is-recording: false;
     in-out property <string> buffer-status: "Detenido";
     in-out property <string> output-path: "/mnt/Files/Videos/Replays";
     in-out property <int> replay-duration: 30;
     in-out property <string> selected-format: "mp4";
 
-    // Propiedades auxiliares de configuración y métricas
+    // Video y captura
     in-out property <string> selected-screen: "DVI-D-1";
+    in-out property <int> capture-mode: 0; // 0: Monitor, 1: Ventana, 2: Área (slurp)
+    in-out property <int> selected-fps: 60;
+    in-out property <string> selected-resolution: "1360x768";
+    in-out property <string> selected-window: "Zen Browser";
+
+    // Audio
     in-out property <bool> audio-system: true;
     in-out property <bool> audio-mic: false;
+    in-out property <string> audio-sink: "PipeWire Default Sink";
+    in-out property <string> audio-mic-source: "USB PnP Audio Device";
+    in-out property <int> audio-track-mode: 0; // 0: Pista única combinada, 1: Pistas separadas
+    in-out property <float> volume-system: 1.0;
+    in-out property <float> volume-mic: 0.85;
+
+    // Métricas y estado
     in-out property <string> ram-usage: "~28 MB";
     in-out property <string> last-saved-clip: "";
 
-    ScrollView {
-        VerticalLayout {
-            padding-left: M3Theme.space-xxl;
-            padding-right: M3Theme.space-xxl;
-            padding-top: M3Theme.space-xl;
-            padding-bottom: M3Theme.space-xxl;
-            spacing: 20px;
+    // Estado desplegable interno para dropdowns
+    property <bool> sink-dropdown-open: false;
+    property <bool> mic-dropdown-open: false;
 
-            // =================================================================
-            // 1. Cabecera M3 / Top Bar
-            // =================================================================
-            HorizontalLayout {
-                alignment: space-between;
+    // Lista de clips para la galería
+    in-out property <[ClipEntry]> gallery-clips: [
+        {
+            filename: "replay_2026-10-29_19-20-15.mp4",
+            file-size: "38.2 MB",
+            date-text: "Hoy, 19:20",
+            duration-text: "00:30",
+            filepath: "/mnt/Files/Videos/Replays/replay_2026-10-29_19-20-15.mp4"
+        },
+        {
+            filename: "recording_2026-10-29_18-45-00.mp4",
+            file-size: "142.8 MB",
+            date-text: "Hoy, 18:45",
+            duration-text: "02:15",
+            filepath: "/mnt/Files/Videos/Replays/recording_2026-10-29_18-45-00.mp4"
+        }
+    ];
 
-                HorizontalLayout {
-                    spacing: 14px;
-                    alignment: start;
+    // Modelos dinámicos descubiertos en Wayland / PipeWire
+    in-out property <[OutputEntry]> available-screens: [
+        { name: "DVI-D-1", description: "DVI-D-1 [1360x768 @ 60Hz]", badge: "Principal", resolution: "1360x768" },
+        { name: "HDMI-A-1", description: "HDMI-A-1 [1366x768 @ 60Hz]", badge: "Secundario", resolution: "1366x768" }
+    ];
 
-                    // Logo Icon Container
-                    Rectangle {
-                        width: 44px;
-                        height: 44px;
-                        border-radius: 22px;
-                        background: M3Theme.primary-container;
+    in-out property <[WindowEntry]> available-windows: [
+        { id: 1, title: "Zen Browser — Navegador web", app-id: "zen", badge: "Ventana" },
+        { id: 2, title: "Discord — Canal de voz", app-id: "discord", badge: "Ventana" },
+        { id: 3, title: "Counter-Strike 2 — Videojuego", app-id: "cs2", badge: "Juego Fullscreen" },
+        { id: 4, title: "Alacritty — Terminal Wayland", app-id: "alacritty", badge: "Ventana" }
+    ];
 
-                        Text {
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            text: "⏺";
-                            font-size: 22px;
-                            color: M3Theme.primary;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
-                        }
-                    }
+    in-out property <[AudioDeviceEntry]> available-sinks: [
+        { name: "PipeWire Default Sink", description: "PipeWire Default Sink (Salida analógica estéreo)", badge: "Por defecto", is-default: true },
+        { name: "HDMI / DisplayPort", description: "Salida digital HDMI / DisplayPort", badge: "Digital", is-default: false }
+    ];
 
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 2px;
+    in-out property <[AudioDeviceEntry]> available-mics: [
+        { name: "USB PnP Audio Device", description: "USB PnP Audio Device (Micrófono USB)", badge: "Conectado", is-default: true },
+        { name: "Webcam C920", description: "Webcam C920 Stereo Microphone", badge: "Webcam", is-default: false },
+        { name: "Front Mic", description: "Entrada analógica frontal (Front Mic)", badge: "Jack 3.5mm", is-default: false },
+        { name: "Desactivado", description: "Desactivado (Solo audio de juego)", badge: "Mudo", is-default: false }
+    ];
 
-                        Text {
-                            text: "sane-rec";
-                            font-size: M3Theme.font-headline;
-                            font-weight: 800;
-                            color: M3Theme.on-surface;
-                        }
+    HorizontalLayout {
+        // =====================================================================
+        // 1. Navigation Rail Lateral Izquierdo
+        // =====================================================================
+        M3NavigationRail {
+            active-view <=> root.active-view;
+        }
 
-                        Text {
-                            text: "v0.1.0 • Wayland / niri Instant Replay";
-                            font-size: M3Theme.font-label-medium;
-                            color: M3Theme.on-surface-variant;
-                        }
-                    }
-                }
+        // =====================================================================
+        // 2. Contenedor Dinámico Principal (Vistas 0 a 4)
+        // =====================================================================
+        Rectangle {
+            background: M3Theme.surface;
+            horizontal-stretch: 1;
+            clip: true;
 
-                // Status Chip en vivo
-                M3StatusChip {
-                    y: (parent.height - self.height) / 2;
-                    text: root.is-running ?
-                        (root.buffer-status == "Detenido" ? "Búfer Activo" : root.buffer-status) :
-                        "Detenido";
-                    status: root.is-running ? "active" : "idle";
-                }
-            }
-
-            // =================================================================
-            // 2. Hero Card: Estado del Replay en RAM
-            // =================================================================
-            M3Card {
-                card-background: M3Theme.surface-container-high;
-                card-border-color: root.is-running ?
-                    M3Theme.primary.with-alpha(0.35) :
-                    M3Theme.outline-variant.with-alpha(0.2);
-                card-border-width: 1.5px;
-
+            ScrollView {
                 VerticalLayout {
-                    spacing: 18px;
+                    padding-left: M3Theme.space-xxl;
+                    padding-right: M3Theme.space-xxl;
+                    padding-top: M3Theme.space-xl;
+                    padding-bottom: M3Theme.space-xxl;
+                    spacing: 20px;
 
-                    // Fila superior: Indicadores de búfer y memoria
-                    HorizontalLayout {
-                        alignment: space-between;
+                    // ---------------------------------------------------------
+                    // VISTA 0: DASHBOARD (Monitor en vivo)
+                    // ---------------------------------------------------------
+                    if root.active-view == 0: VerticalLayout {
+                        spacing: 20px;
 
+                        // Header Dashboard
                         HorizontalLayout {
-                            spacing: 14px;
-                            alignment: start;
+                            alignment: space-between;
 
-                            // Icono circular de memoria RAM
-                            Rectangle {
-                                width: 48px;
-                                height: 48px;
-                                border-radius: 24px;
-                                background: root.is-running ?
-                                    M3Theme.primary.with-alpha(0.18) :
-                                    M3Theme.surface-container-highest;
-                                y: (parent.height - self.height) / 2;
-
+                            VerticalLayout {
+                                spacing: 2px;
                                 Text {
-                                    x: (parent.width - self.width) / 2;
-                                    y: (parent.height - self.height) / 2;
-                                    text: "🧠";
-                                    font-size: 20px;
+                                    text: "PANEL DE CONTROL";
+                                    font-size: M3Theme.font-title-large;
+                                    font-weight: 800;
+                                    color: M3Theme.on-surface;
+                                }
+                                Text {
+                                    text: "Monitor en vivo del búfer de repetición y estado del sistema";
+                                    font-size: M3Theme.font-body-small;
+                                    color: M3Theme.on-surface-variant;
                                 }
                             }
 
+                            M3StatusChip {
+                                y: (parent.height - self.height) / 2;
+                                text: root.is-recording ? "Grabando Continuo" :
+                                      root.is-running ? (root.buffer-status == "Detenido" ? "Búfer Activo" : root.buffer-status) :
+                                      "Detenido";
+                                status: root.is-recording ? "recording" :
+                                        root.is-running ? "active" : "idle";
+                            }
+                        }
+
+                        // Hero Card: Estado en vivo del Replay en RAM
+                        M3Card {
+                            card-background: M3Theme.surface-container-high;
+                            card-border-color: root.is-running ?
+                                M3Theme.primary.with-alpha(0.4) :
+                                M3Theme.outline-variant.with-alpha(0.25);
+                            card-border-width: 1.5px;
+
                             VerticalLayout {
-                                alignment: center;
-                                spacing: 3px;
+                                spacing: 18px;
 
-                                Text {
-                                    text: "Búfer en Memoria RAM";
-                                    font-size: M3Theme.font-label-medium;
-                                    font-weight: 600;
-                                    color: M3Theme.on-surface-variant;
-                                }
-
+                                // Fila superior: Indicadores de búfer y memoria
                                 HorizontalLayout {
-                                    spacing: 8px;
-                                    alignment: start;
+                                    alignment: space-between;
 
-                                    Text {
-                                        text: root.is-running ?
-                                            (root.replay-duration + "s / " + root.replay-duration + "s") :
-                                            ("0s / " + root.replay-duration + "s");
-                                        font-size: 22px;
-                                        font-weight: 800;
-                                        color: root.is-running ? M3Theme.primary : M3Theme.on-surface;
+                                    HorizontalLayout {
+                                        spacing: 14px;
+                                        alignment: start;
+
+                                        // Icono circular
+                                        Rectangle {
+                                            width: 48px;
+                                            height: 48px;
+                                            border-radius: 24px;
+                                            background: root.is-running ?
+                                                M3Theme.primary.with-alpha(0.18) :
+                                                M3Theme.surface-container-highest;
+                                            y: (parent.height - self.height) / 2;
+
+                                            Text {
+                                                x: (parent.width - self.width) / 2;
+                                                y: (parent.height - self.height) / 2;
+                                                text: "🧠";
+                                                font-size: 22px;
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 3px;
+
+                                            Text {
+                                                text: "Búfer de Repetición en Memoria RAM";
+                                                font-size: M3Theme.font-label-medium;
+                                                font-weight: 600;
+                                                color: M3Theme.on-surface-variant;
+                                            }
+
+                                            HorizontalLayout {
+                                                spacing: 10px;
+                                                alignment: start;
+
+                                                Text {
+                                                    text: root.is-running ?
+                                                        (root.replay-duration + "s / " + root.replay-duration + "s") :
+                                                        ("0s / " + root.replay-duration + "s");
+                                                    font-size: 22px;
+                                                    font-weight: 800;
+                                                    color: root.is-running ? M3Theme.primary : M3Theme.on-surface;
+                                                }
+
+                                                Rectangle {
+                                                    height: 22px;
+                                                    border-radius: 11px;
+                                                    background: root.is-running ?
+                                                        M3Theme.secondary-container :
+                                                        M3Theme.surface-container-highest;
+                                                    y: (parent.height - self.height) / 2;
+
+                                                    HorizontalLayout {
+                                                        padding-left: 8px;
+                                                        padding-right: 8px;
+                                                        Text {
+                                                            text: root.is-running ? root.ram-usage : "0 MB";
+                                                            font-size: M3Theme.font-label-small;
+                                                            font-weight: 700;
+                                                            vertical-alignment: center;
+                                                            color: root.is-running ?
+                                                                M3Theme.on-secondary-container :
+                                                                M3Theme.on-surface-variant;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
 
-                                    Rectangle {
-                                        height: 22px;
-                                        border-radius: 11px;
-                                        background: root.is-running ?
-                                            M3Theme.secondary-container :
-                                            M3Theme.surface-container-highest;
-                                        y: (parent.height - self.height) / 2;
+                                    // Switch de activación del daemon
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        alignment: end;
 
-                                        HorizontalLayout {
-                                            padding-left: 8px;
-                                            padding-right: 8px;
-                                            Text {
-                                                text: root.is-running ? root.ram-usage : "0 MB";
-                                                font-size: M3Theme.font-label-small;
-                                                font-weight: 700;
-                                                vertical-alignment: center;
-                                                color: root.is-running ?
-                                                    M3Theme.on-secondary-container :
-                                                    M3Theme.on-surface-variant;
+                                        Text {
+                                            text: "Daemon Replay";
+                                            font-size: M3Theme.font-label-large;
+                                            font-weight: 600;
+                                            vertical-alignment: center;
+                                            color: root.is-running ? M3Theme.primary : M3Theme.on-surface-variant;
+                                        }
+
+                                        M3Switch {
+                                            y: (parent.height - self.height) / 2;
+                                            checked: root.is-running;
+                                            toggled(state) => {
+                                                root.is-running = state;
+                                                root.toggle-replay();
                                             }
                                         }
                                     }
                                 }
-                            }
-                        }
 
-                        // Toggle Daemon Replay
-                        HorizontalLayout {
-                            spacing: 10px;
-                            alignment: end;
+                                // Barra de progreso visual del búfer
+                                Rectangle {
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: M3Theme.surface-container-highest;
+                                    clip: true;
 
-                            Text {
-                                text: "Daemon Replay";
-                                font-size: M3Theme.font-label-large;
-                                font-weight: 600;
-                                vertical-alignment: center;
-                                color: root.is-running ? M3Theme.primary : M3Theme.on-surface-variant;
-                            }
+                                    Rectangle {
+                                        x: 0px;
+                                        y: 0px;
+                                        height: parent.height;
+                                        width: root.is-running ? parent.width : 0px;
+                                        border-radius: 4px;
+                                        background: M3Theme.primary;
 
-                            M3Switch {
-                                y: (parent.height - self.height) / 2;
-                                checked: root.is-running;
-                                toggled(state) => {
-                                    root.is-running = state;
-                                    root.toggle-replay();
+                                        animate width { duration: 400ms; easing: ease-out; }
+                                    }
+                                }
+
+                                // Botones grandes de acción rápida
+                                HorizontalLayout {
+                                    spacing: 14px;
+
+                                    M3Button {
+                                        horizontal-stretch: 1;
+                                        text: "Guardar Replay (Mod+F10)";
+                                        icon-text: "💾";
+                                        variant: "filled";
+                                        btn-height: 48px;
+                                        enabled: root.is-running;
+                                        clicked => {
+                                            root.save-clip();
+                                        }
+                                    }
+
+                                    M3Button {
+                                        horizontal-stretch: 1;
+                                        text: root.is-recording ? "Detener Grabación (Mod+F9)" : "Grabación Continua (Mod+F9)";
+                                        icon-text: root.is-recording ? "⏹" : "⏺";
+                                        variant: root.is-recording ? "filled" : "tonal";
+                                        btn-height: 48px;
+                                        clicked => {
+                                            root.is-recording = !root.is-recording;
+                                            root.toggle-recording();
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Barra de progreso visual del búfer
-                    Rectangle {
-                        height: 8px;
-                        border-radius: 4px;
-                        background: M3Theme.surface-container-highest;
-                        clip: true;
+                        // Fila de Métricas del Sistema (4 Tiles M3)
+                        HorizontalLayout {
+                            spacing: 12px;
 
-                        Rectangle {
-                            x: 0px;
-                            y: 0px;
-                            height: parent.height;
-                            width: root.is-running ? parent.width : 0px;
-                            border-radius: 4px;
-                            background: M3Theme.primary;
+                            M3MetricTile {
+                                horizontal-stretch: 1;
+                                icon-text: "⚡";
+                                value: root.selected-fps + " FPS";
+                                label: "Tasa de Refresco";
+                                badge-text: "Fluido";
+                                highlight: true;
+                            }
 
-                            animate width { duration: 400ms; easing: ease-out; }
-                        }
-                    }
+                            M3MetricTile {
+                                horizontal-stretch: 1;
+                                icon-text: "📺";
+                                value: root.selected-resolution;
+                                label: "Resolución Activa";
+                                badge-text: root.selected-screen;
+                            }
 
-                    // Fila inferior: Botón Guardar Clip y detalles
-                    HorizontalLayout {
-                        alignment: space-between;
-                        spacing: 12px;
+                            M3MetricTile {
+                                horizontal-stretch: 1;
+                                icon-text: "⏱️";
+                                value: root.replay-duration + "s";
+                                label: "Búfer en RAM";
+                                badge-text: "Instantáneo";
+                            }
 
-                        M3Button {
-                            text: "Guardar Clip (Mod+F10)";
-                            icon-text: "💾";
-                            variant: "filled";
-                            btn-height: 46px;
-                            enabled: root.is-running;
-                            clicked => {
-                                root.save-clip();
+                            M3MetricTile {
+                                horizontal-stretch: 1;
+                                icon-text: "🧠";
+                                value: root.ram-usage;
+                                label: "Consumo RAM";
+                                badge-text: "dmabuf";
                             }
                         }
 
-                        VerticalLayout {
-                            alignment: center;
-                            spacing: 2px;
+                        // Tarjeta con detalles de la Fuente Activa
+                        M3Card {
+                            content-padding: 14px;
+                            card-background: M3Theme.surface-container;
+                            card-radius: M3Theme.corner-medium;
 
-                            Text {
-                                text: root.is-running ?
-                                    "Presiona Mod+F10 para volcar los últimos " + root.replay-duration + "s" :
-                                    "Activa el daemon para comenzar a capturar en búfer";
-                                font-size: M3Theme.font-body-small;
-                                color: M3Theme.on-surface-variant;
-                                horizontal-alignment: right;
-                            }
-
-                            if root.last-saved-clip != "": Text {
-                                text: "Último guardado: " + root.last-saved-clip;
-                                font-size: M3Theme.font-label-small;
-                                color: M3Theme.success;
-                                horizontal-alignment: right;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // =================================================================
-            // 3. Sección: Selector de Perfiles de Hardware
-            // =================================================================
-            VerticalLayout {
-                spacing: 12px;
-
-                Text {
-                    text: "PERFILES DE CODIFICACIÓN";
-                    font-size: M3Theme.font-label-large;
-                    font-weight: 800;
-                    color: M3Theme.primary;
-                    letter-spacing: 0.5px;
-                }
-
-                VerticalLayout {
-                    spacing: 8px;
-
-                    // 1. Sane Safe (CPU x264)
-                    M3ProfileTile {
-                        title: "Sane Safe (CPU x264)";
-                        subtitle: "Codificación por CPU sin riesgo de GPU freeze • Ideal Polaris / Linux";
-                        badge-text: "Recomendado";
-                        icon-text: "🛡️";
-                        is-selected: root.active-profile == "sane-safe";
-                        clicked => {
-                            root.active-profile = "sane-safe";
-                            root.select-profile("sane-safe");
-                        }
-                    }
-
-                    // 2. AMD Hardware (VA-API)
-                    M3ProfileTile {
-                        title: "AMD Hardware (VA-API)";
-                        subtitle: "Aceleración por GPU Radeon • Consumo ultra bajo de CPU";
-                        badge-text: "Hardware";
-                        icon-text: "⚡";
-                        is-selected: root.active-profile == "amd-vaapi";
-                        clicked => {
-                            root.active-profile = "amd-vaapi";
-                            root.select-profile("amd-vaapi");
-                        }
-                    }
-
-                    // 3. NVIDIA Hardware (NVENC)
-                    M3ProfileTile {
-                        title: "NVIDIA Hardware (NVENC)";
-                        subtitle: "Aceleración por hardware NVIDIA NVENC en GPU GeForce";
-                        badge-text: "Hardware";
-                        icon-text: "🟢";
-                        is-selected: root.active-profile == "nvidia-nvenc";
-                        clicked => {
-                            root.active-profile = "nvidia-nvenc";
-                            root.select-profile("nvidia-nvenc");
-                        }
-                    }
-
-                    // 4. Intel Hardware (QuickSync)
-                    M3ProfileTile {
-                        title: "Intel Hardware (QuickSync)";
-                        subtitle: "Aceleración por GPU Intel QuickSync Video (iGPU / Arc)";
-                        badge-text: "Hardware";
-                        icon-text: "🔷";
-                        is-selected: root.active-profile == "intel-qsv";
-                        clicked => {
-                            root.active-profile = "intel-qsv";
-                            root.select-profile("intel-qsv");
-                        }
-                    }
-
-                    // 5. Personalizado
-                    M3ProfileTile {
-                        title: "Personalizado";
-                        subtitle: "Pipeline configurable manualmente de GStreamer";
-                        badge-text: "Avanzado";
-                        icon-text: "⚙️";
-                        is-selected: root.active-profile == "custom";
-                        clicked => {
-                            root.active-profile = "custom";
-                            root.select-profile("custom");
-                        }
-                    }
-                }
-
-                // Descripción contextual del perfil seleccionado
-                M3Card {
-                    card-background: M3Theme.surface-container;
-                    card-radius: M3Theme.corner-medium;
-                    content-padding: 12px;
-
-                    HorizontalLayout {
-                        spacing: 10px;
-                        alignment: start;
-
-                        Text {
-                            text: "ℹ️";
-                            font-size: 16px;
-                            vertical-alignment: center;
-                        }
-
-                        Text {
-                            text: root.active-profile == "sane-safe" ?
-                                "Sane Safe: Codificación por CPU sin riesgo de cuelgue en GPU Polaris. Garantiza estabilidad total bajo Wayland y compositores como niri." :
-                                root.active-profile == "amd-vaapi" ?
-                                "AMD VA-API: Utiliza los aceleradores multimedia de la GPU Radeon. Si experimentas 'ring gfx timeout' en Polaris, cambia a Sane Safe." :
-                                root.active-profile == "nvidia-nvenc" ?
-                                "NVIDIA NVENC: Utiliza el codificador dedicado de tarjetas gráficas GeForce con controladores propietarios." :
-                                root.active-profile == "intel-qsv" ?
-                                "Intel QuickSync: Aceleración por hardware para gráficos integrados Intel o tarjetas dedicadas Intel Arc." :
-                                "Personalizado: Utiliza la configuración avanzada especificada en ~/.config/sane-rec/config.toml.";
-                            font-size: M3Theme.font-body-small;
-                            color: M3Theme.on-surface-variant;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                        }
-                    }
-                }
-            }
-
-            // =================================================================
-            // 4. Sección: Configuración Rápida
-            // =================================================================
-            VerticalLayout {
-                spacing: 14px;
-
-                Text {
-                    text: "CONFIGURACIÓN RÁPIDA";
-                    font-size: M3Theme.font-label-large;
-                    font-weight: 800;
-                    color: M3Theme.primary;
-                    letter-spacing: 0.5px;
-                }
-
-                // Grid / Tarjetas de configuración
-                VerticalLayout {
-                    spacing: 12px;
-
-                    // 4.1 Pantalla de captura
-                    M3Card {
-                        content-padding: 16px;
-                        card-background: M3Theme.surface-container;
-
-                        VerticalLayout {
-                            spacing: 10px;
-
-                            Text {
-                                text: "Pantalla de captura (Wayland)";
-                                font-size: M3Theme.font-title-small;
-                                font-weight: 600;
-                                color: M3Theme.on-surface;
-                            }
-
-                            // Selector de pantalla segmentado
-                            Rectangle {
-                                height: 40px;
-                                border-radius: M3Theme.corner-small;
-                                background: M3Theme.surface-container-high;
-                                border-width: 1px;
-                                border-color: M3Theme.outline-variant.with-alpha(0.5);
+                            HorizontalLayout {
+                                spacing: 14px;
+                                alignment: space-between;
 
                                 HorizontalLayout {
-                                    padding: 3px;
-                                    spacing: 3px;
+                                    spacing: 12px;
+                                    alignment: start;
 
-                                    M3SegmentItem {
-                                        horizontal-stretch: 1;
-                                        text: "DVI-D-1 (Principal)";
-                                        is-selected: root.selected-screen == "DVI-D-1";
-                                        clicked => { root.selected-screen = "DVI-D-1"; }
+                                    Rectangle {
+                                        width: 36px;
+                                        height: 36px;
+                                        border-radius: 18px;
+                                        background: M3Theme.surface-container-high;
+                                        y: (parent.height - self.height) / 2;
+
+                                        Text {
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                            text: "🖥️";
+                                            font-size: 16px;
+                                        }
                                     }
 
-                                    M3SegmentItem {
-                                        horizontal-stretch: 1;
-                                        text: "HDMI-A-1 (Secundario)";
-                                        is-selected: root.selected-screen == "HDMI-A-1";
-                                        clicked => { root.selected-screen = "HDMI-A-1"; }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+
+                                        Text {
+                                            text: "Fuente Activa: " + root.selected-screen + " • " + root.selected-fps + " FPS • " + (root.active-profile == "sane-safe" ? "Sane Safe (CPU)" : "Hardware VA-API");
+                                            font-size: M3Theme.font-title-small;
+                                            font-weight: 700;
+                                            color: M3Theme.on-surface;
+                                        }
+
+                                        Text {
+                                            text: "Captura directa Wayland vía dmabuf/PipeWire sin sobrecarga de GPU Polaris.";
+                                            font-size: M3Theme.font-body-small;
+                                            color: M3Theme.on-surface-variant;
+                                        }
+                                    }
+                                }
+
+                                M3Button {
+                                    text: "Cambiar Fuente";
+                                    variant: "outlined";
+                                    btn-height: 36px;
+                                    clicked => {
+                                        root.active-view = 1;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Tarjeta de Último Clip Guardado
+                        M3Card {
+                            content-padding: 14px;
+                            card-background: M3Theme.surface-container;
+                            card-radius: M3Theme.corner-medium;
+
+                            HorizontalLayout {
+                                spacing: 14px;
+                                alignment: space-between;
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    alignment: start;
+
+                                    Rectangle {
+                                        width: 36px;
+                                        height: 36px;
+                                        border-radius: 18px;
+                                        background: root.last-saved-clip != "" ?
+                                            M3Theme.success-container :
+                                            M3Theme.surface-container-high;
+                                        y: (parent.height - self.height) / 2;
+
+                                        Text {
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                            text: root.last-saved-clip != "" ? "🎬" : "📂";
+                                            font-size: 16px;
+                                        }
                                     }
 
-                                    M3SegmentItem {
-                                        horizontal-stretch: 1;
-                                        text: "Ventana interactiva";
-                                        is-selected: root.selected-screen == "window";
-                                        clicked => { root.selected-screen = "window"; }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+
+                                        Text {
+                                            text: root.last-saved-clip != "" ?
+                                                "Último clip guardado: " + root.last-saved-clip :
+                                                "Sin clips guardados en esta sesión";
+                                            font-size: M3Theme.font-title-small;
+                                            font-weight: 700;
+                                            color: root.last-saved-clip != "" ? M3Theme.on-surface : M3Theme.on-surface-variant;
+                                        }
+
+                                        Text {
+                                            text: root.last-saved-clip != "" ?
+                                                "Presiona Reproducir para visualizar o ve a la pestaña Galería." :
+                                                "Presiona Mod+F10 o el botón superior para capturar los últimos " + root.replay-duration + " segundos.";
+                                            font-size: M3Theme.font-body-small;
+                                            color: M3Theme.on-surface-variant;
+                                        }
+                                    }
+                                }
+
+                                if root.last-saved-clip != "": M3Button {
+                                    text: "Reproducir clip";
+                                    icon-text: "▶";
+                                    variant: "filled";
+                                    btn-height: 36px;
+                                    clicked => {
+                                        root.play-clip(root.last-saved-clip);
                                     }
                                 }
                             }
                         }
                     }
 
-                    // 4.2 Audio PipeWire
-                    M3Card {
-                        content-padding: 16px;
-                        card-background: M3Theme.surface-container;
+                    // ---------------------------------------------------------
+                    // VISTA 1: FUENTES DE VIDEO
+                    // ---------------------------------------------------------
+                    if root.active-view == 1: VerticalLayout {
+                        spacing: 20px;
 
+                        // Header Fuentes
                         VerticalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: "FUENTES DE VIDEO";
+                                font-size: M3Theme.font-title-large;
+                                font-weight: 800;
+                                color: M3Theme.on-surface;
+                            }
+                            Text {
+                                text: "Selecciona el origen de captura para el búfer y grabaciones";
+                                font-size: M3Theme.font-body-small;
+                                color: M3Theme.on-surface-variant;
+                            }
+                        }
+
+                        // Selector de Modo de Captura (Píldoras M3)
+                        M3Card {
+                            content-padding: 16px;
+                            card-background: M3Theme.surface-container;
+
+                            VerticalLayout {
+                                spacing: 12px;
+
+                                Text {
+                                    text: "TIPO DE CAPTURA";
+                                    font-size: M3Theme.font-label-large;
+                                    font-weight: 700;
+                                    color: M3Theme.primary;
+                                }
+
+                                Rectangle {
+                                    height: 42px;
+                                    border-radius: M3Theme.corner-small;
+                                    background: M3Theme.surface-container-high;
+                                    border-width: 1px;
+                                    border-color: M3Theme.outline-variant.with-alpha(0.5);
+
+                                    HorizontalLayout {
+                                        padding: 3px;
+                                        spacing: 4px;
+
+                                        M3SegmentItem {
+                                            horizontal-stretch: 1;
+                                            text: "🖥️ Monitor Completo";
+                                            is-selected: root.capture-mode == 0;
+                                            clicked => { root.capture-mode = 0; }
+                                        }
+
+                                        M3SegmentItem {
+                                            horizontal-stretch: 1;
+                                            text: "🪟 Ventana / Juego";
+                                            is-selected: root.capture-mode == 1;
+                                            clicked => { root.capture-mode = 1; }
+                                        }
+
+                                        M3SegmentItem {
+                                            horizontal-stretch: 1;
+                                            text: "🎯 Área (Slurp)";
+                                            is-selected: root.capture-mode == 2;
+                                            clicked => { root.capture-mode = 2; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Detalle según el tipo de captura
+                        if root.capture-mode == 0: VerticalLayout {
                             spacing: 12px;
 
                             Text {
-                                text: "Fuentes de Audio (PipeWire)";
-                                font-size: M3Theme.font-title-small;
-                                font-weight: 600;
-                                color: M3Theme.on-surface;
+                                text: "MONITORES DETECTADOS (WAYLAND)";
+                                font-size: M3Theme.font-label-large;
+                                font-weight: 700;
+                                color: M3Theme.primary;
                             }
 
+                            for item in root.available-screens: M3OptionItem {
+                                text: item.description;
+                                badge-text: item.badge;
+                                is-selected: root.selected-screen == item.name;
+                                clicked => {
+                                    root.selected-screen = item.name;
+                                    root.selected-resolution = item.resolution;
+                                    root.select-screen(item.name, item.resolution);
+                                }
+                            }
+                        }
+
+                        if root.capture-mode == 1: VerticalLayout {
+                            spacing: 12px;
+
                             HorizontalLayout {
-                                spacing: 20px;
+                                alignment: space-between;
 
-                                // Audio del sistema
-                                HorizontalLayout {
-                                    horizontal-stretch: 1;
-                                    spacing: 10px;
-                                    alignment: space-between;
-
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        alignment: start;
-
-                                        Text {
-                                            text: "🔊";
-                                            font-size: 16px;
-                                            vertical-alignment: center;
-                                        }
-
-                                        Text {
-                                            text: "Audio del Sistema/Juego";
-                                            font-size: M3Theme.font-body-medium;
-                                            color: M3Theme.on-surface;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-
-                                    M3Switch {
-                                        y: (parent.height - self.height) / 2;
-                                        checked: root.audio-system;
-                                        toggled(v) => { root.audio-system = v; }
-                                    }
+                                Text {
+                                    text: "VENTANAS ACTIVAS DETECTADAS";
+                                    font-size: M3Theme.font-label-large;
+                                    font-weight: 700;
+                                    color: M3Theme.primary;
+                                    vertical-alignment: center;
                                 }
 
-                                // Separador vertical sutil
+                                M3Button {
+                                    text: "Refrescar";
+                                    icon-text: "🔄";
+                                    variant: "tonal";
+                                    btn-height: 34px;
+                                    btn-padding-h: 12px;
+                                    clicked => {
+                                        root.refresh-windows();
+                                    }
+                                }
+                            }
+
+                            for item in root.available-windows: M3OptionItem {
+                                text: item.title;
+                                badge-text: item.badge;
+                                is-selected: root.selected-window == item.title;
+                                clicked => {
+                                    root.selected-window = item.title;
+                                    root.selected-screen = "window:" + item.app-id;
+                                    root.select-window(item.title, item.app-id);
+                                }
+                            }
+                        }
+
+                        if root.capture-mode == 2: M3Card {
+                            content-padding: 20px;
+                            card-background: M3Theme.surface-container;
+
+                            VerticalLayout {
+                                spacing: 14px;
+                                alignment: center;
+
                                 Rectangle {
-                                    width: 1px;
-                                    background: M3Theme.outline-variant.with-alpha(0.4);
+                                    width: 52px;
+                                    height: 52px;
+                                    border-radius: 26px;
+                                    background: M3Theme.primary-container;
+                                    Text {
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        text: "🎯";
+                                        font-size: 24px;
+                                    }
                                 }
 
-                                // Micrófono
-                                HorizontalLayout {
-                                    horizontal-stretch: 1;
-                                    spacing: 10px;
-                                    alignment: space-between;
+                                Text {
+                                    text: "Selección Interactiva con Slurp";
+                                    font-size: M3Theme.font-title-medium;
+                                    font-weight: 700;
+                                    color: M3Theme.on-surface;
+                                    horizontal-alignment: center;
+                                }
 
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        alignment: start;
+                                Text {
+                                    text: "Haz clic en el botón para activar la herramienta slurp en Wayland. Podrás trazar un rectángulo en pantalla con el ratón o hacer clic sobre una ventana para capturar solo esa región exacta.";
+                                    font-size: M3Theme.font-body-small;
+                                    color: M3Theme.on-surface-variant;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
 
-                                        Text {
-                                            text: "🎙️";
-                                            font-size: 16px;
-                                            vertical-alignment: center;
-                                        }
-
-                                        Text {
-                                            text: "Micrófono";
-                                            font-size: M3Theme.font-body-medium;
-                                            color: M3Theme.on-surface;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-
-                                    M3Switch {
-                                        y: (parent.height - self.height) / 2;
-                                        checked: root.audio-mic;
-                                        toggled(v) => { root.audio-mic = v; }
+                                M3Button {
+                                    text: "Seleccionar ventana o área con Slurp";
+                                    icon-text: "🎯";
+                                    variant: "filled";
+                                    btn-height: 44px;
+                                    clicked => {
+                                        root.select-area-slurp();
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // 4.3 Almacenamiento, Duración y Formato
-                    M3Card {
-                        content-padding: 16px;
-                        card-background: M3Theme.surface-container;
+                        // Parámetros de FPS y Resolución
+                        M3Card {
+                            content-padding: 16px;
+                            card-background: M3Theme.surface-container;
 
-                        VerticalLayout {
-                            spacing: 16px;
-
-                            // Carpeta de salida
                             VerticalLayout {
-                                spacing: 8px;
+                                spacing: 16px;
 
                                 Text {
-                                    text: "Carpeta de Guardado";
-                                    font-size: M3Theme.font-title-small;
-                                    font-weight: 600;
-                                    color: M3Theme.on-surface;
+                                    text: "PARÁMETROS DE VIDEO";
+                                    font-size: M3Theme.font-label-large;
+                                    font-weight: 700;
+                                    color: M3Theme.primary;
                                 }
 
-                                HorizontalLayout {
-                                    spacing: 10px;
+                                // Tasa de FPS
+                                VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Tasa de Refresco (FPS)";
+                                        font-size: M3Theme.font-body-medium;
+                                        font-weight: 600;
+                                        color: M3Theme.on-surface;
+                                    }
 
-                                    // Display de la ruta elegida
                                     Rectangle {
-                                        horizontal-stretch: 1;
-                                        height: 40px;
+                                        height: 38px;
                                         border-radius: M3Theme.corner-small;
                                         background: M3Theme.surface-container-high;
                                         border-width: 1px;
                                         border-color: M3Theme.outline-variant.with-alpha(0.5);
 
                                         HorizontalLayout {
-                                            padding-left: 12px;
-                                            padding-right: 12px;
-                                            spacing: 8px;
-                                            alignment: start;
+                                            padding: 3px;
+                                            spacing: 3px;
 
-                                            Text {
-                                                text: "📁";
-                                                font-size: 14px;
-                                                vertical-alignment: center;
+                                            M3SegmentItem {
+                                                horizontal-stretch: 1;
+                                                text: "60 FPS (Fluidez recomendada)";
+                                                is-selected: root.selected-fps == 60;
+                                                clicked => { root.selected-fps = 60; }
                                             }
 
-                                            Text {
-                                                text: root.output-path;
-                                                font-size: M3Theme.font-body-medium;
-                                                color: M3Theme.on-surface;
-                                                vertical-alignment: center;
-                                                overflow: elide;
+                                            M3SegmentItem {
+                                                horizontal-stretch: 1;
+                                                text: "30 FPS (Ahorro de CPU)";
+                                                is-selected: root.selected-fps == 30;
+                                                clicked => { root.selected-fps = 30; }
                                             }
                                         }
                                     }
+                                }
 
-                                    M3Button {
-                                        text: "Examinar...";
-                                        variant: "tonal";
-                                        btn-height: 40px;
-                                        clicked => {
-                                            root.select-output-dir();
+                                // Resolución
+                                VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Resolución de Captura";
+                                        font-size: M3Theme.font-body-medium;
+                                        font-weight: 600;
+                                        color: M3Theme.on-surface;
+                                    }
+
+                                    Rectangle {
+                                        height: 38px;
+                                        border-radius: M3Theme.corner-small;
+                                        background: M3Theme.surface-container-high;
+                                        border-width: 1px;
+                                        border-color: M3Theme.outline-variant.with-alpha(0.5);
+
+                                        HorizontalLayout {
+                                            padding: 3px;
+                                            spacing: 3px;
+
+                                            M3SegmentItem {
+                                                horizontal-stretch: 1;
+                                                text: "1360x768 (Nativa 100%)";
+                                                is-selected: root.selected-resolution == "1360x768";
+                                                clicked => { root.selected-resolution = "1360x768"; }
+                                            }
+
+                                            M3SegmentItem {
+                                                horizontal-stretch: 1;
+                                                text: "1280x720 (720p HD)";
+                                                is-selected: root.selected-resolution == "1280x720";
+                                                clicked => { root.selected-resolution = "1280x720"; }
+                                            }
+
+                                            M3SegmentItem {
+                                                horizontal-stretch: 1;
+                                                text: "960x540 (Bajo consumo)";
+                                                is-selected: root.selected-resolution == "960x540";
+                                                clicked => { root.selected-resolution = "960x540"; }
+                                            }
                                         }
                                     }
                                 }
                             }
+                        }
+                    }
 
-                            // Duración del Replay Buffer
+                    // ---------------------------------------------------------
+                    // VISTA 2: MEZCLADOR DE AUDIO
+                    // ---------------------------------------------------------
+                    if root.active-view == 2: VerticalLayout {
+                        spacing: 20px;
+
+                        // Header Audio
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: "MEZCLADOR DE AUDIO";
+                                font-size: M3Theme.font-title-large;
+                                font-weight: 800;
+                                color: M3Theme.on-surface;
+                            }
+                            Text {
+                                text: "Configuración de canales de audio del sistema y micrófonos en PipeWire";
+                                font-size: M3Theme.font-body-small;
+                                color: M3Theme.on-surface-variant;
+                            }
+                        }
+
+                        // Dispositivo de Audio del Sistema (Sink)
+                        M3DropdownCard {
+                            title: "Dispositivo de Audio del Sistema / Juego";
+                            description: "Captura el audio estéreo reproducido por tus juegos y aplicaciones";
+                            icon-text: "🔊";
+                            current-value: root.audio-sink;
+                            is-open: root.sink-dropdown-open;
+                            toggled => {
+                                root.sink-dropdown-open = !root.sink-dropdown-open;
+                            }
+
+                            for item in root.available-sinks: M3OptionItem {
+                                text: item.description;
+                                badge-text: item.badge;
+                                is-selected: root.audio-sink == item.name;
+                                clicked => {
+                                    root.audio-sink = item.name;
+                                    root.sink-dropdown-open = false;
+                                    root.select-audio-sink(item.name);
+                                }
+                            }
+                        }
+
+                        // Dispositivo de Micrófono (Source)
+                        M3DropdownCard {
+                            title: "Entrada de Micrófono";
+                            description: "Captura tu voz con cancelación de eco en tiempo real";
+                            icon-text: "🎙️";
+                            current-value: root.audio-mic-source;
+                            is-open: root.mic-dropdown-open;
+                            toggled => {
+                                root.mic-dropdown-open = !root.mic-dropdown-open;
+                            }
+
+                            for item in root.available-mics: M3OptionItem {
+                                text: item.description;
+                                badge-text: item.badge;
+                                is-selected: root.audio-mic-source == item.name;
+                                clicked => {
+                                    root.audio-mic-source = item.name;
+                                    root.audio-mic = item.name != "Desactivado";
+                                    root.mic-dropdown-open = false;
+                                    root.select-audio-mic(item.name);
+                                }
+                            }
+                        }
+
+                        // Selector de Modo de Pistas de Audio
+                        M3Card {
+                            content-padding: 16px;
+                            card-background: M3Theme.surface-container;
+
                             VerticalLayout {
-                                spacing: 10px;
+                                spacing: 14px;
+
+                                Text {
+                                    text: "MODO DE PISTAS EN EL ARCHIVO";
+                                    font-size: M3Theme.font-label-large;
+                                    font-weight: 700;
+                                    color: M3Theme.primary;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+
+                                    // Opción A: Pista combinada
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        border-radius: M3Theme.corner-medium;
+                                        background: root.audio-track-mode == 0 ?
+                                            M3Theme.primary-container :
+                                            M3Theme.surface-container-high;
+                                        border-width: root.audio-track-mode == 0 ? 1.5px : 1px;
+                                        border-color: root.audio-track-mode == 0 ?
+                                            M3Theme.primary :
+                                            M3Theme.outline-variant.with-alpha(0.4);
+
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.audio-track-mode = 0; }
+
+                                            VerticalLayout {
+                                                padding: 14px;
+                                                spacing: 6px;
+
+                                                HorizontalLayout {
+                                                    alignment: space-between;
+                                                    Text {
+                                                        text: "Pista única combinada";
+                                                        font-size: M3Theme.font-title-small;
+                                                        font-weight: 700;
+                                                        color: root.audio-track-mode == 0 ?
+                                                            M3Theme.on-primary-container :
+                                                            M3Theme.on-surface;
+                                                    }
+                                                    Rectangle {
+                                                        height: 20px;
+                                                        border-radius: 10px;
+                                                        background: root.audio-track-mode == 0 ? M3Theme.primary : M3Theme.secondary-container;
+                                                        HorizontalLayout {
+                                                            padding-left: 6px;
+                                                            padding-right: 6px;
+                                                            Text {
+                                                                text: "Discord";
+                                                                font-size: 10px;
+                                                                font-weight: 700;
+                                                                color: root.audio-track-mode == 0 ? M3Theme.on-primary : M3Theme.on-secondary-container;
+                                                                vertical-alignment: center;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Text {
+                                                    text: "Juego y micrófono mezclados en un solo canal estéreo. Ideal para compartir directamente en Discord o redes sin configuración extra.";
+                                                    font-size: M3Theme.font-body-small;
+                                                    color: root.audio-track-mode == 0 ?
+                                                        M3Theme.on-primary-container.with-alpha(0.8) :
+                                                        M3Theme.on-surface-variant;
+                                                    wrap: word-wrap;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Opción B: Pistas separadas
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        border-radius: M3Theme.corner-medium;
+                                        background: root.audio-track-mode == 1 ?
+                                            M3Theme.primary-container :
+                                            M3Theme.surface-container-high;
+                                        border-width: root.audio-track-mode == 1 ? 1.5px : 1px;
+                                        border-color: root.audio-track-mode == 1 ?
+                                            M3Theme.primary :
+                                            M3Theme.outline-variant.with-alpha(0.4);
+
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.audio-track-mode = 1; }
+
+                                            VerticalLayout {
+                                                padding: 14px;
+                                                spacing: 6px;
+
+                                                HorizontalLayout {
+                                                    alignment: space-between;
+                                                    Text {
+                                                        text: "Pistas separadas";
+                                                        font-size: M3Theme.font-title-small;
+                                                        font-weight: 700;
+                                                        color: root.audio-track-mode == 1 ?
+                                                            M3Theme.on-primary-container :
+                                                            M3Theme.on-surface;
+                                                    }
+                                                    Rectangle {
+                                                        height: 20px;
+                                                        border-radius: 10px;
+                                                        background: root.audio-track-mode == 1 ? M3Theme.primary : M3Theme.secondary-container;
+                                                        HorizontalLayout {
+                                                            padding-left: 6px;
+                                                            padding-right: 6px;
+                                                            Text {
+                                                                text: "Edición";
+                                                                font-size: 10px;
+                                                                font-weight: 700;
+                                                                color: root.audio-track-mode == 1 ? M3Theme.on-primary : M3Theme.on-secondary-container;
+                                                                vertical-alignment: center;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Text {
+                                                    text: "Pista 1: Audio del juego • Pista 2: Micrófono independiente. Permite ajustar o silenciar tu voz luego en Kdenlive o DaVinci.";
+                                                    font-size: M3Theme.font-body-small;
+                                                    color: root.audio-track-mode == 1 ?
+                                                        M3Theme.on-primary-container.with-alpha(0.8) :
+                                                        M3Theme.on-surface-variant;
+                                                    wrap: word-wrap;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Controles de Volumen y Silencio
+                        M3Card {
+                            content-padding: 16px;
+                            card-background: M3Theme.surface-container;
+
+                            VerticalLayout {
+                                spacing: 18px;
+
+                                Text {
+                                    text: "NIVELES DE VOLUMEN Y SILENCIO";
+                                    font-size: M3Theme.font-label-large;
+                                    font-weight: 700;
+                                    color: M3Theme.primary;
+                                }
+
+                                // Canal Sistema
+                                VerticalLayout {
+                                    spacing: 8px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            Text {
+                                                text: "🔊";
+                                                font-size: 16px;
+                                                vertical-alignment: center;
+                                            }
+                                            Text {
+                                                text: "Volumen del Sistema / Juego: " + Math.round(root.volume-system * 100) + "%";
+                                                font-size: M3Theme.font-body-medium;
+                                                font-weight: 600;
+                                                color: M3Theme.on-surface;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            Text {
+                                                text: root.audio-system ? "Activo" : "Silenciado";
+                                                font-size: M3Theme.font-label-small;
+                                                color: root.audio-system ? M3Theme.primary : M3Theme.on-surface-variant;
+                                                vertical-alignment: center;
+                                            }
+                                            M3Switch {
+                                                y: (parent.height - self.height) / 2;
+                                                checked: root.audio-system;
+                                                toggled(state) => { root.audio-system = state; }
+                                            }
+                                        }
+                                    }
+
+                                    Slider {
+                                        minimum: 0.0;
+                                        maximum: 1.5;
+                                        value: root.volume-system;
+                                        changed => {
+                                            root.volume-system = self.value;
+                                        }
+                                    }
+                                }
+
+                                // Canal Micrófono
+                                VerticalLayout {
+                                    spacing: 8px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            Text {
+                                                text: "🎙️";
+                                                font-size: 16px;
+                                                vertical-alignment: center;
+                                            }
+                                            Text {
+                                                text: "Volumen del Micrófono: " + Math.round(root.volume-mic * 100) + "%";
+                                                font-size: M3Theme.font-body-medium;
+                                                font-weight: 600;
+                                                color: M3Theme.on-surface;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            Text {
+                                                text: root.audio-mic ? "Activo" : "Silenciado";
+                                                font-size: M3Theme.font-label-small;
+                                                color: root.audio-mic ? M3Theme.primary : M3Theme.on-surface-variant;
+                                                vertical-alignment: center;
+                                            }
+                                            M3Switch {
+                                                y: (parent.height - self.height) / 2;
+                                                checked: root.audio-mic;
+                                                toggled(state) => { root.audio-mic = state; }
+                                            }
+                                        }
+                                    }
+
+                                    Slider {
+                                        minimum: 0.0;
+                                        maximum: 1.5;
+                                        value: root.volume-mic;
+                                        changed => {
+                                            root.volume-mic = self.value;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---------------------------------------------------------
+                    // VISTA 3: AJUSTES Y PRESETS
+                    // ---------------------------------------------------------
+                    if root.active-view == 3: VerticalLayout {
+                        spacing: 20px;
+
+                        // Header Ajustes
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: "AJUSTES Y PRESETS";
+                                font-size: M3Theme.font-title-large;
+                                font-weight: 800;
+                                color: M3Theme.on-surface;
+                            }
+                            Text {
+                                text: "Perfiles de codificador, buffers y directorios de almacenamiento";
+                                font-size: M3Theme.font-body-small;
+                                color: M3Theme.on-surface-variant;
+                            }
+                        }
+
+                        // Perfiles de Hardware
+                        VerticalLayout {
+                            spacing: 12px;
+
+                            Text {
+                                text: "PERFIL DE CODIFICACIÓN (ESTABILIDAD / HARDWARE)";
+                                font-size: M3Theme.font-label-large;
+                                font-weight: 700;
+                                color: M3Theme.primary;
+                            }
+
+                            // 1. Sane Safe (CPU x264)
+                            M3ProfileTile {
+                                title: "Sane Safe (CPU x264)";
+                                subtitle: "Codificación por CPU sin riesgo de GPU freeze • Ideal Polaris / Linux";
+                                badge-text: "Recomendado";
+                                icon-text: "🛡️";
+                                is-selected: root.active-profile == "sane-safe";
+                                clicked => {
+                                    root.active-profile = "sane-safe";
+                                    root.select-profile("sane-safe");
+                                }
+                            }
+
+                            // 2. AMD Hardware (VA-API)
+                            M3ProfileTile {
+                                title: "AMD Hardware (VA-API)";
+                                subtitle: "Aceleración por GPU Radeon • Consumo ultra bajo de CPU";
+                                badge-text: "Experimental";
+                                icon-text: "⚡";
+                                is-selected: root.active-profile == "amd-vaapi";
+                                clicked => {
+                                    root.active-profile = "amd-vaapi";
+                                    root.select-profile("amd-vaapi");
+                                }
+                            }
+
+                            // 3. NVIDIA Hardware (NVENC)
+                            M3ProfileTile {
+                                title: "NVIDIA Hardware (NVENC)";
+                                subtitle: "Aceleración por hardware NVIDIA en GPU GeForce";
+                                badge-text: "Hardware";
+                                icon-text: "🟢";
+                                is-selected: root.active-profile == "nvidia-nvenc";
+                                clicked => {
+                                    root.active-profile = "nvidia-nvenc";
+                                    root.select-profile("nvidia-nvenc");
+                                }
+                            }
+
+                            // 4. Intel Hardware (QuickSync)
+                            M3ProfileTile {
+                                title: "Intel Hardware (QuickSync)";
+                                subtitle: "Aceleración por GPU Intel QuickSync Video (iGPU / Arc)";
+                                badge-text: "Hardware";
+                                icon-text: "🔷";
+                                is-selected: root.active-profile == "intel-qsv";
+                                clicked => {
+                                    root.active-profile = "intel-qsv";
+                                    root.select-profile("intel-qsv");
+                                }
+                            }
+
+                            // 5. Personalizado
+                            M3ProfileTile {
+                                title: "Personalizado";
+                                subtitle: "Pipeline configurable manualmente en config.toml";
+                                badge-text: "Avanzado";
+                                icon-text: "⚙️";
+                                is-selected: root.active-profile == "custom";
+                                clicked => {
+                                    root.active-profile = "custom";
+                                    root.select-profile("custom");
+                                }
+                            }
+                        }
+
+                        // Duración del Buffer de Repetición
+                        M3Card {
+                            content-padding: 16px;
+                            card-background: M3Theme.surface-container;
+
+                            VerticalLayout {
+                                spacing: 14px;
 
                                 HorizontalLayout {
                                     alignment: space-between;
 
                                     Text {
-                                        text: "Duración del Replay Buffer";
-                                        font-size: M3Theme.font-title-small;
-                                        font-weight: 600;
-                                        color: M3Theme.on-surface;
+                                        text: "DURACIÓN DEL BÚFER DE REPETICIÓN";
+                                        font-size: M3Theme.font-label-large;
+                                        font-weight: 700;
+                                        color: M3Theme.primary;
                                     }
 
                                     Rectangle {
@@ -648,7 +1284,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                // Chips de presets rápidos
+                                // Chips de Presets rápidos
                                 HorizontalLayout {
                                     spacing: 8px;
 
@@ -689,78 +1325,327 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                // Slider continuo de 15s a 120s
                                 Slider {
                                     minimum: 15.0;
                                     maximum: 120.0;
                                     value: root.replay-duration;
-                                    changed(val) => {
-                                        root.replay-duration = Math.round(val);
+                                    changed => {
+                                        root.replay-duration = Math.round(self.value);
                                     }
                                 }
                             }
+                        }
 
-                            // Formato de Contenedor (.mp4 / .mkv)
+                        // Almacenamiento y Formato
+                        M3Card {
+                            content-padding: 16px;
+                            card-background: M3Theme.surface-container;
+
                             VerticalLayout {
-                                spacing: 8px;
+                                spacing: 16px;
 
                                 Text {
-                                    text: "Formato de Video";
-                                    font-size: M3Theme.font-title-small;
-                                    font-weight: 600;
-                                    color: M3Theme.on-surface;
+                                    text: "ALMACENAMIENTO Y FORMATO";
+                                    font-size: M3Theme.font-label-large;
+                                    font-weight: 700;
+                                    color: M3Theme.primary;
                                 }
 
-                                Rectangle {
-                                    height: 40px;
-                                    width: 220px;
-                                    border-radius: M3Theme.corner-small;
-                                    background: M3Theme.surface-container-high;
-                                    border-width: 1px;
-                                    border-color: M3Theme.outline-variant.with-alpha(0.5);
+                                // Carpeta
+                                VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Carpeta de Guardado de Replays";
+                                        font-size: M3Theme.font-body-medium;
+                                        font-weight: 600;
+                                        color: M3Theme.on-surface;
+                                    }
 
                                     HorizontalLayout {
-                                        padding: 3px;
-                                        spacing: 3px;
+                                        spacing: 10px;
 
-                                        M3SegmentItem {
+                                        Rectangle {
                                             horizontal-stretch: 1;
-                                            text: ".mp4 (Universal)";
-                                            is-selected: root.selected-format == "mp4";
-                                            clicked => { root.selected-format = "mp4"; }
+                                            height: 40px;
+                                            border-radius: M3Theme.corner-small;
+                                            background: M3Theme.surface-container-high;
+                                            border-width: 1px;
+                                            border-color: M3Theme.outline-variant.with-alpha(0.5);
+
+                                            HorizontalLayout {
+                                                padding-left: 12px;
+                                                padding-right: 12px;
+                                                spacing: 8px;
+                                                alignment: start;
+
+                                                Text {
+                                                    text: "📁";
+                                                    font-size: 14px;
+                                                    vertical-alignment: center;
+                                                }
+
+                                                Text {
+                                                    text: root.output-path;
+                                                    font-size: M3Theme.font-body-medium;
+                                                    color: M3Theme.on-surface;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                }
+                                            }
                                         }
 
-                                        M3SegmentItem {
-                                            horizontal-stretch: 1;
-                                            text: ".mkv (Seguro)";
-                                            is-selected: root.selected-format == "mkv";
-                                            clicked => { root.selected-format = "mkv"; }
+                                        M3Button {
+                                            text: "Examinar...";
+                                            variant: "tonal";
+                                            btn-height: 40px;
+                                            clicked => {
+                                                root.select-output-dir();
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Formato
+                                VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Formato de Contenedor";
+                                        font-size: M3Theme.font-body-medium;
+                                        font-weight: 600;
+                                        color: M3Theme.on-surface;
+                                    }
+
+                                    Rectangle {
+                                        height: 40px;
+                                        width: 280px;
+                                        border-radius: M3Theme.corner-small;
+                                        background: M3Theme.surface-container-high;
+                                        border-width: 1px;
+                                        border-color: M3Theme.outline-variant.with-alpha(0.5);
+
+                                        HorizontalLayout {
+                                            padding: 3px;
+                                            spacing: 3px;
+
+                                            M3SegmentItem {
+                                                horizontal-stretch: 1;
+                                                text: ".mp4 (Universal)";
+                                                is-selected: root.selected-format == "mp4";
+                                                clicked => { root.selected-format = "mp4"; }
+                                            }
+
+                                            M3SegmentItem {
+                                                horizontal-stretch: 1;
+                                                text: ".mkv (Seguro)";
+                                                is-selected: root.selected-format == "mkv";
+                                                clicked => { root.selected-format = "mkv"; }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Lista Visual de Atajos de Teclado
+                        M3Card {
+                            content-padding: 16px;
+                            card-background: M3Theme.surface-container;
+
+                            VerticalLayout {
+                                spacing: 12px;
+
+                                Text {
+                                    text: "ATAJOS DE TECLADO GLOBALES (NIRI / WAYLAND)";
+                                    font-size: M3Theme.font-label-large;
+                                    font-weight: 700;
+                                    color: M3Theme.primary;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 46px;
+                                        border-radius: M3Theme.corner-small;
+                                        background: M3Theme.surface-container-high;
+                                        border-width: 1px;
+                                        border-color: M3Theme.outline-variant.with-alpha(0.4);
+
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            alignment: space-between;
+
+                                            Text {
+                                                text: "Guardar Replay Instantáneo";
+                                                font-size: M3Theme.font-body-medium;
+                                                font-weight: 600;
+                                                color: M3Theme.on-surface;
+                                                vertical-alignment: center;
+                                            }
+
+                                            Rectangle {
+                                                height: 26px;
+                                                border-radius: 6px;
+                                                background: M3Theme.primary-container;
+                                                y: (parent.height - self.height) / 2;
+                                                HorizontalLayout {
+                                                    padding-left: 8px;
+                                                    padding-right: 8px;
+                                                    Text {
+                                                        text: "Mod+F10";
+                                                        font-size: M3Theme.font-label-small;
+                                                        font-weight: 800;
+                                                        color: M3Theme.on-primary-container;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 46px;
+                                        border-radius: M3Theme.corner-small;
+                                        background: M3Theme.surface-container-high;
+                                        border-width: 1px;
+                                        border-color: M3Theme.outline-variant.with-alpha(0.4);
+
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            alignment: space-between;
+
+                                            Text {
+                                                text: "Alternar Grabación Continua";
+                                                font-size: M3Theme.font-body-medium;
+                                                font-weight: 600;
+                                                color: M3Theme.on-surface;
+                                                vertical-alignment: center;
+                                            }
+
+                                            Rectangle {
+                                                height: 26px;
+                                                border-radius: 6px;
+                                                background: M3Theme.secondary-container;
+                                                y: (parent.height - self.height) / 2;
+                                                HorizontalLayout {
+                                                    padding-left: 8px;
+                                                    padding-right: 8px;
+                                                    Text {
+                                                        text: "Mod+F9";
+                                                        font-size: M3Theme.font-label-small;
+                                                        font-weight: 800;
+                                                        color: M3Theme.on-secondary-container;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
-            }
 
-            // =================================================================
-            // 5. Pie de página informativo M3
-            // =================================================================
-            HorizontalLayout {
-                alignment: space-between;
-                padding-top: 6px;
+                    // ---------------------------------------------------------
+                    // VISTA 4: GALERÍA DE GRABACIONES
+                    // ---------------------------------------------------------
+                    if root.active-view == 4: VerticalLayout {
+                        spacing: 20px;
 
-                Text {
-                    text: "Atajo global niri: Mod+F10 para volcar buffer instantáneamente";
-                    font-size: M3Theme.font-label-medium;
-                    color: M3Theme.on-surface-variant.with-alpha(0.7);
-                }
+                        // Header Galería
+                        HorizontalLayout {
+                            alignment: space-between;
 
-                Text {
-                    text: "sane-rec • Slint + GStreamer";
-                    font-size: M3Theme.font-label-medium;
-                    color: M3Theme.on-surface-variant.with-alpha(0.7);
+                            VerticalLayout {
+                                spacing: 2px;
+                                Text {
+                                    text: "GALERÍA DE REPLAYS";
+                                    font-size: M3Theme.font-title-large;
+                                    font-weight: 800;
+                                    color: M3Theme.on-surface;
+                                }
+                                Text {
+                                    text: "Clips y repeticiones almacenados en " + root.output-path;
+                                    font-size: M3Theme.font-body-small;
+                                    color: M3Theme.on-surface-variant;
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+
+                                M3Button {
+                                    text: "Abrir Carpeta";
+                                    icon-text: "📂";
+                                    variant: "tonal";
+                                    btn-height: 38px;
+                                    clicked => {
+                                        root.open-output-folder();
+                                    }
+                                }
+
+                                M3Button {
+                                    text: "Refrescar";
+                                    icon-text: "🔄";
+                                    variant: "filled";
+                                    btn-height: 38px;
+                                    clicked => {
+                                        root.refresh-gallery();
+                                    }
+                                }
+                            }
+                        }
+
+                        // Lista de Clips
+                        VerticalLayout {
+                            spacing: 10px;
+
+                            for clip[idx] in root.gallery-clips: M3ClipCard {
+                                filename: clip.filename;
+                                file-size: clip.file-size;
+                                date-text: clip.date-text;
+                                duration-text: clip.duration-text;
+                                filepath: clip.filepath;
+
+                                play-clicked(path) => {
+                                    root.play-clip(path);
+                                }
+
+                                folder-clicked(path) => {
+                                    root.open-clip-folder(path);
+                                }
+                            }
+                        }
+
+                        // Mensaje de estado informativo
+                        M3Card {
+                            content-padding: 14px;
+                            card-background: M3Theme.surface-container;
+                            card-radius: M3Theme.corner-medium;
+
+                            HorizontalLayout {
+                                spacing: 12px;
+                                alignment: start;
+
+                                Text {
+                                    text: "ℹ️";
+                                    font-size: 16px;
+                                    vertical-alignment: center;
+                                }
+
+                                Text {
+                                    text: "Puedes abrir cualquier clip directamente en mpv o tu reproductor preferido, o copiar el archivo desde tu gestor de archivos para compartirlo en Discord.";
+                                    font-size: M3Theme.font-body-small;
+                                    color: M3Theme.on-surface-variant;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

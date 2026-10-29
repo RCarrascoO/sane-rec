@@ -431,3 +431,644 @@ export component M3PresetChip inherits Rectangle {
         }
     }
 }
+
+// =============================================================================
+// M3NavItem: Botón en píldora para el Navigation Rail con indicador tonal
+// =============================================================================
+export component M3NavItem inherits Rectangle {
+    in-out property <string> icon-text: "🎬";
+    in-out property <string> text: "Dashboard";
+    in-out property <string> badge-text: "";
+    in-out property <bool> is-selected: false;
+    callback clicked();
+
+    height: 48px;
+    border-radius: M3Theme.corner-full;
+    background: root.is-selected ?
+        M3Theme.primary-container :
+        touch.has-hover ?
+            M3Theme.surface-container-high :
+            Colors.transparent;
+
+    animate background { duration: 160ms; easing: ease-out; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 12px;
+            alignment: start;
+
+            Text {
+                text: root.icon-text;
+                font-size: 18px;
+                vertical-alignment: center;
+            }
+
+            Text {
+                horizontal-stretch: 1;
+                text: root.text;
+                font-size: M3Theme.font-label-large;
+                font-weight: root.is-selected ? 700 : 500;
+                vertical-alignment: center;
+                color: root.is-selected ?
+                    M3Theme.on-primary-container :
+                    M3Theme.on-surface-variant;
+            }
+
+            if root.badge-text != "": Rectangle {
+                height: 20px;
+                border-radius: 10px;
+                background: root.is-selected ? M3Theme.primary : M3Theme.surface-container-highest;
+                y: (parent.height - self.height) / 2;
+
+                HorizontalLayout {
+                    padding-left: 7px;
+                    padding-right: 7px;
+                    Text {
+                        text: root.badge-text;
+                        font-size: M3Theme.font-label-small;
+                        font-weight: 700;
+                        color: root.is-selected ? M3Theme.on-primary : M3Theme.on-surface-variant;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// M3NavigationRail: Barra lateral de navegación vertical M3 Expressive
+// =============================================================================
+export component M3NavigationRail inherits Rectangle {
+    in-out property <int> active-view: 0;
+    callback view-selected(int);
+
+    width: 200px;
+    background: M3Theme.surface-container;
+    clip: true;
+
+    // Borde separador lateral derecho
+    Rectangle {
+        x: parent.width - 1px;
+        y: 0px;
+        width: 1px;
+        height: parent.height;
+        background: M3Theme.outline-variant.with-alpha(0.35);
+    }
+
+    VerticalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 18px;
+        padding-bottom: 16px;
+        spacing: 16px;
+
+        // Logo y Brand
+        HorizontalLayout {
+            padding-left: 4px;
+            padding-right: 4px;
+            spacing: 12px;
+            alignment: start;
+
+            Rectangle {
+                width: 38px;
+                height: 38px;
+                border-radius: 19px;
+                background: M3Theme.primary-container;
+                y: (parent.height - self.height) / 2;
+
+                Text {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    text: "⏺";
+                    font-size: 19px;
+                    color: M3Theme.primary;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 1px;
+
+                Text {
+                    text: "sane-rec";
+                    font-size: M3Theme.font-title-medium;
+                    font-weight: 800;
+                    color: M3Theme.on-surface;
+                }
+
+                Text {
+                    text: "M3 Expressive";
+                    font-size: M3Theme.font-label-small;
+                    color: M3Theme.on-surface-variant;
+                }
+            }
+        }
+
+        // Separador horizontal sutil
+        Rectangle {
+            height: 1px;
+            background: M3Theme.outline-variant.with-alpha(0.3);
+        }
+
+        // Elementos de Navegación (Píldoras M3)
+        VerticalLayout {
+            spacing: 6px;
+
+            M3NavItem {
+                icon-text: "🎬";
+                text: "Dashboard";
+                is-selected: root.active-view == 0;
+                clicked => {
+                    root.active-view = 0;
+                    root.view-selected(0);
+                }
+            }
+
+            M3NavItem {
+                icon-text: "🖥️";
+                text: "Fuentes";
+                is-selected: root.active-view == 1;
+                clicked => {
+                    root.active-view = 1;
+                    root.view-selected(1);
+                }
+            }
+
+            M3NavItem {
+                icon-text: "🎙️";
+                text: "Audio";
+                is-selected: root.active-view == 2;
+                clicked => {
+                    root.active-view = 2;
+                    root.view-selected(2);
+                }
+            }
+
+            M3NavItem {
+                icon-text: "⚙️";
+                text: "Ajustes";
+                is-selected: root.active-view == 3;
+                clicked => {
+                    root.active-view = 3;
+                    root.view-selected(3);
+                }
+            }
+
+            M3NavItem {
+                icon-text: "📂";
+                text: "Galería";
+                is-selected: root.active-view == 4;
+                clicked => {
+                    root.active-view = 4;
+                    root.view-selected(4);
+                }
+            }
+        }
+
+        // Espaciador expansible
+        Rectangle {
+            vertical-stretch: 1;
+        }
+
+        // Footer informativo
+        Rectangle {
+            height: 48px;
+            border-radius: M3Theme.corner-medium;
+            background: M3Theme.surface-container-high.with-alpha(0.6);
+            border-width: 1px;
+            border-color: M3Theme.outline-variant.with-alpha(0.25);
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 8px;
+                alignment: start;
+
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: M3Theme.success;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 1px;
+
+                    Text {
+                        text: "Wayland / niri";
+                        font-size: M3Theme.font-label-small;
+                        font-weight: 700;
+                        color: M3Theme.on-surface;
+                    }
+
+                    Text {
+                        text: "PipeWire • 60 FPS";
+                        font-size: 10px;
+                        color: M3Theme.on-surface-variant;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// M3MetricTile: Métrica de alto impacto visual para el Dashboard
+// =============================================================================
+export component M3MetricTile inherits Rectangle {
+    in-out property <string> icon-text: "⚡";
+    in-out property <string> value: "60 FPS";
+    in-out property <string> label: "Tasa de Refresco";
+    in-out property <string> badge-text: "";
+    in-out property <bool> highlight: false;
+
+    min-height: 84px;
+    border-radius: M3Theme.corner-medium;
+    background: root.highlight ?
+        M3Theme.primary-container.with-alpha(0.35) :
+        M3Theme.surface-container-high;
+    border-width: 1px;
+    border-color: root.highlight ?
+        M3Theme.primary.with-alpha(0.4) :
+        M3Theme.outline-variant.with-alpha(0.35);
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+        alignment: space-between;
+
+        HorizontalLayout {
+            alignment: space-between;
+
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: 14px;
+                background: root.highlight ?
+                    M3Theme.primary.with-alpha(0.25) :
+                    M3Theme.surface-container-highest;
+
+                Text {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    text: root.icon-text;
+                    font-size: 14px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+            }
+
+            if root.badge-text != "": Rectangle {
+                height: 18px;
+                border-radius: 9px;
+                background: root.highlight ? M3Theme.primary : M3Theme.surface-container-highest;
+                y: (parent.height - self.height) / 2;
+
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    Text {
+                        text: root.badge-text;
+                        font-size: 10px;
+                        font-weight: 700;
+                        color: root.highlight ? M3Theme.on-primary : M3Theme.on-surface-variant;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            Text {
+                text: root.value;
+                font-size: 18px;
+                font-weight: 800;
+                color: root.highlight ? M3Theme.primary : M3Theme.on-surface;
+            }
+            Text {
+                text: root.label;
+                font-size: M3Theme.font-label-small;
+                font-weight: 500;
+                color: M3Theme.on-surface-variant;
+            }
+        }
+    }
+}
+
+// =============================================================================
+// M3OptionItem: Opción de selección con checkmark y badge
+// =============================================================================
+export component M3OptionItem inherits Rectangle {
+    in-out property <string> text: "Opción";
+    in-out property <string> badge-text: "";
+    in-out property <bool> is-selected: false;
+    callback clicked();
+
+    height: 38px;
+    border-radius: M3Theme.corner-small;
+    background: root.is-selected ?
+        M3Theme.primary-container :
+        touch.has-hover ?
+            M3Theme.surface-container-highest :
+            M3Theme.surface-container;
+
+    animate background { duration: 120ms; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            spacing: 8px;
+            alignment: space-between;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+
+                Text {
+                    text: root.is-selected ? "✓" : " ";
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: root.is-selected ? M3Theme.primary : Colors.transparent;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: root.text;
+                    font-size: M3Theme.font-label-medium;
+                    font-weight: root.is-selected ? 700 : 500;
+                    color: root.is-selected ? M3Theme.on-primary-container : M3Theme.on-surface;
+                    vertical-alignment: center;
+                }
+            }
+
+            if root.badge-text != "": Rectangle {
+                height: 18px;
+                border-radius: 9px;
+                background: root.is-selected ? M3Theme.primary : M3Theme.surface-container-high;
+                y: (parent.height - self.height) / 2;
+
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    Text {
+                        text: root.badge-text;
+                        font-size: 10px;
+                        font-weight: 600;
+                        color: root.is-selected ? M3Theme.on-primary : M3Theme.on-surface-variant;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// M3DropdownCard: Tarjeta con selector estilizado desplegable
+// =============================================================================
+export component M3DropdownCard inherits Rectangle {
+    in-out property <string> title: "Opción";
+    in-out property <string> description: "";
+    in-out property <string> icon-text: "⚙️";
+    in-out property <string> current-value: "Seleccionado";
+    in-out property <bool> is-open: false;
+    callback toggled();
+
+    border-radius: M3Theme.corner-medium;
+    background: M3Theme.surface-container-high;
+    border-width: 1px;
+    border-color: root.is-open ? M3Theme.primary : M3Theme.outline-variant.with-alpha(0.4);
+
+    animate border-color { duration: 150ms; }
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+
+        // Fila de encabezado interactiva
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.is-open = !root.is-open;
+                root.toggled();
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+
+                    Rectangle {
+                        width: 36px;
+                        height: 36px;
+                        border-radius: 18px;
+                        background: M3Theme.surface-container;
+                        y: (parent.height - self.height) / 2;
+
+                        Text {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            text: root.icon-text;
+                            font-size: 16px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+
+                        Text {
+                            text: root.title;
+                            font-size: M3Theme.font-title-small;
+                            font-weight: 600;
+                            color: M3Theme.on-surface;
+                        }
+
+                        if root.description != "": Text {
+                            text: root.description;
+                            font-size: M3Theme.font-body-small;
+                            color: M3Theme.on-surface-variant;
+                        }
+                    }
+                }
+
+                // Botón selector con valor y flecha
+                Rectangle {
+                    height: 34px;
+                    border-radius: M3Theme.corner-small;
+                    background: M3Theme.surface-container-highest;
+                    border-width: 1px;
+                    border-color: M3Theme.outline-variant.with-alpha(0.5);
+                    y: (parent.height - self.height) / 2;
+
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 10px;
+                        spacing: 8px;
+                        alignment: center;
+
+                        Text {
+                            text: root.current-value;
+                            font-size: M3Theme.font-label-medium;
+                            font-weight: 600;
+                            color: M3Theme.primary;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: root.is-open ? "▲" : "▼";
+                            font-size: 10px;
+                            color: M3Theme.on-surface-variant;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Contenedor expandible para opciones
+        options-box := VerticalLayout {
+            visible: root.is-open;
+            padding-top: 6px;
+            spacing: 6px;
+            @children
+        }
+    }
+}
+
+// =============================================================================
+// M3ClipCard: Elemento de lista para la Galería de Replays
+// =============================================================================
+export component M3ClipCard inherits Rectangle {
+    in-out property <string> filename: "replay_2026-10-29.mp4";
+    in-out property <string> file-size: "42.5 MB";
+    in-out property <string> date-text: "Hoy, 19:20";
+    in-out property <string> duration-text: "00:30";
+    in-out property <string> filepath: "";
+
+    callback play-clicked(string);
+    callback folder-clicked(string);
+
+    border-radius: M3Theme.corner-medium;
+    background: M3Theme.surface-container-high;
+    border-width: 1px;
+    border-color: M3Theme.outline-variant.with-alpha(0.35);
+
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 14px;
+        alignment: space-between;
+
+        // Thumbnail / Icono de Video
+        Rectangle {
+            width: 48px;
+            height: 48px;
+            border-radius: M3Theme.corner-small;
+            background: M3Theme.primary-container;
+            y: (parent.height - self.height) / 2;
+
+            Text {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                text: "🎬";
+                font-size: 20px;
+            }
+        }
+
+        // Información del clip
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 4px;
+
+            Text {
+                text: root.filename;
+                font-size: M3Theme.font-title-small;
+                font-weight: 700;
+                color: M3Theme.on-surface;
+                overflow: elide;
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+
+                // Tag duración
+                Rectangle {
+                    height: 18px;
+                    border-radius: 9px;
+                    background: M3Theme.secondary-container;
+                    y: (parent.height - self.height) / 2;
+
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        Text {
+                            text: "⏱️ " + root.duration-text;
+                            font-size: 11px;
+                            font-weight: 600;
+                            color: M3Theme.on-secondary-container;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Text {
+                    text: root.file-size + " • " + root.date-text;
+                    font-size: M3Theme.font-body-small;
+                    color: M3Theme.on-surface-variant;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Acciones: Reproducir y Carpeta
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: end;
+            y: (parent.height - self.height) / 2;
+
+            M3Button {
+                text: "Ver";
+                icon-text: "▶";
+                variant: "filled";
+                btn-height: 36px;
+                btn-padding-h: 14px;
+                clicked => {
+                    root.play-clicked(root.filepath != "" ? root.filepath : root.filename);
+                }
+            }
+
+            M3Button {
+                text: "Carpeta";
+                icon-text: "📁";
+                variant: "outlined";
+                btn-height: 36px;
+                btn-padding-h: 12px;
+                clicked => {
+                    root.folder-clicked(root.filepath != "" ? root.filepath : root.filename);
+                }
+            }
+        }
+    }
+}
+

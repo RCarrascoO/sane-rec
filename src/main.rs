@@ -337,6 +337,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_audio_system(config.audio.capture_desktop);
     ui.set_audio_mic(config.audio.capture_mic);
 
+    // Cargar salidas de pantalla, ventanas activas y dispositivos de audio descubiertos
+    update_screens_model(&ui);
+    update_windows_model(&ui);
+    update_audio_devices_model(&ui);
+    update_gallery_model(&ui, &config.storage.output_dir);
+
     // Verificar si el daemon ya se encuentra activo
     let daemon_running = ipc::send_command_sync("status").is_ok();
 
@@ -394,6 +400,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(ui) = ui_weak.upgrade() {
                     if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                         ui.set_last_saved_clip(filename.into());
+                    }
+                    if let Some(ref eng) = engine_clone {
+                        update_gallery_model(&ui, &eng.config().storage.output_dir);
                     }
                 }
             }
@@ -483,6 +492,182 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Callback toggle-recording (Grabación continua)
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_toggle_recording(move || {
+            let is_recording = if daemon_running {
+                if let Ok(resp) = ipc::send_command_sync("record_toggle") {
+                    resp.message.map_or(false, |m| m.contains("iniciada"))
+                } else {
+                    false
+                }
+            } else if let Some(ref eng) = engine_clone {
+                eng.toggle_continuous_recording().unwrap_or(false)
+            } else {
+                false
+            };
+
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_is_recording(is_recording);
+            }
+        });
+    }
+
+    // Callbacks para la Galería y Reproducción
+    {
+        let output_dir = config.storage.output_dir.clone();
+        ui.on_play_clip(move |path_str| {
+            let p = PathBuf::from(path_str.as_str());
+            let target = if p.is_absolute() && p.exists() {
+                p
+            } else {
+                output_dir.join(path_str.as_str())
+            };
+            if std::process::Command::new("mpv").arg(&target).spawn().is_err() {
+                let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+            }
+        });
+    }
+
+    {
+        let output_dir = config.storage.output_dir.clone();
+        ui.on_open_clip_folder(move |path_str| {
+            let p = PathBuf::from(path_str.as_str());
+            let target = if p.is_absolute() && p.parent().is_some() {
+                p.parent().unwrap().to_path_buf()
+            } else {
+                output_dir.clone()
+            };
+            if std::process::Command::new("cosmic-files").arg(&target).spawn().is_err() {
+                let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+            }
+        });
+    }
+
+    {
+        let output_dir = config.storage.output_dir.clone();
+        ui.on_open_output_folder(move || {
+            if std::process::Command::new("cosmic-files").arg(&output_dir).spawn().is_err() {
+                let _ = std::process::Command::new("xdg-open").arg(&output_dir).spawn();
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let output_dir = config.storage.output_dir.clone();
+        ui.on_refresh_gallery(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                update_gallery_model(&ui, &output_dir);
+            }
+        });
+    }
+
+    // Callbacks para selección de Fuentes (Slurp y Ventanas)
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_select_area_slurp(move || {
+            if let Some(geo) = sane_rec::run_interactive_slurp() {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_selected_screen(format!("area:{}", geo).into());
+                    ui.set_selected_resolution(geo.clone().into());
+                    ui.set_capture_mode(2);
+                }
+                if let Some(ref eng) = engine_clone {
+                    let mut cfg = eng.config();
+                    cfg.video.target = format!("area:{}", geo);
+                    let _ = cfg.save();
+                    eng.update_config(cfg);
+                } else if let Ok(mut cfg) = Config::load() {
+                    cfg.video.target = format!("area:{}", geo);
+                    let _ = cfg.save();
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_refresh_windows(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                update_windows_model(&ui);
+                let windows = sane_rec::get_open_windows();
+                if let Some(focused) = windows.iter().find(|w| w.is_focused) {
+                    ui.set_selected_window(focused.title.clone().into());
+                }
+            }
+        });
+    }
+
+    {
+        let engine_clone = local_engine.clone();
+        ui.on_select_screen(move |screen_name, res| {
+            let screen = screen_name.as_str();
+            let resolution = res.as_str();
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.video.target = screen.to_string();
+                cfg.video.scale = resolution.to_string();
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.video.target = screen.to_string();
+                cfg.video.scale = resolution.to_string();
+                let _ = cfg.save();
+            }
+        });
+    }
+
+    {
+        let engine_clone = local_engine.clone();
+        ui.on_select_window(move |_title, app_id| {
+            let target = format!("window:{}", app_id.as_str());
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.video.target = target;
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.video.target = target;
+                let _ = cfg.save();
+            }
+        });
+    }
+
+    {
+        let engine_clone = local_engine.clone();
+        ui.on_select_audio_sink(move |_sink_name| {
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.audio.capture_desktop = true;
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.audio.capture_desktop = true;
+                let _ = cfg.save();
+            }
+        });
+    }
+
+    {
+        let engine_clone = local_engine.clone();
+        ui.on_select_audio_mic(move |mic_name| {
+            let is_active = mic_name.as_str() != "Desactivado";
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.audio.capture_mic = is_active;
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.audio.capture_mic = is_active;
+                let _ = cfg.save();
+            }
+        });
+    }
+
     // Temporizador Slint para actualizar métricas en vivo (cada 1 segundo)
     let _timer = {
         let ui_weak = ui.as_weak();
@@ -511,6 +696,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
                 if let Some(status) = status_opt {
                     ui.set_is_running(status.is_running);
+                    ui.set_is_recording(status.is_recording);
                     ui.set_ram_usage(format!("~{:.1} MB", status.ram_usage_mb).into());
                     let buf_text = if status.is_running {
                         format!(
@@ -531,6 +717,120 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Actualiza las pantallas disponibles leyendo las salidas Wayland con discovery.
+fn update_screens_model(ui: &AppWindow) {
+    let outputs = sane_rec::get_connected_outputs();
+    if !outputs.is_empty() {
+        let entries: Vec<OutputEntry> = outputs
+            .into_iter()
+            .map(|o| {
+                let badge = if o.is_current { "Principal" } else { "Conectado" };
+                let res = if o.width > 0 && o.height > 0 {
+                    format!("{}x{}", o.width, o.height)
+                } else {
+                    "1360x768".to_string()
+                };
+                OutputEntry {
+                    name: o.name.into(),
+                    description: o.description.into(),
+                    badge: badge.into(),
+                    resolution: res.into(),
+                }
+            })
+            .collect();
+        ui.set_available_screens(std::rc::Rc::new(slint::VecModel::from(entries)).into());
+    }
+}
+
+/// Actualiza la lista de ventanas activas detectadas en el compositor Wayland.
+fn update_windows_model(ui: &AppWindow) {
+    let windows = sane_rec::get_open_windows();
+    if !windows.is_empty() {
+        let entries: Vec<WindowEntry> = windows
+            .into_iter()
+            .map(|w| {
+                let badge = if w.is_focused { "Enfocada" } else { "Ventana" };
+                WindowEntry {
+                    id: w.id as i32,
+                    title: w.title.into(),
+                    app_id: w.app_id.into(),
+                    badge: badge.into(),
+                }
+            })
+            .collect();
+        ui.set_available_windows(std::rc::Rc::new(slint::VecModel::from(entries)).into());
+    }
+}
+
+/// Actualiza las opciones de salida y micrófonos disponibles en PipeWire / PulseAudio.
+fn update_audio_devices_model(ui: &AppWindow) {
+    let (monitors, microphones) = sane_rec::get_audio_devices();
+    if !monitors.is_empty() {
+        let sink_entries: Vec<AudioDeviceEntry> = monitors
+            .into_iter()
+            .map(|m| {
+                let badge = if m.is_default { "Por defecto" } else { "Salida" };
+                AudioDeviceEntry {
+                    name: m.name.into(),
+                    description: m.description.into(),
+                    badge: badge.into(),
+                    is_default: m.is_default,
+                }
+            })
+            .collect();
+        ui.set_available_sinks(std::rc::Rc::new(slint::VecModel::from(sink_entries)).into());
+    }
+
+    let mut mic_entries: Vec<AudioDeviceEntry> = microphones
+        .into_iter()
+        .map(|m| {
+            let badge = if m.is_default { "Por defecto" } else { "Entrada" };
+            AudioDeviceEntry {
+                name: m.name.into(),
+                description: m.description.into(),
+                badge: badge.into(),
+                is_default: m.is_default,
+            }
+        })
+        .collect();
+
+    mic_entries.push(AudioDeviceEntry {
+        name: "Desactivado".into(),
+        description: "Desactivado (Solo audio de juego)".into(),
+        badge: "Mudo".into(),
+        is_default: false,
+    });
+    ui.set_available_mics(std::rc::Rc::new(slint::VecModel::from(mic_entries)).into());
+}
+
+/// Actualiza el modelo de clips de la galería leyendo el directorio de salida en disco.
+fn update_gallery_model(ui: &AppWindow, output_dir: &std::path::Path) {
+    let clips = sane_rec::get_recent_clips(output_dir);
+    if !clips.is_empty() {
+        let entries: Vec<ClipEntry> = clips
+            .into_iter()
+            .map(|c| {
+                let date_str = c
+                    .modified
+                    .map(|t| {
+                        let dt: chrono::DateTime<chrono::Local> = t.into();
+                        dt.format("%d %b %H:%M").to_string()
+                    })
+                    .unwrap_or_else(|| "Reciente".into());
+
+                ClipEntry {
+                    filename: c.name.into(),
+                    file_size: format!("{:.1} MB", c.size_mb).into(),
+                    date_text: date_str.into(),
+                    duration_text: "00:30".into(),
+                    filepath: c.path.to_string_lossy().to_string().into(),
+                }
+            })
+            .collect();
+        ui.set_gallery_clips(std::rc::Rc::new(slint::VecModel::from(entries)).into());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,6 +849,34 @@ mod tests {
 
         ui.set_active_profile("amd-vaapi".into());
         assert_eq!(ui.get_active_profile(), "amd-vaapi");
+
+        // Verificación de la navegación multi-sección
+        assert_eq!(ui.get_active_view(), 0);
+        ui.set_active_view(1);
+        assert_eq!(ui.get_active_view(), 1);
+        ui.set_active_view(2);
+        assert_eq!(ui.get_active_view(), 2);
+        ui.set_active_view(3);
+        assert_eq!(ui.get_active_view(), 3);
+        ui.set_active_view(4);
+        assert_eq!(ui.get_active_view(), 4);
+
+        // Propiedades de fuentes, audio y grabación
+        assert_eq!(ui.get_capture_mode(), 0);
+        ui.set_capture_mode(1);
+        assert_eq!(ui.get_capture_mode(), 1);
+
+        assert_eq!(ui.get_selected_fps(), 60);
+        ui.set_selected_fps(30);
+        assert_eq!(ui.get_selected_fps(), 30);
+
+        assert_eq!(ui.get_audio_track_mode(), 0);
+        ui.set_audio_track_mode(1);
+        assert_eq!(ui.get_audio_track_mode(), 1);
+
+        assert_eq!(ui.get_is_recording(), false);
+        ui.set_is_recording(true);
+        assert_eq!(ui.get_is_recording(), true);
     }
 
     #[test]
