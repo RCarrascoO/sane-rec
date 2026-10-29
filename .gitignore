@@ -1,0 +1,14 @@
+# Rust standard ignore
+/target
+**/*.rs.bk
+
+# Optional: Cargo.lock can be kept for binary apps, but ignoring local workspace/scratch files
+# Cargo.lock
+
+# IDE & editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
