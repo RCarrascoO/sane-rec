@@ -1,0 +1,433 @@
+// Material Design 3 (M3 Expressive) Components for sane-rec
+import { M3Theme } from "theme.slint";
+
+// =============================================================================
+// M3Card: Contenedor de superficie M3 con bordes redondeados y padding
+// =============================================================================
+export component M3Card inherits Rectangle {
+    in-out property <length> content-padding: M3Theme.space-xl;
+    in-out property <color> card-background: M3Theme.surface-container;
+    in-out property <color> card-border-color: M3Theme.outline-variant.with-alpha(0.35);
+    in-out property <length> card-border-width: 1px;
+    in-out property <length> card-radius: M3Theme.corner-large;
+
+    background: root.card-background;
+    border-radius: root.card-radius;
+    border-color: root.card-border-color;
+    border-width: root.card-border-width;
+    clip: true;
+
+    VerticalLayout {
+        padding: root.content-padding;
+        @children
+    }
+}
+
+// =============================================================================
+// M3Button: Botón M3 con variantes filled, tonal y outlined
+// =============================================================================
+export component M3Button inherits Rectangle {
+    in-out property <string> text: "Acción";
+    in-out property <string> variant: "filled"; // "filled" | "tonal" | "outlined"
+    in-out property <bool> enabled: true;
+    in-out property <length> btn-height: 42px;
+    in-out property <length> btn-padding-h: 22px;
+    in-out property <string> icon-text: "";
+
+    callback clicked();
+
+    height: root.btn-height;
+    border-radius: M3Theme.corner-full;
+    clip: true;
+
+    // Fondo interactivo
+    background: !root.enabled ?
+        (root.variant == "outlined" ? Colors.transparent : M3Theme.surface-container-highest.with-alpha(0.38)) :
+        touch.pressed ?
+            (root.variant == "filled" ? M3Theme.primary.darker(0.18) :
+             root.variant == "tonal" ? M3Theme.secondary-container.darker(0.18) :
+             M3Theme.primary.with-alpha(0.18)) :
+        touch.has-hover ?
+            (root.variant == "filled" ? M3Theme.primary.darker(0.08) :
+             root.variant == "tonal" ? M3Theme.secondary-container.darker(0.08) :
+             M3Theme.primary.with-alpha(0.08)) :
+        (root.variant == "filled" ? M3Theme.primary :
+         root.variant == "tonal" ? M3Theme.secondary-container :
+         Colors.transparent);
+
+    border-width: root.variant == "outlined" ? 1px : 0px;
+    border-color: !root.enabled ? M3Theme.outline.with-alpha(0.2) :
+                  touch.has-hover ? M3Theme.primary :
+                  M3Theme.outline;
+
+    animate background { duration: 150ms; easing: ease-out; }
+    animate border-color { duration: 150ms; easing: ease-out; }
+
+    HorizontalLayout {
+        padding-left: root.btn-padding-h;
+        padding-right: root.btn-padding-h;
+        spacing: 8px;
+        alignment: center;
+
+        if root.icon-text != "": Text {
+            text: root.icon-text;
+            font-size: 16px;
+            vertical-alignment: center;
+            color: !root.enabled ? M3Theme.on-surface.with-alpha(0.38) :
+                   root.variant == "filled" ? M3Theme.on-primary :
+                   root.variant == "tonal" ? M3Theme.on-secondary-container :
+                   M3Theme.primary;
+        }
+
+        Text {
+            text: root.text;
+            font-size: M3Theme.font-label-large;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            color: !root.enabled ? M3Theme.on-surface.with-alpha(0.38) :
+                   root.variant == "filled" ? M3Theme.on-primary :
+                   root.variant == "tonal" ? M3Theme.on-secondary-container :
+                   M3Theme.primary;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// =============================================================================
+// M3Switch: Toggle M3 con animación suave
+// =============================================================================
+export component M3Switch inherits Rectangle {
+    in-out property <bool> checked: false;
+    in-out property <bool> enabled: true;
+    callback toggled(bool);
+
+    width: 52px;
+    height: 32px;
+    border-radius: 16px;
+
+    background: !root.enabled ? M3Theme.surface-container-highest.with-alpha(0.38) :
+                root.checked ? M3Theme.primary : M3Theme.surface-container-highest;
+    border-width: root.checked ? 0px : 2px;
+    border-color: !root.enabled ? M3Theme.outline.with-alpha(0.2) : M3Theme.outline;
+
+    animate background { duration: 180ms; easing: ease-out; }
+    animate border-color { duration: 180ms; easing: ease-out; }
+
+    thumb := Rectangle {
+        y: (parent.height - self.height) / 2;
+        x: root.checked ?
+            (parent.width - self.width - 4px) :
+            4px;
+
+        width: root.checked ? 24px : 16px;
+        height: root.checked ? 24px : 16px;
+        border-radius: 12px;
+
+        background: !root.enabled ? M3Theme.on-surface.with-alpha(0.38) :
+                    root.checked ? M3Theme.on-primary : M3Theme.outline;
+
+        animate x { duration: 180ms; easing: ease-out; }
+        animate width { duration: 150ms; easing: ease-out; }
+        animate height { duration: 150ms; easing: ease-out; }
+        animate background { duration: 180ms; easing: ease-out; }
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+}
+
+// =============================================================================
+// M3Badge / M3StatusChip: Indicador de estado con halo circular de color
+// =============================================================================
+export component M3StatusChip inherits Rectangle {
+    in-out property <string> text: "Detenido";
+    in-out property <string> status: "idle"; // "recording" | "active" | "idle"
+
+    height: 30px;
+    border-radius: M3Theme.corner-full;
+
+    background: root.status == "recording" ? M3Theme.error-container.with-alpha(0.45) :
+                root.status == "active" ? M3Theme.success-container.with-alpha(0.4) :
+                M3Theme.surface-container-high;
+
+    border-width: 1px;
+    border-color: root.status == "recording" ? M3Theme.error.with-alpha(0.6) :
+                  root.status == "active" ? M3Theme.success.with-alpha(0.6) :
+                  M3Theme.outline-variant;
+
+    animate background { duration: 200ms; }
+    animate border-color { duration: 200ms; }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 14px;
+        spacing: 8px;
+        alignment: center;
+
+        // Halo exterior
+        Rectangle {
+            width: 14px;
+            height: 14px;
+            border-radius: 7px;
+            y: (parent.height - self.height) / 2;
+            background: root.status == "recording" ? M3Theme.error.with-alpha(0.25) :
+                        root.status == "active" ? M3Theme.success.with-alpha(0.25) :
+                        Colors.transparent;
+
+            // Dot central
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.status == "recording" ? M3Theme.error :
+                            root.status == "active" ? M3Theme.success :
+                            M3Theme.outline;
+            }
+        }
+
+        Text {
+            text: root.text;
+            font-size: M3Theme.font-label-medium;
+            font-weight: 700;
+            vertical-alignment: center;
+            color: root.status == "recording" ? M3Theme.error :
+                   root.status == "active" ? M3Theme.success :
+                   M3Theme.on-surface-variant;
+        }
+    }
+}
+
+// =============================================================================
+// M3ProfileTile: Tarjeta/Chip seleccionable para los perfiles de hardware
+// =============================================================================
+export component M3ProfileTile inherits Rectangle {
+    in-out property <string> title: "Perfil";
+    in-out property <string> subtitle: "";
+    in-out property <string> badge-text: "";
+    in-out property <bool> is-selected: false;
+    in-out property <string> icon-text: "⚡";
+
+    callback clicked();
+
+    border-radius: M3Theme.corner-medium;
+    background: root.is-selected ?
+        M3Theme.primary-container :
+        touch.has-hover ?
+            M3Theme.surface-container-highest :
+            M3Theme.surface-container-high;
+
+    border-width: root.is-selected ? 1.5px : 1px;
+    border-color: root.is-selected ?
+        M3Theme.primary :
+        touch.has-hover ?
+            M3Theme.outline :
+            M3Theme.outline-variant.with-alpha(0.5);
+
+    animate background { duration: 150ms; }
+    animate border-color { duration: 150ms; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 10px;
+            padding-bottom: 10px;
+            spacing: 12px;
+            alignment: center;
+
+            // Icono
+            Rectangle {
+                width: 36px;
+                height: 36px;
+                border-radius: 18px;
+                background: root.is-selected ?
+                    M3Theme.primary.with-alpha(0.2) :
+                    M3Theme.surface-container;
+                y: (parent.height - self.height) / 2;
+
+                Text {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    text: root.icon-text;
+                    font-size: 16px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+            }
+
+            // Textos
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Text {
+                        text: root.title;
+                        font-size: M3Theme.font-title-small;
+                        font-weight: root.is-selected ? 700 : 600;
+                        color: root.is-selected ? M3Theme.on-primary-container : M3Theme.on-surface;
+                        vertical-alignment: center;
+                    }
+
+                    if root.badge-text != "": Rectangle {
+                        height: 20px;
+                        border-radius: 10px;
+                        background: root.is-selected ?
+                            M3Theme.primary :
+                            M3Theme.secondary-container;
+                        y: (parent.height - self.height) / 2;
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            Text {
+                                text: root.badge-text;
+                                font-size: M3Theme.font-label-small;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                color: root.is-selected ?
+                                    M3Theme.on-primary :
+                                    M3Theme.on-secondary-container;
+                            }
+                        }
+                    }
+                }
+
+                if root.subtitle != "": Text {
+                    text: root.subtitle;
+                    font-size: M3Theme.font-body-small;
+                    color: root.is-selected ?
+                        M3Theme.on-primary-container.with-alpha(0.8) :
+                        M3Theme.on-surface-variant;
+                }
+            }
+
+            // Radio dot indicator
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                y: (parent.height - self.height) / 2;
+                border-width: 2px;
+                border-color: root.is-selected ? M3Theme.primary : M3Theme.outline;
+                background: Colors.transparent;
+
+                if root.is-selected: Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 5px;
+                    background: M3Theme.primary;
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// M3SegmentItem: Opción individual de selector segmentado
+// =============================================================================
+export component M3SegmentItem inherits Rectangle {
+    in-out property <string> text: "Opción";
+    in-out property <bool> is-selected: false;
+    callback clicked();
+
+    border-radius: M3Theme.corner-small;
+    background: root.is-selected ?
+        M3Theme.secondary-container :
+        touch.has-hover ?
+            M3Theme.surface-container-highest :
+            Colors.transparent;
+
+    animate background { duration: 150ms; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            alignment: center;
+
+            Text {
+                text: root.text;
+                font-size: M3Theme.font-label-medium;
+                font-weight: root.is-selected ? 700 : 500;
+                vertical-alignment: center;
+                color: root.is-selected ?
+                    M3Theme.on-secondary-container :
+                    M3Theme.on-surface-variant;
+            }
+        }
+    }
+}
+
+// =============================================================================
+// M3PresetChip: Chip pequeño para presets numéricos (ej. 15s, 30s, 60s)
+// =============================================================================
+export component M3PresetChip inherits Rectangle {
+    in-out property <string> text: "30s";
+    in-out property <bool> is-active: false;
+    callback clicked();
+
+    height: 32px;
+    border-radius: 16px;
+    background: root.is-active ?
+        M3Theme.primary :
+        touch.has-hover ?
+            M3Theme.surface-container-highest :
+            M3Theme.surface-container-high;
+
+    border-width: 1px;
+    border-color: root.is-active ?
+        M3Theme.primary :
+        M3Theme.outline-variant;
+
+    animate background { duration: 150ms; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            alignment: center;
+
+            Text {
+                text: root.text;
+                font-size: M3Theme.font-label-medium;
+                font-weight: root.is-active ? 700 : 500;
+                vertical-alignment: center;
+                color: root.is-active ?
+                    M3Theme.on-primary :
+                    M3Theme.on-surface-variant;
+            }
+        }
+    }
+}
