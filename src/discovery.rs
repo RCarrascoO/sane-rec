@@ -679,7 +679,11 @@ mod tests {
 
     #[test]
     fn test_get_recent_clips_simulated() {
-        let temp_dir = std::env::temp_dir().join("sane_rec_discovery_test");
+        let temp_dir = std::env::temp_dir().join(format!(
+            "sane_rec_discovery_test_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 

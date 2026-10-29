@@ -48,9 +48,9 @@ export struct AudioDeviceEntry {
 
 export component AppWindow inherits Window {
     title: "sane-rec — Instant Replay & Screen Recorder";
-    min-width: 880px;
+    min-width: 480px;
     preferred-width: 1000px;
-    min-height: 640px;
+    min-height: 540px;
     preferred-height: 740px;
     background: M3Theme.surface;
     default-font-family: M3Theme.font-family;
@@ -111,23 +111,8 @@ export component AppWindow inherits Window {
     property <bool> sink-dropdown-open: false;
     property <bool> mic-dropdown-open: false;
 
-    // Lista de clips para la galería
-    in-out property <[ClipEntry]> gallery-clips: [
-        {
-            filename: "replay_2026-10-29_19-20-15.mp4",
-            file-size: "38.2 MB",
-            date-text: "Hoy, 19:20",
-            duration-text: "00:30",
-            filepath: "/mnt/Files/Videos/Replays/replay_2026-10-29_19-20-15.mp4"
-        },
-        {
-            filename: "recording_2026-10-29_18-45-00.mp4",
-            file-size: "142.8 MB",
-            date-text: "Hoy, 18:45",
-            duration-text: "02:15",
-            filepath: "/mnt/Files/Videos/Replays/recording_2026-10-29_18-45-00.mp4"
-        }
-    ];
+    // Lista de clips para la galería (sin datos mock)
+    in-out property <[ClipEntry]> gallery-clips: [];
 
     // Modelos dinámicos descubiertos en Wayland / PipeWire
     in-out property <[OutputEntry]> available-screens: [
@@ -154,29 +139,35 @@ export component AppWindow inherits Window {
         { name: "Desactivado", description: "Desactivado (Solo audio de juego)", badge: "Mudo", is-default: false }
     ];
 
-    HorizontalLayout {
-        // =====================================================================
-        // 1. Navigation Rail Lateral Izquierdo
-        // =====================================================================
-        M3NavigationRail {
-            active-view <=> root.active-view;
-        }
+    // =========================================================================
+    // 1. Navigation Rail Lateral Izquierdo (Responsivo: 64px si < 720px, 180px si >= 720px)
+    // =========================================================================
+    rail := M3NavigationRail {
+        x: 0px;
+        y: 0px;
+        height: parent.height;
+        active-view <=> root.active-view;
+        compact: root.width < 720px;
+    }
 
-        // =====================================================================
-        // 2. Contenedor Dinámico Principal (Vistas 0 a 4)
-        // =====================================================================
-        Rectangle {
-            background: M3Theme.surface;
-            horizontal-stretch: 1;
-            clip: true;
+    // =========================================================================
+    // 2. Contenedor Dinámico Principal (Vistas 0 a 4)
+    // =========================================================================
+    Rectangle {
+        x: rail.width;
+        y: 0px;
+        width: parent.width - rail.width;
+        height: parent.height;
+        background: M3Theme.surface;
+        clip: true;
 
-            ScrollView {
-                VerticalLayout {
-                    padding-left: M3Theme.space-xxl;
-                    padding-right: M3Theme.space-xxl;
-                    padding-top: M3Theme.space-xl;
-                    padding-bottom: M3Theme.space-xxl;
-                    spacing: 20px;
+        ScrollView {
+            VerticalLayout {
+                padding-left: root.width < 720px ? 14px : M3Theme.space-xxl;
+                padding-right: root.width < 720px ? 14px : M3Theme.space-xxl;
+                padding-top: M3Theme.space-xl;
+                padding-bottom: M3Theme.space-xxl;
+                spacing: 20px;
 
                     // ---------------------------------------------------------
                     // VISTA 0: DASHBOARD (Monitor en vivo)
@@ -374,41 +365,49 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Fila de Métricas del Sistema (4 Tiles M3)
-                        HorizontalLayout {
+                        // Métricas del Sistema (Cuadrícula responsiva 2x2)
+                        VerticalLayout {
                             spacing: 12px;
 
-                            M3MetricTile {
-                                horizontal-stretch: 1;
-                                icon-text: "⚡";
-                                value: root.selected-fps + " FPS";
-                                label: "Tasa de Refresco";
-                                badge-text: "Fluido";
-                                highlight: true;
+                            HorizontalLayout {
+                                spacing: 12px;
+
+                                M3MetricTile {
+                                    horizontal-stretch: 1;
+                                    icon-text: "⚡";
+                                    value: root.selected-fps + " FPS";
+                                    label: "Tasa de Refresco";
+                                    badge-text: "Fluido";
+                                    highlight: true;
+                                }
+
+                                M3MetricTile {
+                                    horizontal-stretch: 1;
+                                    icon-text: "📺";
+                                    value: root.selected-resolution;
+                                    label: "Resolución Activa";
+                                    badge-text: root.selected-screen;
+                                }
                             }
 
-                            M3MetricTile {
-                                horizontal-stretch: 1;
-                                icon-text: "📺";
-                                value: root.selected-resolution;
-                                label: "Resolución Activa";
-                                badge-text: root.selected-screen;
-                            }
+                            HorizontalLayout {
+                                spacing: 12px;
 
-                            M3MetricTile {
-                                horizontal-stretch: 1;
-                                icon-text: "⏱️";
-                                value: root.replay-duration + "s";
-                                label: "Búfer en RAM";
-                                badge-text: "Instantáneo";
-                            }
+                                M3MetricTile {
+                                    horizontal-stretch: 1;
+                                    icon-text: "⏱️";
+                                    value: root.replay-duration + "s";
+                                    label: "Búfer en RAM";
+                                    badge-text: "Instantáneo";
+                                }
 
-                            M3MetricTile {
-                                horizontal-stretch: 1;
-                                icon-text: "🧠";
-                                value: root.ram-usage;
-                                label: "Consumo RAM";
-                                badge-text: "dmabuf";
+                                M3MetricTile {
+                                    horizontal-stretch: 1;
+                                    icon-text: "🧠";
+                                    value: root.ram-usage;
+                                    label: "Consumo RAM";
+                                    badge-text: "dmabuf";
+                                }
                             }
                         }
 
@@ -774,46 +773,130 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                // Resolución
+                                // Resolución de Captura Ampliada
                                 VerticalLayout {
                                     spacing: 8px;
-                                    Text {
-                                        text: "Resolución de Captura";
-                                        font-size: M3Theme.font-body-medium;
-                                        font-weight: 600;
-                                        color: M3Theme.on-surface;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        Text {
+                                            text: "Resolución de Captura";
+                                            font-size: M3Theme.font-body-medium;
+                                            font-weight: 600;
+                                            color: M3Theme.on-surface;
+                                        }
+
+                                        Text {
+                                            text: "Activa: " + root.selected-resolution;
+                                            font-size: M3Theme.font-label-small;
+                                            font-weight: 700;
+                                            color: M3Theme.primary;
+                                        }
                                     }
 
-                                    Rectangle {
-                                        height: 38px;
-                                        border-radius: M3Theme.corner-small;
-                                        background: M3Theme.surface-container-high;
-                                        border-width: 1px;
-                                        border-color: M3Theme.outline-variant.with-alpha(0.5);
+                                    VerticalLayout {
+                                        spacing: 6px;
 
-                                        HorizontalLayout {
-                                            padding: 3px;
-                                            spacing: 3px;
+                                        // Fila 1: Nativa y 1080p FHD
+                                        Rectangle {
+                                            height: 38px;
+                                            border-radius: M3Theme.corner-small;
+                                            background: M3Theme.surface-container-high;
+                                            border-width: 1px;
+                                            border-color: M3Theme.outline-variant.with-alpha(0.5);
 
-                                            M3SegmentItem {
-                                                horizontal-stretch: 1;
-                                                text: "1360x768 (Nativa 100%)";
-                                                is-selected: root.selected-resolution == "1360x768";
-                                                clicked => { root.selected-resolution = "1360x768"; }
+                                            HorizontalLayout {
+                                                padding: 3px;
+                                                spacing: 4px;
+
+                                                M3SegmentItem {
+                                                    horizontal-stretch: 1;
+                                                    text: "Nativa (100%)";
+                                                    is-selected: root.selected-resolution == "Nativa (100%)" || root.selected-resolution == "1360x768" || root.selected-resolution == "1366x768" || root.selected-resolution == "none";
+                                                    clicked => {
+                                                        root.selected-resolution = "Nativa (100%)";
+                                                        root.select-screen(root.selected-screen, "none");
+                                                    }
+                                                }
+
+                                                M3SegmentItem {
+                                                    horizontal-stretch: 1;
+                                                    text: "1080p (FHD - 1920x1080)";
+                                                    is-selected: root.selected-resolution == "1920x1080";
+                                                    clicked => {
+                                                        root.selected-resolution = "1920x1080";
+                                                        root.select-screen(root.selected-screen, "1920x1080");
+                                                    }
+                                                }
                                             }
+                                        }
 
-                                            M3SegmentItem {
-                                                horizontal-stretch: 1;
-                                                text: "1280x720 (720p HD)";
-                                                is-selected: root.selected-resolution == "1280x720";
-                                                clicked => { root.selected-resolution = "1280x720"; }
+                                        // Fila 2: 720p HD y 1440p 2K
+                                        Rectangle {
+                                            height: 38px;
+                                            border-radius: M3Theme.corner-small;
+                                            background: M3Theme.surface-container-high;
+                                            border-width: 1px;
+                                            border-color: M3Theme.outline-variant.with-alpha(0.5);
+
+                                            HorizontalLayout {
+                                                padding: 3px;
+                                                spacing: 4px;
+
+                                                M3SegmentItem {
+                                                    horizontal-stretch: 1;
+                                                    text: "720p (HD - 1280x720)";
+                                                    is-selected: root.selected-resolution == "1280x720";
+                                                    clicked => {
+                                                        root.selected-resolution = "1280x720";
+                                                        root.select-screen(root.selected-screen, "1280x720");
+                                                    }
+                                                }
+
+                                                M3SegmentItem {
+                                                    horizontal-stretch: 1;
+                                                    text: "1440p (2K - 2560x1440)";
+                                                    is-selected: root.selected-resolution == "2560x1440";
+                                                    clicked => {
+                                                        root.selected-resolution = "2560x1440";
+                                                        root.select-screen(root.selected-screen, "2560x1440");
+                                                    }
+                                                }
                                             }
+                                        }
 
-                                            M3SegmentItem {
-                                                horizontal-stretch: 1;
-                                                text: "960x540 (Bajo consumo)";
-                                                is-selected: root.selected-resolution == "960x540";
-                                                clicked => { root.selected-resolution = "960x540"; }
+                                        // Fila 3: 4K UHD y 540p SD
+                                        Rectangle {
+                                            height: 38px;
+                                            border-radius: M3Theme.corner-small;
+                                            background: M3Theme.surface-container-high;
+                                            border-width: 1px;
+                                            border-color: M3Theme.outline-variant.with-alpha(0.5);
+
+                                            HorizontalLayout {
+                                                padding: 3px;
+                                                spacing: 4px;
+
+                                                M3SegmentItem {
+                                                    horizontal-stretch: 1;
+                                                    text: "4K (UHD - 3840x2160)";
+                                                    is-selected: root.selected-resolution == "3840x2160";
+                                                    clicked => {
+                                                        root.selected-resolution = "3840x2160";
+                                                        root.select-screen(root.selected-screen, "3840x2160");
+                                                    }
+                                                }
+
+                                                M3SegmentItem {
+                                                    horizontal-stretch: 1;
+                                                    text: "540p (SD - 960x540)";
+                                                    is-selected: root.selected-resolution == "960x540";
+                                                    clicked => {
+                                                        root.selected-resolution = "960x540";
+                                                        root.select-screen(root.selected-screen, "960x540");
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1090,8 +1173,8 @@ export component AppWindow inherits Window {
                                         minimum: 0.0;
                                         maximum: 1.5;
                                         value: root.volume-system;
-                                        changed => {
-                                            root.volume-system = self.value;
+                                        changed(val) => {
+                                            root.volume-system = val;
                                         }
                                     }
                                 }
@@ -1139,8 +1222,8 @@ export component AppWindow inherits Window {
                                         minimum: 0.0;
                                         maximum: 1.5;
                                         value: root.volume-mic;
-                                        changed => {
-                                            root.volume-mic = self.value;
+                                        changed(val) => {
+                                            root.volume-mic = val;
                                         }
                                     }
                                 }
@@ -1199,6 +1282,7 @@ export component AppWindow inherits Window {
                                 title: "AMD Hardware (VA-API)";
                                 subtitle: "Aceleración por GPU Radeon • Consumo ultra bajo de CPU";
                                 badge-text: "Experimental";
+                                warning-text: "Incompatible con AMD Polaris (RX 570)";
                                 icon-text: "⚡";
                                 is-selected: root.active-profile == "amd-vaapi";
                                 clicked => {
@@ -1329,8 +1413,8 @@ export component AppWindow inherits Window {
                                     minimum: 15.0;
                                     maximum: 120.0;
                                     value: root.replay-duration;
-                                    changed => {
-                                        root.replay-duration = Math.round(self.value);
+                                    changed(val) => {
+                                        root.replay-duration = Math.round(val);
                                     }
                                 }
                             }
@@ -1600,8 +1684,67 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Lista de Clips
-                        VerticalLayout {
+                        // Estado Vacío o Lista de Clips de la Galería
+                        if root.gallery-clips.length == 0: M3Card {
+                            content-padding: 32px;
+                            card-background: M3Theme.surface-container;
+                            card-radius: M3Theme.corner-large;
+
+                            VerticalLayout {
+                                spacing: 14px;
+                                alignment: center;
+
+                                Rectangle {
+                                    width: 56px;
+                                    height: 56px;
+                                    border-radius: 28px;
+                                    background: M3Theme.surface-container-high;
+
+                                    Text {
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        text: "🎬";
+                                        font-size: 26px;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    spacing: 4px;
+                                    alignment: center;
+
+                                    Text {
+                                        text: "No hay clips guardados aún";
+                                        font-size: M3Theme.font-title-medium;
+                                        font-weight: 700;
+                                        color: M3Theme.on-surface;
+                                        horizontal-alignment: center;
+                                    }
+
+                                    Text {
+                                        text: "No hay clips guardados aún en " + root.output-path;
+                                        font-size: M3Theme.font-body-small;
+                                        color: M3Theme.on-surface-variant;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
+                                    }
+                                }
+
+                                M3Button {
+                                    text: "Refrescar";
+                                    icon-text: "🔄";
+                                    variant: "tonal";
+                                    btn-height: 38px;
+                                    btn-padding-h: 20px;
+                                    clicked => {
+                                        root.refresh-gallery();
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.gallery-clips.length > 0: VerticalLayout {
                             spacing: 10px;
 
                             for clip[idx] in root.gallery-clips: M3ClipCard {
@@ -1650,4 +1793,3 @@ export component AppWindow inherits Window {
             }
         }
     }
-}

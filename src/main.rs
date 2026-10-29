@@ -382,6 +382,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ui_weak = ui.as_weak();
         let engine_clone = local_engine.clone();
+        let output_dir = config.storage.output_dir.clone();
         ui.on_save_clip(move || {
             let res = if daemon_running {
                 ipc::send_command_sync("save").map(|resp| {
@@ -401,9 +402,14 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                         ui.set_last_saved_clip(filename.into());
                     }
-                    if let Some(ref eng) = engine_clone {
-                        update_gallery_model(&ui, &eng.config().storage.output_dir);
-                    }
+                    let out_dir = if let Some(ref eng) = engine_clone {
+                        eng.config().storage.output_dir
+                    } else {
+                        path.parent()
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| output_dir.clone())
+                    };
+                    update_gallery_model(&ui, &out_dir);
                 }
             }
         });
@@ -806,7 +812,9 @@ fn update_audio_devices_model(ui: &AppWindow) {
 /// Actualiza el modelo de clips de la galería leyendo el directorio de salida en disco.
 fn update_gallery_model(ui: &AppWindow, output_dir: &std::path::Path) {
     let clips = sane_rec::get_recent_clips(output_dir);
-    if !clips.is_empty() {
+    if clips.is_empty() {
+        ui.set_gallery_clips(std::rc::Rc::new(slint::VecModel::default()).into());
+    } else {
         let entries: Vec<ClipEntry> = clips
             .into_iter()
             .map(|c| {
@@ -877,6 +885,14 @@ mod tests {
         assert_eq!(ui.get_is_recording(), false);
         ui.set_is_recording(true);
         assert_eq!(ui.get_is_recording(), true);
+
+        // Verificación de sincronización de galería vacía (elimina mock data)
+        use slint::Model;
+        let empty_dir = std::env::temp_dir().join(format!("sane_rec_empty_gal_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&empty_dir);
+        update_gallery_model(&ui, &empty_dir);
+        assert_eq!(ui.get_gallery_clips().row_count(), 0);
+        let _ = std::fs::remove_dir_all(&empty_dir);
     }
 
     #[test]

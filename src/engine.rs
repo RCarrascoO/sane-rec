@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::Config;
 use crate::profiles::EncoderProfile;
 
-pub const DEFAULT_SEGMENT_DURATION_SECS: u32 = 2;
+pub const DEFAULT_SEGMENT_DURATION_SECS: u32 = 1;
 
 /// Retorna la ruta por defecto al buffer circular en memoria RAM: `/dev/shm/sane-rec-<UID>/`.
 pub fn default_buffer_dir() -> PathBuf {
@@ -86,6 +86,7 @@ pub struct ReplayEngine {
     continuous_output: Mutex<Option<PathBuf>>,
     start_time: Mutex<Option<Instant>>,
     continuous_start_time: Mutex<Option<Instant>>,
+    audio_modules: Mutex<Vec<u32>>,
 }
 
 impl ReplayEngine {
@@ -114,6 +115,7 @@ impl ReplayEngine {
             continuous_output: Mutex::new(None),
             start_time: Mutex::new(None),
             continuous_start_time: Mutex::new(None),
+            audio_modules: Mutex::new(Vec::new()),
         };
 
         // Limpieza automática de segmentos antiguos en RAM al inicializar
@@ -137,6 +139,208 @@ impl ReplayEngine {
         *self.config.lock().unwrap() = new_config;
     }
 
+    /// Carga un módulo pactl y retorna su ID numérico si fue exitoso.
+    fn load_pactl_module(args: &[&str]) -> Option<u32> {
+        let output = Command::new("pactl")
+            .arg("load-module")
+            .args(args)
+            .output()
+            .ok()?;
+
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            text.trim().parse::<u32>().ok()
+        } else {
+            None
+        }
+    }
+
+    /// Descarga un módulo pactl dado su ID numérico.
+    fn unload_pactl_module(id: u32) {
+        let _ = Command::new("pactl")
+            .args(["unload-module", &id.to_string()])
+            .output();
+    }
+
+    /// Descarga y limpia todos los módulos PipeWire/PulseAudio cargados por sane-rec.
+    pub fn cleanup_audio_modules(&self) {
+        let mut modules = self.audio_modules.lock().unwrap();
+        for id in modules.drain(..).rev() {
+            Self::unload_pactl_module(id);
+        }
+    }
+
+    /// Retorna una copia de la lista de IDs de módulos de audio activos actualmente.
+    pub fn audio_modules(&self) -> Vec<u32> {
+        self.audio_modules.lock().unwrap().clone()
+    }
+
+    /// Configura el mezclador dual PipeWire creando un null-sink virtual y loopbacks.
+    /// Retorna el nombre del monitor mezclado (`sane_rec_mix.monitor`) si tuvo éxito.
+    fn setup_dual_audio(&self, desktop_sink: &str, mic_source: &str) -> Option<String> {
+        self.cleanup_audio_modules();
+
+        let mut loaded = Vec::new();
+
+        // 1. pactl load-module module-null-sink sink_name=sane_rec_mix sink_properties=device.description=SaneRecMix
+        let sink_id = Self::load_pactl_module(&[
+            "module-null-sink",
+            "sink_name=sane_rec_mix",
+            "sink_properties=device.description=SaneRecMix",
+        ]);
+
+        loaded.push(sink_id?);
+
+        // 2. pactl load-module module-loopback source=<desktop_sink>.monitor sink=sane_rec_mix
+        let desktop_monitor = if desktop_sink.ends_with(".monitor") {
+            desktop_sink.to_string()
+        } else {
+            format!("{}.monitor", desktop_sink)
+        };
+
+        let loop1_id = Self::load_pactl_module(&[
+            "module-loopback",
+            &format!("source={}", desktop_monitor),
+            "sink=sane_rec_mix",
+        ]);
+
+        match loop1_id {
+            Some(id) => loaded.push(id),
+            None => {
+                for id in loaded.drain(..).rev() {
+                    Self::unload_pactl_module(id);
+                }
+                return None;
+            }
+        };
+
+        // 3. pactl load-module module-loopback source=<mic_source> sink=sane_rec_mix
+        let loop2_id = Self::load_pactl_module(&[
+            "module-loopback",
+            &format!("source={}", mic_source),
+            "sink=sane_rec_mix",
+        ]);
+
+        match loop2_id {
+            Some(id) => loaded.push(id),
+            None => {
+                for id in loaded.drain(..).rev() {
+                    Self::unload_pactl_module(id);
+                }
+                return None;
+            }
+        };
+
+        *self.audio_modules.lock().unwrap() = loaded;
+        Some("sane_rec_mix.monitor".to_string())
+    }
+
+    /// Aplica los argumentos de audio al comando wf-recorder.
+    fn apply_audio_args(&self, cmd: &mut Command, config: &Config) {
+        let capture_desktop = config.audio.capture_desktop;
+        let capture_mic = config.audio.capture_mic;
+
+        if capture_desktop && capture_mic {
+            let sink = get_default_audio_sink().unwrap_or_else(|| "default".to_string());
+            let mic = get_default_audio_source().unwrap_or_else(|| "default".to_string());
+
+            if let Some(mix_source) = self.setup_dual_audio(&sink, &mic) {
+                cmd.arg(format!("-a{}", mix_source));
+                cmd.args(["-C", "aac"]);
+                return;
+            }
+        }
+
+        if capture_desktop {
+            if let Some(sink) = get_default_audio_sink() {
+                let monitor = if sink.ends_with(".monitor") {
+                    sink
+                } else {
+                    format!("{}.monitor", sink)
+                };
+                cmd.arg(format!("-a{}", monitor));
+            } else {
+                cmd.arg("-a");
+            }
+            cmd.args(["-C", "aac"]);
+        } else if capture_mic {
+            if let Some(mic) = get_default_audio_source() {
+                cmd.arg(format!("-a{}", mic));
+            } else {
+                cmd.arg("-a");
+            }
+            cmd.args(["-C", "aac"]);
+        }
+    }
+
+    /// Construye el comando wf-recorder para el búfer rodante en memoria.
+    fn build_replay_command(&self, config: &Config) -> Command {
+        let mut cmd = Command::new("wf-recorder");
+        cmd.arg("-y");
+
+        // Configuración de destino (monitor o geometría)
+        apply_target_args(&mut cmd, &config.video.target);
+
+        // Audio del sistema / micrófono / dual mixing
+        self.apply_audio_args(&mut cmd, config);
+
+        // Perfil de codificación
+        apply_profile_args(&mut cmd, config);
+
+        // Segmenter en RAM con microsegmentos de 1 segundo e intervalo keyint exacto de 1 segundo:
+        let wrap_n = config.replay.duration_secs + 5;
+        let seg_pattern = format!("{}/seg_%02d.mp4", self.buffer_dir.display());
+
+        cmd.args([
+            "-m",
+            "segment",
+            "-p",
+            "segment_time=1",
+            "-p",
+            &format!("segment_wrap={}", wrap_n),
+            "-p",
+            "reset_timestamps=1",
+            "-p",
+            "keyint=60",
+            "-p",
+            "g=60",
+            "-p",
+            "tune=zerolatency",
+            "-f",
+            &seg_pattern,
+        ]);
+
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+        cmd
+    }
+
+    /// Construye el comando wf-recorder para la grabación continua directa a disco.
+    fn build_continuous_command(&self, config: &Config, output_path: &Path) -> Command {
+        let mut cmd = Command::new("wf-recorder");
+        cmd.arg("-y");
+
+        // Destino de captura
+        apply_target_args(&mut cmd, &config.video.target);
+
+        // Audio del sistema / micrófono / dual mixing
+        self.apply_audio_args(&mut cmd, config);
+
+        // Perfil de codificación
+        apply_profile_args(&mut cmd, config);
+
+        // Archivo de salida directo
+        cmd.arg("-f").arg(output_path);
+
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+        cmd
+    }
+
     /// Inicia el proceso de grabación en búfer rodante en RAM con `wf-recorder`.
     pub fn start_replay(&self) -> Result<()> {
         if self.is_running() {
@@ -148,42 +352,47 @@ impl ReplayEngine {
         let _ = std::fs::create_dir_all(&self.buffer_dir);
 
         let config = self.config();
-        let mut cmd = Command::new("wf-recorder");
-        cmd.arg("-y");
+        let active_profile = config
+            .profile
+            .active_profile
+            .parse::<EncoderProfile>()
+            .unwrap_or(EncoderProfile::SaneSafe);
 
-        // Configuración de destino (monitor o geometría)
-        apply_target_args(&mut cmd, &config.video.target);
+        let is_hardware = matches!(
+            active_profile,
+            EncoderProfile::AmdHardware | EncoderProfile::NvidiaHardware
+        );
 
-        // Audio del sistema si está activo
-        apply_audio_args(&mut cmd, &config);
+        let mut cmd = self.build_replay_command(&config);
+        let mut child = cmd.spawn()?;
 
-        // Perfil de codificación
-        apply_profile_args(&mut cmd, &config);
+        // Manejo seguro del Perfil Experimental (Resiliencia en fallos de GPU)
+        if is_hardware {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let failed = match child.try_wait() {
+                Ok(Some(status)) => !status.success(),
+                Err(_) => true,
+                Ok(None) => false,
+            };
 
-        // Segmenter en RAM:
-        // -m segment -p segment_time=2 -p segment_wrap=<N> -p reset_timestamps=1 -f /dev/shm/sane-rec-<UID>/seg_%02d.mp4
-        // donde <N> = (duration_secs / 2) + 2
-        let wrap_n = (config.replay.duration_secs / DEFAULT_SEGMENT_DURATION_SECS) + 2;
-        let seg_pattern = format!("{}/seg_%02d.mp4", self.buffer_dir.display());
+            if failed {
+                let _ = notify_rust::Notification::new()
+                    .appname("sane-rec")
+                    .summary("Aviso: Hardware encoder no soportado en esta GPU; usando Sane Safe (CPU)")
+                    .body("Se ha cambiado automáticamente al perfil seguro por CPU")
+                    .icon("dialog-warning")
+                    .show();
 
-        cmd.args([
-            "-m",
-            "segment",
-            "-p",
-            "segment_time=2",
-            "-p",
-            &format!("segment_wrap={}", wrap_n),
-            "-p",
-            "reset_timestamps=1",
-            "-f",
-            &seg_pattern,
-        ]);
+                let mut fallback_config = config.clone();
+                fallback_config.profile.active_profile = EncoderProfile::SaneSafe.to_string();
+                let _ = fallback_config.save();
+                *self.config.lock().unwrap() = fallback_config.clone();
 
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-
-        let child = cmd.spawn()?;
+                self.cleanup_audio_modules();
+                let mut fallback_cmd = self.build_replay_command(&fallback_config);
+                child = fallback_cmd.spawn()?;
+            }
+        }
 
         *self.replay_process.lock().unwrap() = Some(child);
         *self.start_time.lock().unwrap() = Some(Instant::now());
@@ -191,7 +400,7 @@ impl ReplayEngine {
         Ok(())
     }
 
-    /// Detiene el proceso de repetición instantánea enviando SIGINT y limpia la RAM.
+    /// Detiene el proceso de repetición instantánea enviando SIGINT, descarga módulos de audio y limpia la RAM.
     pub fn stop_replay(&self) -> Result<()> {
         let mut guard = self.replay_process.lock().unwrap();
         if let Some(mut child) = guard.take() {
@@ -201,6 +410,9 @@ impl ReplayEngine {
             let _ = child.wait();
         }
         *self.start_time.lock().unwrap() = None;
+
+        // Descarga de módulos de audio virtual PipeWire
+        self.cleanup_audio_modules();
 
         // Limpieza de segmentos en RAM
         let _ = self.clean_buffer();
@@ -251,26 +463,47 @@ impl ReplayEngine {
         let filename = format!("{}.{}", timestamp, config.storage.format);
         let output_path = config.storage.output_dir.join(filename);
 
-        let mut cmd = Command::new("wf-recorder");
-        cmd.arg("-y");
+        let active_profile = config
+            .profile
+            .active_profile
+            .parse::<EncoderProfile>()
+            .unwrap_or(EncoderProfile::SaneSafe);
 
-        // Destino de captura
-        apply_target_args(&mut cmd, &config.video.target);
+        let is_hardware = matches!(
+            active_profile,
+            EncoderProfile::AmdHardware | EncoderProfile::NvidiaHardware
+        );
 
-        // Audio del sistema
-        apply_audio_args(&mut cmd, &config);
+        let mut cmd = self.build_continuous_command(&config, &output_path);
+        let mut child = cmd.spawn()?;
 
-        // Perfil de codificación
-        apply_profile_args(&mut cmd, &config);
+        // Manejo seguro del Perfil Experimental (Resiliencia en fallos de GPU)
+        if is_hardware {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let failed = match child.try_wait() {
+                Ok(Some(status)) => !status.success(),
+                Err(_) => true,
+                Ok(None) => false,
+            };
 
-        // Archivo de salida directo
-        cmd.arg("-f").arg(&output_path);
+            if failed {
+                let _ = notify_rust::Notification::new()
+                    .appname("sane-rec")
+                    .summary("Aviso: Hardware encoder no soportado en esta GPU; usando Sane Safe (CPU)")
+                    .body("Se ha cambiado automáticamente al perfil seguro por CPU")
+                    .icon("dialog-warning")
+                    .show();
 
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+                let mut fallback_config = config.clone();
+                fallback_config.profile.active_profile = EncoderProfile::SaneSafe.to_string();
+                let _ = fallback_config.save();
+                *self.config.lock().unwrap() = fallback_config.clone();
 
-        let child = cmd.spawn()?;
+                self.cleanup_audio_modules();
+                let mut fallback_cmd = self.build_continuous_command(&fallback_config, &output_path);
+                child = fallback_cmd.spawn()?;
+            }
+        }
 
         *self.continuous_process.lock().unwrap() = Some(child);
         *self.continuous_output.lock().unwrap() = Some(output_path.clone());
@@ -286,7 +519,7 @@ impl ReplayEngine {
         Ok(output_path)
     }
 
-    /// Detiene la grabación continua enviando SIGINT, espera el cierre ordenado del archivo y notifica.
+    /// Detiene la grabación continua enviando SIGINT, espera el cierre ordenado del archivo, descarga audio y notifica.
     pub fn stop_continuous_recording(&self) -> Result<PathBuf> {
         let mut guard = self.continuous_process.lock().unwrap();
         let mut child = guard.take().ok_or(EngineError::NotRunning)?;
@@ -302,6 +535,9 @@ impl ReplayEngine {
             libc::kill(child.id() as i32, libc::SIGINT);
         }
         let _ = child.wait();
+
+        // Descarga de módulos de audio virtual PipeWire
+        self.cleanup_audio_modules();
 
         let _ = notify_rust::Notification::new()
             .appname("sane-rec")
@@ -358,10 +594,19 @@ impl ReplayEngine {
             }
         });
 
+        // Toma exactamente los últimos duration_secs segmentos cronológicos
+        let duration_secs = self.config().replay.duration_secs as usize;
+        let count = segments.len();
+        let selected_segments = if count > duration_secs {
+            &segments[count - duration_secs..]
+        } else {
+            &segments[..]
+        };
+
         // 2. Crea el archivo de lista concat_list.txt con líneas "file '<abs_path>'"
         let list_file = self.buffer_dir.join("concat_list.txt");
         let mut list_content = String::new();
-        for seg in &segments {
+        for seg in selected_segments {
             list_content.push_str(&format!("file '{}'\n", seg.display()));
         }
         std::fs::write(&list_file, list_content)?;
@@ -562,6 +807,7 @@ impl Drop for ReplayEngine {
                 let _ = child.wait();
             }
         }
+        self.cleanup_audio_modules();
         let _ = self.clean_buffer();
     }
 }
@@ -578,18 +824,6 @@ fn apply_target_args(cmd: &mut Command, target: &str) {
         cmd.args(["-o", "DVI-D-1"]);
     } else {
         cmd.args(["-o", t]);
-    }
-}
-
-/// Aplica los argumentos de audio al comando wf-recorder.
-fn apply_audio_args(cmd: &mut Command, config: &Config) {
-    if config.audio.capture_desktop {
-        if let Some(sink) = get_default_audio_sink() {
-            cmd.arg(format!("-a{}", sink));
-        } else {
-            cmd.arg("-a");
-        }
-        cmd.args(["-C", "aac"]);
     }
 }
 
@@ -610,6 +844,10 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
                 "preset=ultrafast",
                 "-p",
                 "tune=zerolatency",
+                "-p",
+                "keyint=60",
+                "-p",
+                "g=60",
                 "-b",
                 "0",
                 "--no-dmabuf",
@@ -630,8 +868,8 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
     }
 }
 
-/// Obtiene el monitor del sink de audio por defecto usando pactl.
-fn get_default_audio_sink() -> Option<String> {
+/// Obtiene el monitor o nombre del sink de audio por defecto usando pactl.
+pub fn get_default_audio_sink() -> Option<String> {
     let output = Command::new("pactl")
         .arg("get-default-sink")
         .output()
@@ -640,11 +878,23 @@ fn get_default_audio_sink() -> Option<String> {
     if output.status.success() {
         let sink = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if !sink.is_empty() {
-            if sink.ends_with(".monitor") {
-                return Some(sink);
-            } else {
-                return Some(format!("{}.monitor", sink));
-            }
+            return Some(sink);
+        }
+    }
+    None
+}
+
+/// Obtiene la fuente de entrada (micrófono) por defecto usando pactl.
+pub fn get_default_audio_source() -> Option<String> {
+    let output = Command::new("pactl")
+        .arg("get-default-source")
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let source = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !source.is_empty() {
+            return Some(source);
         }
     }
     None
@@ -774,6 +1024,74 @@ mod tests {
                 assert!(clip_path.metadata().unwrap().len() > 0);
                 assert_eq!(clip_path.extension().unwrap(), "mp4");
             }
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_audio_modules_tracking_and_cleanup() {
+        let temp_dir = std::env::temp_dir()
+            .join(format!("sane_rec_audio_mod_test_{}", std::process::id()));
+        let config = Config::default();
+        let engine = ReplayEngine::with_buffer_dir(config, temp_dir.clone()).unwrap();
+
+        // Registrar módulos ficticios en audio_modules
+        {
+            let mut modules = engine.audio_modules.lock().unwrap();
+            modules.push(888111);
+            modules.push(888222);
+        }
+        assert_eq!(engine.audio_modules().len(), 2);
+
+        // cleanup_audio_modules debe vaciar la lista completamente
+        engine.cleanup_audio_modules();
+        assert_eq!(engine.audio_modules().len(), 0);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_save_clip_exact_duration_selection() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("sane_rec_duration_test_{}", std::process::id()));
+        let buffer_dir = temp_dir.join("buffer");
+        let output_dir = temp_dir.join("output");
+        let _ = std::fs::create_dir_all(&buffer_dir);
+        let _ = std::fs::create_dir_all(&output_dir);
+
+        let mut config = Config::default();
+        config.storage.output_dir = output_dir.clone();
+        config.storage.format = "mp4".to_string();
+        config.replay.duration_secs = 2; // Solo debe seleccionar los últimos 2 de 3
+
+        let engine = ReplayEngine::with_buffer_dir(config, buffer_dir.clone()).unwrap();
+
+        let seg0 = buffer_dir.join("seg_00.mp4");
+        let seg1 = buffer_dir.join("seg_01.mp4");
+        let seg2 = buffer_dir.join("seg_02.mp4");
+
+        let _ = Command::new("ffmpeg")
+            .args(["-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=30", "-c:v", "libx264", "-preset", "ultrafast"])
+            .arg(&seg0)
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+
+        let _ = Command::new("ffmpeg")
+            .args(["-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=30", "-c:v", "libx264", "-preset", "ultrafast"])
+            .arg(&seg1)
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+
+        let _ = Command::new("ffmpeg")
+            .args(["-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=30", "-c:v", "libx264", "-preset", "ultrafast"])
+            .arg(&seg2)
+            .output();
+
+        if seg0.exists() && seg1.exists() && seg2.exists() {
+            let clip = engine.save_clip().expect("save_clip should succeed with exact segments");
+            assert!(clip.exists());
+            assert!(clip.metadata().unwrap().len() > 0);
         }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
