@@ -193,12 +193,16 @@ export component AppWindow inherits Window {
             height: 100%;
             content-width: self.width;
 
-            VerticalLayout {
-                padding-left: root.width < 820px ? 12px : M3Theme.space-xxl;
-                padding-right: root.width < 820px ? 12px : M3Theme.space-xxl;
-                padding-top: M3Theme.space-xl;
+            HorizontalLayout {
+                alignment: center;
+                padding-left: root.width < 820px ? 12px : 24px;
+                padding-right: root.width < 820px ? 12px : 24px;
+                padding-top: root.height < 800px ? 12px : M3Theme.space-xl;
                 padding-bottom: M3Theme.space-xxl;
-                spacing: 20px;
+
+                VerticalLayout {
+                    width: Math.min(root.width - rail.width - (root.width < 820px ? 24px : 48px), 1020px);
+                    spacing: root.height < 800px ? 14px : 20px;
 
                     // ---------------------------------------------------------
                     // VISTA 0: DASHBOARD (Monitor en vivo)
@@ -422,8 +426,45 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Métricas del Sistema (Cuadrícula responsiva 2x2)
-                        VerticalLayout {
+                        // Métricas del Sistema: 1 fila de 4 cuando ancho >= 820px, 2x2 cuando vertical / estrecho (< 820px)
+                        if root.width >= 820px: HorizontalLayout {
+                            spacing: 12px;
+
+                            M3MetricTile {
+                                horizontal-stretch: 1;
+                                icon-text: "⚡";
+                                value: root.selected-fps + " FPS";
+                                label: "Tasa de Refresco";
+                                badge-text: "Fluido";
+                                highlight: true;
+                            }
+
+                            M3MetricTile {
+                                horizontal-stretch: 1;
+                                icon-text: "📺";
+                                value: root.selected-resolution;
+                                label: "Resolución Activa";
+                                badge-text: root.selected-screen;
+                            }
+
+                            M3MetricTile {
+                                horizontal-stretch: 1;
+                                icon-text: "⏱️";
+                                value: root.replay-duration + "s";
+                                label: "Búfer en RAM";
+                                badge-text: "Instantáneo";
+                            }
+
+                            M3MetricTile {
+                                horizontal-stretch: 1;
+                                icon-text: "🧠";
+                                value: root.ram-usage;
+                                label: "Consumo RAM (Máx: " + root.max-memory-mb + " MB)";
+                                badge-text: "dmabuf";
+                            }
+                        }
+
+                        if root.width < 820px: VerticalLayout {
                             spacing: 12px;
 
                             HorizontalLayout {
@@ -2160,6 +2201,7 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
 
         // Banner / Toast flotante de notificación in-app M3
         M3Toast {
