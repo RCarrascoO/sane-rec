@@ -401,6 +401,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(ui) = ui_weak.upgrade() {
                     if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                         ui.set_last_saved_clip(filename.into());
+                        show_toast(&ui, "🎬", &format!("Replay guardado: {}", filename));
                     }
                     let out_dir = if let Some(ref eng) = engine_clone {
                         eng.config().storage.output_dir
@@ -439,6 +440,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         "Búfer Activo".into()
                     } else {
                         "Detenido".into()
+                    },
+                );
+                show_toast(
+                    &ui,
+                    "🧠",
+                    if is_running {
+                        "Búfer de repetición en RAM activado"
+                    } else {
+                        "Búfer de repetición detenido"
                     },
                 );
             }
@@ -502,6 +512,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ui_weak = ui.as_weak();
         let engine_clone = local_engine.clone();
+        let output_dir_rec = config.storage.output_dir.clone();
         ui.on_toggle_recording(move || {
             let is_recording = if daemon_running {
                 if let Ok(resp) = ipc::send_command_sync("record_toggle") {
@@ -517,6 +528,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_is_recording(is_recording);
+                if is_recording {
+                    show_toast(&ui, "🔴", "Grabación continua iniciada (Mod+F9)");
+                } else {
+                    show_toast(&ui, "⏹️", "Grabación continua finalizada y guardada");
+                    update_gallery_model(&ui, &output_dir_rec);
+                }
             }
         });
     }
@@ -674,45 +691,71 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // Temporizador Slint para actualizar métricas en vivo (cada 1 segundo)
+    // Inicia monitor de picos de audio en tiempo real para calibración visual (VU meter)
+    let audio_monitor = std::sync::Arc::new(sane_rec::AudioPeakMonitor::new(None, None));
+
+    // Temporizador Slint para actualizar métricas en vivo y medidores VU (50ms = 20 FPS)
     let _timer = {
         let ui_weak = ui.as_weak();
         let engine_clone = local_engine.clone();
+        let audio_mon_clone = audio_monitor.clone();
         let timer = slint::Timer::default();
+        let mut ticks: u32 = 0;
         timer.start(
             slint::TimerMode::Repeated,
-            std::time::Duration::from_millis(1000),
+            std::time::Duration::from_millis(50),
             move || {
                 let Some(ui) = ui_weak.upgrade() else {
                     return;
                 };
 
-                let status_opt = if daemon_running {
-                    if let Ok(resp) = ipc::send_command_sync("status") {
-                        resp.data
-                            .and_then(|d| serde_json::from_value::<EngineStatus>(d).ok())
+                // Actualiza niveles visuales VU del sistema y micrófono a 20 FPS
+                ui.set_system_volume_peak(audio_mon_clone.system_peak());
+                ui.set_mic_volume_peak(audio_mon_clone.mic_peak());
+
+                ticks += 1;
+                // Cada 500ms consulta el estado del motor y actualiza contadores
+                if ticks % 10 == 0 {
+                    let status_opt = if daemon_running {
+                        if let Ok(resp) = ipc::send_command_sync("status") {
+                            resp.data
+                                .and_then(|d| serde_json::from_value::<EngineStatus>(d).ok())
+                        } else {
+                            None
+                        }
+                    } else if let Some(ref eng) = engine_clone {
+                        Some(eng.get_status())
                     } else {
                         None
-                    }
-                } else if let Some(ref eng) = engine_clone {
-                    Some(eng.get_status())
-                } else {
-                    None
-                };
-
-                if let Some(status) = status_opt {
-                    ui.set_is_running(status.is_running);
-                    ui.set_is_recording(status.is_recording);
-                    ui.set_ram_usage(format!("~{:.1} MB", status.ram_usage_mb).into());
-                    let buf_text = if status.is_running {
-                        format!(
-                            "Búfer Activo ({}s / {}s)",
-                            status.current_buffer_secs, status.duration_secs
-                        )
-                    } else {
-                        "Detenido".to_string()
                     };
-                    ui.set_buffer_status(buf_text.into());
+
+                    if let Some(status) = status_opt {
+                        ui.set_is_running(status.is_running);
+                        ui.set_is_recording(status.is_recording);
+                        ui.set_ram_usage(format!("~{:.1} MB", status.ram_usage_mb).into());
+                        let buf_text = if status.is_running {
+                            format!(
+                                "Búfer Activo ({}s / {}s)",
+                                status.current_buffer_secs, status.duration_secs
+                            )
+                        } else {
+                            "Detenido".to_string()
+                        };
+                        ui.set_buffer_status(buf_text.into());
+
+                        // Actualización dinámica del contador de tiempo de grabación continua
+                        if status.is_recording {
+                            let s = status.recording_elapsed_secs;
+                            let time_str = if s >= 3600 {
+                                format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+                            } else {
+                                format!("{:02}:{:02}", s / 60, s % 60)
+                            };
+                            ui.set_recording_time(time_str.into());
+                        } else {
+                            ui.set_recording_time("00:00".into());
+                        }
+                    }
                 }
             },
         );
@@ -809,11 +852,25 @@ fn update_audio_devices_model(ui: &AppWindow) {
     ui.set_available_mics(std::rc::Rc::new(slint::VecModel::from(mic_entries)).into());
 }
 
+/// Muestra un banner flotante Toast interactivo en la interfaz por 3.5 segundos.
+fn show_toast(ui: &AppWindow, icon: &str, message: &str) {
+    ui.set_toast_icon(icon.into());
+    ui.set_toast_message(message.into());
+    ui.set_toast_visible(true);
+    let ui_weak = ui.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(3500), move || {
+        if let Some(ui) = ui_weak.upgrade() {
+            ui.set_toast_visible(false);
+        }
+    });
+}
+
 /// Actualiza el modelo de clips de la galería leyendo el directorio de salida en disco.
 fn update_gallery_model(ui: &AppWindow, output_dir: &std::path::Path) {
     let clips = sane_rec::get_recent_clips(output_dir);
     if clips.is_empty() {
         ui.set_gallery_clips(std::rc::Rc::new(slint::VecModel::default()).into());
+        ui.set_recent_clips(std::rc::Rc::new(slint::VecModel::default()).into());
     } else {
         let entries: Vec<ClipEntry> = clips
             .into_iter()
@@ -835,7 +892,9 @@ fn update_gallery_model(ui: &AppWindow, output_dir: &std::path::Path) {
                 }
             })
             .collect();
+        let recent_entries: Vec<ClipEntry> = entries.iter().take(3).cloned().collect();
         ui.set_gallery_clips(std::rc::Rc::new(slint::VecModel::from(entries)).into());
+        ui.set_recent_clips(std::rc::Rc::new(slint::VecModel::from(recent_entries)).into());
     }
 }
 
@@ -892,6 +951,10 @@ mod tests {
         let _ = std::fs::create_dir_all(&empty_dir);
         update_gallery_model(&ui, &empty_dir);
         assert_eq!(ui.get_gallery_clips().row_count(), 0);
+        assert_eq!(ui.get_recent_clips().row_count(), 0);
+        assert_eq!(ui.get_system_volume_peak(), 0.0);
+        assert_eq!(ui.get_recording_time(), "00:00");
+        assert_eq!(ui.get_toast_visible(), false);
         let _ = std::fs::remove_dir_all(&empty_dir);
     }
 

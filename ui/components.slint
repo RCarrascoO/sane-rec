@@ -85,6 +85,7 @@ export component M3Button inherits Rectangle {
             font-weight: 600;
             vertical-alignment: center;
             horizontal-alignment: center;
+            overflow: elide;
             color: !root.enabled ? M3Theme.on-surface.with-alpha(0.38) :
                    root.variant == "filled" ? M3Theme.on-primary :
                    root.variant == "tonal" ? M3Theme.on-secondary-container :
@@ -857,12 +858,14 @@ export component M3MetricTile inherits Rectangle {
                 text: root.value;
                 font-size: 18px;
                 font-weight: 800;
+                overflow: elide;
                 color: root.highlight ? M3Theme.primary : M3Theme.on-surface;
             }
             Text {
                 text: root.label;
                 font-size: M3Theme.font-label-small;
                 font-weight: 500;
+                overflow: elide;
                 color: M3Theme.on-surface-variant;
             }
         }
@@ -1193,4 +1196,114 @@ export component M3ClipCard inherits Rectangle {
         }
     }
 }
+
+// =============================================================================
+// M3VuMeter: Indicador visual en tiempo real de picos de audio (VU Meter)
+// =============================================================================
+export component M3VuMeter inherits Rectangle {
+    in-out property <float> peak-level: 0.0; // 0.0 a 1.0
+    in-out property <bool> active: true;
+    in-out property <string> label: "";
+
+    height: 18px;
+    background: Colors.transparent;
+
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: stretch;
+
+        if root.label != "": Text {
+            text: root.label;
+            font-size: 11px;
+            font-weight: 600;
+            color: M3Theme.on-surface-variant;
+            vertical-alignment: center;
+            width: 45px;
+        }
+
+        // Barra de nivel VU
+        bar-bg := Rectangle {
+            horizontal-stretch: 1;
+            height: 8px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            background: M3Theme.surface-container-highest;
+            clip: true;
+
+            // Relleno dinámico con animación suave
+            Rectangle {
+                x: 0px;
+                y: 0px;
+                height: parent.height;
+                width: root.active ? Math.clamp(root.peak-level, 0.0, 1.0) * parent.width : 0px;
+                border-radius: 4px;
+                background: root.peak-level > 0.85 ?
+                    M3Theme.error :
+                    (root.peak-level > 0.65 ? #eab308 : #22c55e);
+
+                animate width { duration: 60ms; easing: ease-out; }
+                animate background { duration: 100ms; }
+            }
+        }
+
+        // Indicador numérico
+        Text {
+            text: root.active ? (Math.round(root.peak-level * 100) + "%") : "Mudo";
+            font-size: 11px;
+            font-weight: 700;
+            color: !root.active ? M3Theme.on-surface-variant.with-alpha(0.5) :
+                   root.peak-level > 0.85 ? M3Theme.error :
+                   M3Theme.on-surface-variant;
+            vertical-alignment: center;
+            horizontal-alignment: end;
+            width: 38px;
+        }
+    }
+}
+
+// =============================================================================
+// M3Toast: Notificación flotante / Banner emergente M3
+// =============================================================================
+export component M3Toast inherits Rectangle {
+    in-out property <string> message: "";
+    in-out property <string> icon-text: "🎬";
+    in-out property <bool> is-visible: false;
+
+    height: 44px;
+    border-radius: 22px;
+    background: M3Theme.surface-container-highest;
+    border-width: 1px;
+    border-color: M3Theme.primary.with-alpha(0.5);
+    drop-shadow-color: Colors.black.with-alpha(0.45);
+    drop-shadow-blur: 16px;
+    drop-shadow-offset-y: 4px;
+    opacity: root.is-visible ? 1.0 : 0.0;
+    y: root.is-visible ? 14px : -60px;
+
+    animate opacity { duration: 250ms; easing: ease-out; }
+    animate y { duration: 300ms; easing: ease-out; }
+
+    HorizontalLayout {
+        padding-left: 18px;
+        padding-right: 18px;
+        spacing: 10px;
+        alignment: center;
+
+        Text {
+            text: root.icon-text;
+            font-size: 16px;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.message;
+            font-size: M3Theme.font-label-large;
+            font-weight: 600;
+            color: M3Theme.on-surface;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
 

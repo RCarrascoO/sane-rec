@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -23,6 +23,7 @@ pub struct EngineStatus {
     pub is_recording: bool,
     pub duration_secs: u32,
     pub current_buffer_secs: u32,
+    pub recording_elapsed_secs: u32,
     pub ram_usage_mb: f64,
     pub active_profile: String,
     pub output_dir: PathBuf,
@@ -396,6 +397,7 @@ impl ReplayEngine {
 
         *self.replay_process.lock().unwrap() = Some(child);
         *self.start_time.lock().unwrap() = Some(Instant::now());
+        play_feedback_sound("device-added");
 
         Ok(())
     }
@@ -416,6 +418,7 @@ impl ReplayEngine {
 
         // Limpieza de segmentos en RAM
         let _ = self.clean_buffer();
+        play_feedback_sound("device-removed");
         Ok(())
     }
 
@@ -516,6 +519,8 @@ impl ReplayEngine {
             .icon("media-record")
             .show();
 
+        play_feedback_sound("message-new-instant");
+
         Ok(output_path)
     }
 
@@ -545,6 +550,8 @@ impl ReplayEngine {
             .body(&format!("Vídeo guardado en {}", output_path.display()))
             .icon("video-x-generic")
             .show();
+
+        play_feedback_sound("complete");
 
         Ok(output_path)
     }
@@ -642,13 +649,15 @@ impl ReplayEngine {
             )));
         }
 
-        // 5. Lanza la notificación de escritorio
+        // 5. Lanza la notificación de escritorio y reproduce sonido de confirmación
         let _ = notify_rust::Notification::new()
             .appname("sane-rec")
             .summary("🎬 Replay Guardado")
             .body(&format!("Clip guardado en {}", output_path.display()))
             .icon("video-x-generic")
             .show();
+
+        play_feedback_sound("screen-capture");
 
         Ok(output_path)
     }
@@ -676,11 +685,22 @@ impl ReplayEngine {
             (0, 0.0)
         };
 
+        let recording_elapsed_secs = if is_recording {
+            self.continuous_start_time
+                .lock()
+                .unwrap()
+                .map(|t| t.elapsed().as_secs() as u32)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
         EngineStatus {
             is_running,
             is_recording,
             duration_secs: config.replay.duration_secs,
             current_buffer_secs,
+            recording_elapsed_secs,
             ram_usage_mb,
             active_profile: config.profile.active_profile,
             output_dir: config.storage.output_dir,
@@ -900,6 +920,19 @@ pub fn get_default_audio_source() -> Option<String> {
     None
 }
 
+/// Reproduce un efecto sonoro de confirmación utilizando el servidor PipeWire/pw-play si existe el archivo.
+pub fn play_feedback_sound(sound_name: &str) {
+    let path = format!("/usr/share/sounds/freedesktop/stereo/{}.oga", sound_name);
+    if std::path::Path::new(&path).exists() {
+        let _ = Command::new("pw-play")
+            .arg(&path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -917,6 +950,7 @@ mod tests {
             is_recording: false,
             duration_secs: 30,
             current_buffer_secs: 14,
+            recording_elapsed_secs: 0,
             ram_usage_mb: 28.5,
             active_profile: "sane-safe".to_string(),
             output_dir: PathBuf::from("/mnt/Files/Videos/Replays"),

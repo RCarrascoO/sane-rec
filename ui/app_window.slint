@@ -13,7 +13,9 @@ import {
     M3MetricTile,
     M3OptionItem,
     M3DropdownCard,
-    M3ClipCard
+    M3ClipCard,
+    M3VuMeter,
+    M3Toast
 } from "components.slint";
 import { ScrollView, Slider } from "std-widgets.slint";
 
@@ -82,6 +84,7 @@ export component AppWindow inherits Window {
     in-out property <string> active-profile: "sane-safe";
     in-out property <bool> is-running: false;
     in-out property <bool> is-recording: false;
+    in-out property <string> recording-time: "00:00";
     in-out property <string> buffer-status: "Detenido";
     in-out property <string> output-path: "/mnt/Files/Videos/Replays";
     in-out property <int> replay-duration: 30;
@@ -102,16 +105,24 @@ export component AppWindow inherits Window {
     in-out property <int> audio-track-mode: 0; // 0: Pista única combinada, 1: Pistas separadas
     in-out property <float> volume-system: 1.0;
     in-out property <float> volume-mic: 0.85;
+    in-out property <float> system-volume-peak: 0.0;
+    in-out property <float> mic-volume-peak: 0.0;
 
     // Métricas y estado
     in-out property <string> ram-usage: "~28 MB";
     in-out property <string> last-saved-clip: "";
 
+    // Notificaciones Toast flotantes en la app
+    in-out property <string> toast-message: "";
+    in-out property <string> toast-icon: "🎬";
+    in-out property <bool> toast-visible: false;
+
     // Estado desplegable interno para dropdowns
     property <bool> sink-dropdown-open: false;
     property <bool> mic-dropdown-open: false;
 
-    // Lista de clips para la galería (sin datos mock)
+    // Lista de clips para la galería y clips recientes en el dashboard
+    in-out property <[ClipEntry]> recent-clips: [];
     in-out property <[ClipEntry]> gallery-clips: [];
 
     // Modelos dinámicos descubiertos en Wayland / PipeWire
@@ -147,7 +158,7 @@ export component AppWindow inherits Window {
         y: 0px;
         height: parent.height;
         active-view <=> root.active-view;
-        compact: root.width < 720px;
+        compact: root.width < 820px;
     }
 
     // =========================================================================
@@ -162,9 +173,13 @@ export component AppWindow inherits Window {
         clip: true;
 
         ScrollView {
+            width: 100%;
+            height: 100%;
+            content-width: self.width;
+
             VerticalLayout {
-                padding-left: root.width < 720px ? 14px : M3Theme.space-xxl;
-                padding-right: root.width < 720px ? 14px : M3Theme.space-xxl;
+                padding-left: root.width < 820px ? 12px : M3Theme.space-xxl;
+                padding-right: root.width < 820px ? 12px : M3Theme.space-xxl;
                 padding-top: M3Theme.space-xl;
                 padding-bottom: M3Theme.space-xxl;
                 spacing: 20px;
@@ -196,7 +211,7 @@ export component AppWindow inherits Window {
 
                             M3StatusChip {
                                 y: (parent.height - self.height) / 2;
-                                text: root.is-recording ? "Grabando Continuo" :
+                                text: root.is-recording ? ("🔴 REC " + root.recording-time) :
                                       root.is-running ? (root.buffer-status == "Detenido" ? "Búfer Activo" : root.buffer-status) :
                                       "Detenido";
                                 status: root.is-recording ? "recording" :
@@ -334,8 +349,8 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                // Botones grandes de acción rápida
-                                HorizontalLayout {
+                                // Botones grandes de acción rápida responsivos
+                                if root.width >= 720px: HorizontalLayout {
                                     spacing: 14px;
 
                                     M3Button {
@@ -352,10 +367,36 @@ export component AppWindow inherits Window {
 
                                     M3Button {
                                         horizontal-stretch: 1;
-                                        text: root.is-recording ? "Detener Grabación (Mod+F9)" : "Grabación Continua (Mod+F9)";
+                                        text: root.is-recording ? ("Detener REC " + root.recording-time + " (Mod+F9)") : "Grabación Continua (Mod+F9)";
                                         icon-text: root.is-recording ? "⏹" : "⏺";
                                         variant: root.is-recording ? "filled" : "tonal";
                                         btn-height: 48px;
+                                        clicked => {
+                                            root.is-recording = !root.is-recording;
+                                            root.toggle-recording();
+                                        }
+                                    }
+                                }
+
+                                if root.width < 720px: VerticalLayout {
+                                    spacing: 10px;
+
+                                    M3Button {
+                                        text: "Guardar Replay (Mod+F10)";
+                                        icon-text: "💾";
+                                        variant: "filled";
+                                        btn-height: 44px;
+                                        enabled: root.is-running;
+                                        clicked => {
+                                            root.save-clip();
+                                        }
+                                    }
+
+                                    M3Button {
+                                        text: root.is-recording ? ("Detener REC " + root.recording-time + " (Mod+F9)") : "Grabación Continua (Mod+F9)";
+                                        icon-text: root.is-recording ? "⏹" : "⏺";
+                                        variant: root.is-recording ? "filled" : "tonal";
+                                        btn-height: 44px;
                                         clicked => {
                                             root.is-recording = !root.is-recording;
                                             root.toggle-recording();
@@ -470,17 +511,39 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Tarjeta de Último Clip Guardado
+                        // Sección de Clips Recientes en el Dashboard
                         M3Card {
-                            content-padding: 14px;
+                            content-padding: 16px;
                             card-background: M3Theme.surface-container;
                             card-radius: M3Theme.corner-medium;
 
-                            HorizontalLayout {
-                                spacing: 14px;
-                                alignment: space-between;
+                            VerticalLayout {
+                                spacing: 12px;
 
                                 HorizontalLayout {
+                                    alignment: space-between;
+
+                                    Text {
+                                        text: "CLIPS RECIENTES (" + root.gallery-clips.length + ")";
+                                        font-size: M3Theme.font-label-large;
+                                        font-weight: 700;
+                                        color: M3Theme.primary;
+                                        vertical-alignment: center;
+                                    }
+
+                                    if root.gallery-clips.length > 0: M3Button {
+                                        text: "Ver todos en Galería";
+                                        icon-text: "📂";
+                                        variant: "tonal";
+                                        btn-height: 32px;
+                                        btn-padding-h: 12px;
+                                        clicked => {
+                                            root.active-view = 4;
+                                        }
+                                    }
+                                }
+
+                                if root.gallery-clips.length == 0: HorizontalLayout {
                                     spacing: 12px;
                                     alignment: start;
 
@@ -488,15 +551,13 @@ export component AppWindow inherits Window {
                                         width: 36px;
                                         height: 36px;
                                         border-radius: 18px;
-                                        background: root.last-saved-clip != "" ?
-                                            M3Theme.success-container :
-                                            M3Theme.surface-container-high;
+                                        background: M3Theme.surface-container-high;
                                         y: (parent.height - self.height) / 2;
 
                                         Text {
                                             x: (parent.width - self.width) / 2;
                                             y: (parent.height - self.height) / 2;
-                                            text: root.last-saved-clip != "" ? "🎬" : "📂";
+                                            text: "📂";
                                             font-size: 16px;
                                         }
                                     }
@@ -506,31 +567,33 @@ export component AppWindow inherits Window {
                                         spacing: 2px;
 
                                         Text {
-                                            text: root.last-saved-clip != "" ?
-                                                "Último clip guardado: " + root.last-saved-clip :
-                                                "Sin clips guardados en esta sesión";
+                                            text: "Sin clips guardados en esta sesión";
                                             font-size: M3Theme.font-title-small;
                                             font-weight: 700;
-                                            color: root.last-saved-clip != "" ? M3Theme.on-surface : M3Theme.on-surface-variant;
+                                            color: M3Theme.on-surface-variant;
                                         }
 
                                         Text {
-                                            text: root.last-saved-clip != "" ?
-                                                "Presiona Reproducir para visualizar o ve a la pestaña Galería." :
-                                                "Presiona Mod+F10 o el botón superior para capturar los últimos " + root.replay-duration + " segundos.";
+                                            text: "Presiona Mod+F10 o el botón superior para capturar los últimos " + root.replay-duration + " segundos.";
                                             font-size: M3Theme.font-body-small;
                                             color: M3Theme.on-surface-variant;
                                         }
                                     }
                                 }
 
-                                if root.last-saved-clip != "": M3Button {
-                                    text: "Reproducir clip";
-                                    icon-text: "▶";
-                                    variant: "filled";
-                                    btn-height: 36px;
-                                    clicked => {
-                                        root.play-clip(root.last-saved-clip);
+                                for clip in root.recent-clips: M3ClipCard {
+                                    filename: clip.filename;
+                                    file-size: clip.file-size;
+                                    date-text: clip.date-text;
+                                    duration-text: clip.duration-text;
+                                    filepath: clip.filepath;
+
+                                    play-clicked(path) => {
+                                        root.play-clip(path);
+                                    }
+
+                                    folder-clicked(path) => {
+                                        root.open-clip-folder(path);
                                     }
                                 }
                             }
@@ -1172,10 +1235,14 @@ export component AppWindow inherits Window {
                                     Slider {
                                         minimum: 0.0;
                                         maximum: 1.5;
-                                        value: root.volume-system;
-                                        changed(val) => {
-                                            root.volume-system = val;
-                                        }
+                                        value <=> root.volume-system;
+                                    }
+
+                                    // Medidor VU en vivo para calibrar nivel de audio del sistema
+                                    M3VuMeter {
+                                        peak-level: root.system-volume-peak;
+                                        active: root.audio-system;
+                                        label: "Nivel";
                                     }
                                 }
 
@@ -1221,10 +1288,14 @@ export component AppWindow inherits Window {
                                     Slider {
                                         minimum: 0.0;
                                         maximum: 1.5;
-                                        value: root.volume-mic;
-                                        changed(val) => {
-                                            root.volume-mic = val;
-                                        }
+                                        value <=> root.volume-mic;
+                                    }
+
+                                    // Medidor VU en vivo para calibrar nivel del micrófono
+                                    M3VuMeter {
+                                        peak-level: root.mic-volume-peak;
+                                        active: root.audio-mic && root.audio-mic-source != "Desactivado";
+                                        label: "Nivel";
                                     }
                                 }
                             }
@@ -1413,8 +1484,8 @@ export component AppWindow inherits Window {
                                     minimum: 15.0;
                                     maximum: 120.0;
                                     value: root.replay-duration;
-                                    changed(val) => {
-                                        root.replay-duration = Math.round(val);
+                                    changed => {
+                                        root.replay-duration = Math.round(self.value);
                                     }
                                 }
                             }
@@ -1791,5 +1862,14 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+
+        // Banner / Toast flotante de notificación in-app M3
+        M3Toast {
+            x: (parent.width - self.width) / 2;
+            width: Math.min(parent.width - 40px, 460px);
+            message: root.toast-message;
+            icon-text: root.toast-icon;
+            is-visible: root.toast-visible;
         }
     }
+}
