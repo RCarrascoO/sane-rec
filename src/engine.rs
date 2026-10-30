@@ -91,6 +91,8 @@ pub struct ReplayEngine {
     continuous_start_time: Mutex<Option<Instant>>,
     audio_modules: Mutex<Vec<u32>>,
     pruner_running: Arc<AtomicBool>,
+    start_lock: Mutex<()>,
+    is_saving: Arc<AtomicBool>,
 }
 
 impl ReplayEngine {
@@ -121,6 +123,8 @@ impl ReplayEngine {
             continuous_start_time: Mutex::new(None),
             audio_modules: Mutex::new(Vec::new()),
             pruner_running: Arc::new(AtomicBool::new(false)),
+            start_lock: Mutex::new(()),
+            is_saving: Arc::new(AtomicBool::new(false)),
         };
 
         // Limpieza automática de segmentos antiguos en RAM al inicializar
@@ -256,6 +260,14 @@ impl ReplayEngine {
     /// Configura el mezclador dual PipeWire creando un null-sink virtual y loopbacks.
     /// Retorna el nombre del monitor mezclado (`sane_rec_mix.monitor`) si tuvo éxito.
     fn setup_dual_audio(&self, desktop_sink: &str, mic_source: &str) -> Option<String> {
+        // Si los módulos ya están cargados (p. ej. por coexistencia con grabación continua), se reutilizan
+        {
+            let loaded = self.audio_modules.lock().unwrap();
+            if !loaded.is_empty() {
+                return Some("sane_rec_mix.monitor".to_string());
+            }
+        }
+
         self.cleanup_audio_modules();
 
         let mut loaded = Vec::new();
@@ -280,6 +292,7 @@ impl ReplayEngine {
             "module-loopback",
             &format!("source={}", desktop_monitor),
             "sink=sane_rec_mix",
+            "sink_input_properties=media.role=sane_rec_system",
         ]);
 
         match loop1_id {
@@ -297,6 +310,7 @@ impl ReplayEngine {
             "module-loopback",
             &format!("source={}", mic_source),
             "sink=sane_rec_mix",
+            "sink_input_properties=media.role=sane_rec_mic",
         ]);
 
         match loop2_id {
@@ -310,7 +324,63 @@ impl ReplayEngine {
         };
 
         *self.audio_modules.lock().unwrap() = loaded;
+
+        // Aplica inmediatamente los volúmenes configurados a los loopbacks
+        let (vol_sys, vol_mic) = {
+            let c = self.config.lock().unwrap();
+            (c.audio.volume_system, c.audio.volume_mic)
+        };
+        Self::apply_sink_input_volume("sane_rec_system", vol_sys);
+        Self::apply_sink_input_volume("sane_rec_mic", vol_mic);
+
         Some("sane_rec_mix.monitor".to_string())
+    }
+
+    /// Aplica la ganancia de volumen (en porcentaje) a todos los Sink Inputs de PipeWire identificados por `media.role`.
+    pub fn apply_sink_input_volume(role: &str, volume: f32) {
+        let percent = (volume * 100.0).round().clamp(0.0, 150.0) as u32;
+        let output = match Command::new("pactl").args(["list", "sink-inputs"]).output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => return,
+        };
+
+        let mut current_id: Option<u32> = None;
+        for line in output.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("Sink Input #") {
+                current_id = trimmed
+                    .trim_start_matches("Sink Input #")
+                    .trim()
+                    .parse::<u32>()
+                    .ok();
+            } else if trimmed.contains(&format!("media.role = \"{}\"", role)) {
+                if let Some(id) = current_id {
+                    let _ = Command::new("pactl")
+                        .args(["set-sink-input-volume", &id.to_string(), &format!("{}%", percent)])
+                        .output();
+                    current_id = None;
+                }
+            }
+        }
+    }
+
+    /// Actualiza el volumen del sistema/juego tanto en la configuración como en los loopbacks activos.
+    pub fn set_volume_system(&self, volume: f32) {
+        {
+            let mut cfg = self.config.lock().unwrap();
+            cfg.audio.volume_system = volume;
+        }
+        Self::apply_sink_input_volume("sane_rec_system", volume);
+    }
+
+    /// Actualiza el volumen del micrófono exclusivamente en su canal interno de grabación (sane_rec_mic).
+    /// NO altera la ganancia del micrófono físico del sistema operativo.
+    pub fn set_volume_mic(&self, volume: f32) {
+        {
+            let mut cfg = self.config.lock().unwrap();
+            cfg.audio.volume_mic = volume;
+        }
+        Self::apply_sink_input_volume("sane_rec_mic", volume);
     }
 
     /// Aplica los argumentos de audio al comando wf-recorder.
@@ -421,6 +491,7 @@ impl ReplayEngine {
 
     /// Inicia el proceso de grabación en búfer rodante en RAM con `wf-recorder`.
     pub fn start_replay(&self) -> Result<()> {
+        let _start_guard = self.start_lock.lock().unwrap();
         if self.is_running() {
             return Err(EngineError::AlreadyRunning);
         }
@@ -480,6 +551,7 @@ impl ReplayEngine {
         let pruner_flag = self.pruner_running.clone();
         let pruner_buf = self.buffer_dir.clone();
         let pruner_cfg = self.config.clone();
+        let is_saving_flag = self.is_saving.clone();
         std::thread::Builder::new()
             .name("sane-rec-ram-pruner".to_string())
             .spawn(move || {
@@ -487,6 +559,9 @@ impl ReplayEngine {
                     std::thread::sleep(Duration::from_millis(1000));
                     if !pruner_flag.load(Ordering::SeqCst) {
                         break;
+                    }
+                    if is_saving_flag.load(Ordering::Relaxed) {
+                        continue;
                     }
                     let (dur_secs, max_mb) = {
                         let c = pruner_cfg.lock().unwrap();
@@ -514,8 +589,10 @@ impl ReplayEngine {
         }
         *self.start_time.lock().unwrap() = None;
 
-        // Descarga de módulos de audio virtual PipeWire
-        self.cleanup_audio_modules();
+        // Descarga de módulos de audio virtual PipeWire únicamente si no hay grabación continua activa
+        if !self.is_recording() {
+            self.cleanup_audio_modules();
+        }
 
         // Limpieza de segmentos en RAM
         let _ = self.clean_buffer();
@@ -552,6 +629,7 @@ impl ReplayEngine {
 
     /// Inicia la grabación continua directa al directorio de almacenamiento con `wf-recorder`.
     pub fn start_continuous_recording(&self) -> Result<PathBuf> {
+        let _start_guard = self.start_lock.lock().unwrap();
         if self.is_recording() {
             return Err(EngineError::AlreadyRunning);
         }
@@ -642,8 +720,10 @@ impl ReplayEngine {
         }
         let _ = child.wait();
 
-        // Descarga de módulos de audio virtual PipeWire
-        self.cleanup_audio_modules();
+        // Descarga de módulos de audio virtual PipeWire únicamente si no hay búfer de replay activo
+        if !self.is_running() {
+            self.cleanup_audio_modules();
+        }
 
         let _ = notify_rust::Notification::new()
             .appname("sane-rec")
@@ -711,19 +791,26 @@ impl ReplayEngine {
             &segments[..]
         };
 
-        // 2. Crea el archivo de lista concat_list.txt con líneas "file '<abs_path>'"
-        let list_file = self.buffer_dir.join("concat_list.txt");
+        self.is_saving.store(true, Ordering::SeqCst);
+
+        // 2. Crea el archivo de lista único con líneas "file '<abs_path>'"
+        let unique_id = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let list_file = self.buffer_dir.join(format!("concat_list_{}.txt", unique_id));
         let mut list_content = String::new();
         for seg in selected_segments {
             list_content.push_str(&format!("file '{}'\n", seg.display()));
         }
-        std::fs::write(&list_file, list_content)?;
+        if let Err(e) = std::fs::write(&list_file, list_content) {
+            self.is_saving.store(false, Ordering::SeqCst);
+            return Err(EngineError::Io(e));
+        }
 
         // 3. Determina el destino final
         let config = self.config();
-        config.ensure_output_dir().map_err(|e| {
-            EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-        })?;
+        if let Err(e) = config.ensure_output_dir() {
+            self.is_saving.store(false, Ordering::SeqCst);
+            return Err(EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
+        }
 
         let timestamp = chrono::Local::now()
             .format(&config.storage.filename_format)
@@ -740,6 +827,7 @@ impl ReplayEngine {
             .output();
 
         let _ = std::fs::remove_file(&list_file);
+        self.is_saving.store(false, Ordering::SeqCst);
 
         let output = ffmpeg_res?;
         if !output.status.success() {
@@ -1046,16 +1134,21 @@ pub fn get_default_audio_source() -> Option<String> {
     None
 }
 
-/// Reproduce un efecto sonoro de confirmación utilizando el servidor PipeWire/pw-play si existe el archivo.
+/// Reproduce un efecto sonoro de confirmación utilizando el servidor PipeWire/pw-play de forma desacoplada y sin procesos zombi.
 pub fn play_feedback_sound(sound_name: &str) {
     let path = format!("/usr/share/sounds/freedesktop/stereo/{}.oga", sound_name);
     if std::path::Path::new(&path).exists() {
-        let _ = Command::new("pw-play")
-            .arg(&path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
+        std::thread::spawn(move || {
+            if let Ok(mut child) = Command::new("pw-play")
+                .arg(&path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                let _ = child.wait();
+            }
+        });
     }
 }
 

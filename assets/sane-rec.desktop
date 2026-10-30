@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=sane-rec
+GenericName=Instant Replay & Screen Recorder
+Comment=Material Design 3 Instant Replay & Screen Recorder for Linux with CPU-first architecture
+Exec=sane-rec
+Icon=sane-rec
+Terminal=false
+Type=Application
+Categories=AudioVideo;Recorder;
+Keywords=replay;shadowplay;record;screen;wayland;slurp;pipewire;
+StartupNotify=true

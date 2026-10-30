@@ -33,6 +33,8 @@ pub enum Commands {
     Status,
     /// Detiene el daemon en ejecución
     Stop,
+    /// Comprueba y actualiza sane-rec a la versión más reciente publicada en GitHub Releases
+    Update,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +172,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Some(Commands::Update) => {
+            println!("🔍 Comprobando actualizaciones de sane-rec en GitHub Releases...");
+            match sane_rec::updater::perform_update() {
+                Ok(version) => {
+                    println!("✨ sane-rec se ha actualizado correctamente a la versión {}.", version);
+                }
+                Err(e) => {
+                    eprintln!("❌ No se pudo actualizar: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 
     Ok(())
@@ -213,6 +227,9 @@ fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
         );
 
         let engine_loop = engine.clone();
+        #[cfg(unix)]
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
         loop {
             tokio::select! {
                 Some(cmd) = rx.recv() => {
@@ -223,7 +240,22 @@ fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 _ = tokio::signal::ctrl_c() => {
-                    println!("\nSeñal recibida, cerrando sane-rec daemon...");
+                    println!("\nSeñal SIGINT recibida, cerrando sane-rec daemon...");
+                    let _ = engine_loop.stop_replay();
+                    let _ = engine_loop.stop_continuous_recording();
+                    break;
+                }
+                _ = async {
+                    #[cfg(unix)]
+                    {
+                        sigterm.recv().await
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        std::future::pending::<Option<()>>().await
+                    }
+                } => {
+                    println!("\nSeñal SIGTERM recibida, cerrando sane-rec daemon...");
                     let _ = engine_loop.stop_replay();
                     let _ = engine_loop.stop_continuous_recording();
                     break;
@@ -354,12 +386,18 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_selected_screen(config.video.target.clone().into());
     ui.set_audio_system(config.audio.capture_desktop);
     ui.set_audio_mic(config.audio.capture_mic);
+    ui.set_volume_system(config.audio.volume_system);
+    ui.set_volume_mic(config.audio.volume_mic);
     ui.set_shortcut_save(config.shortcuts.save_replay.clone().into());
     ui.set_shortcut_record(config.shortcuts.toggle_record.clone().into());
     ui.set_max_memory_mb(config.replay.max_memory_mb as i32);
     ui.set_custom_codec(config.video.codec.clone().into());
     ui.set_custom_preset(config.video.preset.clone().into());
     ui.set_custom_crf(config.video.crf as i32);
+
+    // Inicializar perfiles de hardware por defecto (~/.config/sane-rec/profiles/)
+    sane_rec::profiles_manager::init_default_profiles();
+    update_profiles_model(&ui);
 
     // Cargar salidas de pantalla, ventanas activas y dispositivos de audio descubiertos
     update_screens_model(&ui);
@@ -715,6 +753,75 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Callbacks de persistencia y ajuste dinámico de volumen (desacoplados del hilo de render UI)
+    {
+        let engine_clone = local_engine.clone();
+        ui.on_set_volume_system(move |vol| {
+            let engine = engine_clone.clone();
+            std::thread::spawn(move || {
+                if let Some(ref eng) = engine {
+                    eng.set_volume_system(vol);
+                    let mut cfg = eng.config();
+                    cfg.audio.volume_system = vol;
+                    let _ = cfg.save();
+                } else if let Ok(mut cfg) = Config::load() {
+                    cfg.audio.volume_system = vol;
+                    let _ = cfg.save();
+                    ReplayEngine::apply_sink_input_volume("sane_rec_system", vol);
+                }
+            });
+        });
+    }
+
+    {
+        let engine_clone = local_engine.clone();
+        ui.on_set_volume_mic(move |vol| {
+            let engine = engine_clone.clone();
+            std::thread::spawn(move || {
+                if let Some(ref eng) = engine {
+                    eng.set_volume_mic(vol);
+                    let mut cfg = eng.config();
+                    cfg.audio.volume_mic = vol;
+                    let _ = cfg.save();
+                } else if let Ok(mut cfg) = Config::load() {
+                    cfg.audio.volume_mic = vol;
+                    let _ = cfg.save();
+                    ReplayEngine::apply_sink_input_volume("sane_rec_mic", vol);
+                }
+            });
+        });
+    }
+
+    {
+        let engine_clone = local_engine.clone();
+        ui.on_toggle_audio_system(move |active| {
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.audio.capture_desktop = active;
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.audio.capture_desktop = active;
+                let _ = cfg.save();
+            }
+        });
+    }
+
+    {
+        let engine_clone = local_engine.clone();
+        ui.on_toggle_audio_mic(move |active| {
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.audio.capture_mic = active;
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.audio.capture_mic = active;
+                let _ = cfg.save();
+            }
+        });
+    }
+
     // Callback select-replay-duration
     {
         let ui_weak = ui.as_weak();
@@ -846,6 +953,250 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(ui) = ui_weak.upgrade() {
                 show_toast(&ui, "🧠", &format!("Límite búfer RAM: {} MB", ram));
             }
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Callbacks del Gestor de Perfiles de Hardware (~/.config/sane-rec/profiles/)
+    // -------------------------------------------------------------------------
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_load_hardware_profile(move |name| {
+            let Some(ui) = ui_weak.upgrade() else { return; };
+            match sane_rec::profiles_manager::load_profile(name.as_str()) {
+                Ok(profile) => {
+                    ui.set_custom_codec(profile.codec.clone().into());
+                    ui.set_custom_preset(profile.preset.clone().into());
+                    ui.set_custom_crf(profile.crf as i32);
+                    ui.set_max_memory_mb(profile.max_memory_mb as i32);
+                    ui.set_selected_fps(profile.fps as i32);
+                    ui.set_selected_resolution(profile.resolution.clone().into());
+                    ui.set_audio_track_mode(profile.audio_track_mode as i32);
+                    ui.set_active_profile("custom".into());
+
+                    if let Some(ref eng) = engine_clone {
+                        let mut cfg = eng.config();
+                        cfg.video.codec = profile.codec;
+                        cfg.video.preset = profile.preset;
+                        cfg.video.crf = profile.crf;
+                        cfg.video.fps = profile.fps;
+                        cfg.video.scale = profile.resolution;
+                        cfg.replay.max_memory_mb = profile.max_memory_mb as u32;
+                        cfg.profile.active_profile = "custom".to_string();
+                        let _ = cfg.save();
+                        eng.update_config(cfg);
+                    } else if let Ok(mut cfg) = Config::load() {
+                        cfg.video.codec = profile.codec;
+                        cfg.video.preset = profile.preset;
+                        cfg.video.crf = profile.crf;
+                        cfg.video.fps = profile.fps;
+                        cfg.video.scale = profile.resolution;
+                        cfg.replay.max_memory_mb = profile.max_memory_mb as u32;
+                        cfg.profile.active_profile = "custom".to_string();
+                        let _ = cfg.save();
+                    }
+                    show_toast(&ui, "⚙️", &format!("Perfil '{}' cargado correctamente", profile.name));
+                }
+                Err(e) => {
+                    show_toast(&ui, "❌", &format!("Error al cargar perfil: {}", e));
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_save_hardware_profile(move |name| {
+            let Some(ui) = ui_weak.upgrade() else { return; };
+            let profile_name = if name.trim().is_empty() {
+                "Mi-Perfil-Personalizado".to_string()
+            } else {
+                name.trim().to_string()
+            };
+            let profile = sane_rec::profiles_manager::HardwareProfile {
+                name: profile_name.clone(),
+                description: format!("Perfil personalizado configurado para {}", profile_name),
+                target_device: "Dispositivo actual".to_string(),
+                codec: ui.get_custom_codec().to_string(),
+                preset: ui.get_custom_preset().to_string(),
+                crf: ui.get_custom_crf() as u32,
+                fps: ui.get_selected_fps() as u32,
+                resolution: ui.get_selected_resolution().to_string(),
+                max_memory_mb: ui.get_max_memory_mb() as u64,
+                audio_track_mode: ui.get_audio_track_mode() as u32,
+            };
+
+            match sane_rec::profiles_manager::save_profile(&profile) {
+                Ok(_) => {
+                    update_profiles_model(&ui);
+                    show_toast(&ui, "💾", &format!("Perfil '{}' guardado", profile_name));
+                }
+                Err(e) => {
+                    show_toast(&ui, "❌", &format!("Error al guardar perfil: {}", e));
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_export_hardware_profile(move |name| {
+            let Some(ui) = ui_weak.upgrade() else { return; };
+            let profile_res = sane_rec::profiles_manager::load_profile(name.as_str());
+            let profile = match profile_res {
+                Ok(p) => p,
+                Err(_) => sane_rec::profiles_manager::HardwareProfile {
+                    name: name.to_string(),
+                    description: "Perfil exportado de sane-rec".to_string(),
+                    target_device: "Dispositivo actual".to_string(),
+                    codec: ui.get_custom_codec().to_string(),
+                    preset: ui.get_custom_preset().to_string(),
+                    crf: ui.get_custom_crf() as u32,
+                    fps: ui.get_selected_fps() as u32,
+                    resolution: ui.get_selected_resolution().to_string(),
+                    max_memory_mb: ui.get_max_memory_mb() as u64,
+                    audio_track_mode: ui.get_audio_track_mode() as u32,
+                },
+            };
+
+            let default_filename = format!("{}.toml", name.trim().replace(' ', "_"));
+            let output = std::process::Command::new("zenity")
+                .args([
+                    "--file-selection",
+                    "--save",
+                    "--confirm-overwrite",
+                    "--title=Exportar Perfil de Hardware",
+                    &format!("--filename={}", default_filename),
+                ])
+                .output();
+
+            if let Ok(o) = output {
+                if o.status.success() {
+                    let path_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if !path_str.is_empty() {
+                        let path = std::path::PathBuf::from(path_str);
+                        match sane_rec::profiles_manager::export_profile(&profile, &path) {
+                            Ok(_) => {
+                                show_toast(&ui, "📤", &format!("Perfil exportado a {}", path.display()));
+                            }
+                            Err(e) => {
+                                show_toast(&ui, "❌", &format!("Error al exportar: {}", e));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_import_hardware_profile(move || {
+            let Some(ui) = ui_weak.upgrade() else { return; };
+            let output = std::process::Command::new("zenity")
+                .args([
+                    "--file-selection",
+                    "--title=Seleccionar Perfil de Hardware (.toml)",
+                    "--file-filter=Archivos TOML (*.toml) | *.toml",
+                ])
+                .output();
+
+            if let Ok(o) = output {
+                if o.status.success() {
+                    let path_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if !path_str.is_empty() {
+                        let path = std::path::PathBuf::from(path_str);
+                        match sane_rec::profiles_manager::import_profile(&path) {
+                            Ok(profile) => {
+                                update_profiles_model(&ui);
+                                ui.set_selected_profile_name(profile.name.clone().into());
+                                ui.set_custom_codec(profile.codec.clone().into());
+                                ui.set_custom_preset(profile.preset.clone().into());
+                                ui.set_custom_crf(profile.crf as i32);
+                                ui.set_max_memory_mb(profile.max_memory_mb as i32);
+                                ui.set_selected_fps(profile.fps as i32);
+                                ui.set_selected_resolution(profile.resolution.clone().into());
+                                ui.set_audio_track_mode(profile.audio_track_mode as i32);
+                                ui.set_active_profile("custom".into());
+
+                                if let Some(ref eng) = engine_clone {
+                                    let mut cfg = eng.config();
+                                    cfg.video.codec = profile.codec;
+                                    cfg.video.preset = profile.preset;
+                                    cfg.video.crf = profile.crf;
+                                    cfg.video.fps = profile.fps;
+                                    cfg.video.scale = profile.resolution;
+                                    cfg.replay.max_memory_mb = profile.max_memory_mb as u32;
+                                    cfg.profile.active_profile = "custom".to_string();
+                                    let _ = cfg.save();
+                                    eng.update_config(cfg);
+                                }
+                                show_toast(&ui, "📥", &format!("Perfil '{}' importado exitosamente", profile.name));
+                            }
+                            Err(e) => {
+                                show_toast(&ui, "❌", &format!("Error al importar perfil: {}", e));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_refresh_hardware_profiles(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                update_profiles_model(&ui);
+                show_toast(&ui, "🔄", "Lista de perfiles actualizada");
+            }
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Auto-actualizador: Verificación no bloqueante y 1-clic update
+    // -------------------------------------------------------------------------
+    {
+        let ui_weak = ui.as_weak();
+        std::thread::spawn(move || {
+            if let Some(info) = sane_rec::updater::check_for_updates() {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_update_version(info.version.into());
+                        ui.set_has_update(true);
+                    }
+                });
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_trigger_update(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_is_updating(true);
+                show_toast(&ui, "🚀", "Descargando e instalando actualización...");
+            }
+            let ui_weak2 = ui_weak.clone();
+            std::thread::spawn(move || {
+                let res = sane_rec::updater::perform_update();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak2.upgrade() {
+                        ui.set_is_updating(false);
+                        match res {
+                            Ok(v) => {
+                                ui.set_has_update(false);
+                                show_toast(&ui, "✨", &format!("¡Actualizado a {}! Reinicia la app para aplicar cambios.", v));
+                            }
+                            Err(e) => {
+                                show_toast(&ui, "❌", &format!("Error al actualizar: {}", e));
+                            }
+                        }
+                    }
+                });
+            });
         });
     }
 
@@ -1055,6 +1406,13 @@ fn update_gallery_model(ui: &AppWindow, output_dir: &std::path::Path) {
         ui.set_gallery_clips(std::rc::Rc::new(slint::VecModel::from(entries)).into());
         ui.set_recent_clips(std::rc::Rc::new(slint::VecModel::from(recent_entries)).into());
     }
+}
+
+/// Actualiza el modelo de perfiles de hardware disponibles en la interfaz.
+fn update_profiles_model(ui: &AppWindow) {
+    let profiles = sane_rec::profiles_manager::list_profiles();
+    let slint_profiles: Vec<slint::SharedString> = profiles.into_iter().map(|s| s.into()).collect();
+    ui.set_available_profiles_list(std::rc::Rc::new(slint::VecModel::from(slint_profiles)).into());
 }
 
 #[cfg(test)]

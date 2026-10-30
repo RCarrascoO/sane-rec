@@ -62,11 +62,23 @@ impl Default for VideoConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AudioConfig {
     pub capture_desktop: bool,
     pub capture_mic: bool,
     pub codec: String,
+    #[serde(default = "default_volume_system")]
+    pub volume_system: f32,
+    #[serde(default = "default_volume_mic")]
+    pub volume_mic: f32,
+}
+
+fn default_volume_system() -> f32 {
+    1.0
+}
+
+fn default_volume_mic() -> f32 {
+    0.85
 }
 
 impl Default for AudioConfig {
@@ -75,6 +87,8 @@ impl Default for AudioConfig {
             capture_desktop: true,
             capture_mic: false,
             codec: "aac".to_string(),
+            volume_system: 1.0,
+            volume_mic: 0.85,
         }
     }
 }
@@ -264,13 +278,15 @@ impl Config {
         self.save_to_path(&default_config_path())
     }
 
-    /// Guarda la configuración en una ruta específica.
+    /// Guarda la configuración en una ruta específica utilizando reemplazo atómico.
     pub fn save_to_path(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let serialized = toml::to_string_pretty(self)?;
-        std::fs::write(path, serialized)?;
+        let tmp_path = path.with_extension("tmp");
+        std::fs::write(&tmp_path, serialized)?;
+        std::fs::rename(&tmp_path, path)?;
         let _ = self.ensure_output_dir();
         Ok(())
     }
@@ -306,6 +322,8 @@ mod tests {
         assert!(cfg.audio.capture_desktop);
         assert!(!cfg.audio.capture_mic);
         assert_eq!(cfg.audio.codec, "aac");
+        assert_eq!(cfg.audio.volume_system, 1.0);
+        assert_eq!(cfg.audio.volume_mic, 0.85);
 
         assert_eq!(cfg.storage.output_dir, PathBuf::from("/mnt/Files/Videos/Replays"));
         assert_eq!(cfg.storage.filename_format, "Replay_%Y-%m-%d_%H-%M-%S");

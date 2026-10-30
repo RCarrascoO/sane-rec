@@ -81,6 +81,16 @@ export component AppWindow inherits Window {
     callback set-custom-preset(string);
     callback set-custom-crf(int);
     callback set-custom-max-ram(int);
+    callback set-volume-system(float);
+    callback set-volume-mic(float);
+    callback toggle-audio-system(bool);
+    callback toggle-audio-mic(bool);
+    callback save-hardware-profile(string);
+    callback load-hardware-profile(string);
+    callback export-hardware-profile(string);
+    callback import-hardware-profile();
+    callback refresh-hardware-profiles();
+    callback trigger-update();
 
     // -------------------------------------------------------------------------
     // Propiedades públicas para bindings con Rust
@@ -95,6 +105,15 @@ export component AppWindow inherits Window {
     in-out property <string> output-path: "/mnt/Files/Videos/Replays";
     in-out property <int> replay-duration: 30;
     in-out property <string> selected-format: "mp4";
+
+    // Auto-actualizador
+    in-out property <bool> has-update: false;
+    in-out property <string> update-version: "";
+    in-out property <bool> is-updating: false;
+
+    // Gestor de perfiles de hardware
+    in-out property <[string]> available-profiles-list: ["Sane-Desktop-Polaris", "Notebook-Universal-Safe"];
+    in-out property <string> selected-profile-name: "Sane-Desktop-Polaris";
 
     // Atajos de teclado y límites
     in-out property <string> shortcut-save: "Mod+F10";
@@ -203,6 +222,48 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     width: Math.min(root.width - rail.width - (root.width < 820px ? 24px : 48px), 1020px);
                     spacing: root.height < 800px ? 14px : 20px;
+
+                    // Banner flotante de auto-actualización disponible
+                    if root.has-update: Rectangle {
+                        height: 44px;
+                        border-radius: M3Theme.corner-medium;
+                        background: M3Theme.primary-container;
+                        border-width: 1px;
+                        border-color: M3Theme.primary.with-alpha(0.6);
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 12px;
+                            alignment: space-between;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: "🚀";
+                                    font-size: 16px;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: "¡Nueva versión disponible: " + root.update-version + "!";
+                                    font-size: M3Theme.font-body-medium;
+                                    font-weight: 700;
+                                    color: M3Theme.on-primary-container;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                M3Button {
+                                    text: root.is-updating ? "Actualizando..." : "Actualizar ahora";
+                                    variant: "filled";
+                                    btn-height: 30px;
+                                    enabled: !root.is-updating;
+                                    clicked => { root.trigger-update(); }
+                                }
+                            }
+                        }
+                    }
 
                     // ---------------------------------------------------------
                     // VISTA 0: DASHBOARD (Monitor en vivo)
@@ -1284,7 +1345,10 @@ export component AppWindow inherits Window {
                                             M3Switch {
                                                 y: (parent.height - self.height) / 2;
                                                 checked: root.audio-system;
-                                                toggled(state) => { root.audio-system = state; }
+                                                toggled(state) => {
+                                                    root.audio-system = state;
+                                                    root.toggle-audio-system(state);
+                                                }
                                             }
                                         }
                                     }
@@ -1293,6 +1357,9 @@ export component AppWindow inherits Window {
                                         minimum: 0.0;
                                         maximum: 1.5;
                                         value <=> root.volume-system;
+                                        changed => {
+                                            root.set-volume-system(self.value);
+                                        }
                                     }
 
                                     // Medidor VU en vivo para calibrar nivel de audio del sistema
@@ -1337,7 +1404,10 @@ export component AppWindow inherits Window {
                                             M3Switch {
                                                 y: (parent.height - self.height) / 2;
                                                 checked: root.audio-mic;
-                                                toggled(state) => { root.audio-mic = state; }
+                                                toggled(state) => {
+                                                    root.audio-mic = state;
+                                                    root.toggle-audio-mic(state);
+                                                }
                                             }
                                         }
                                     }
@@ -1346,6 +1416,9 @@ export component AppWindow inherits Window {
                                         minimum: 0.0;
                                         maximum: 1.5;
                                         value <=> root.volume-mic;
+                                        changed => {
+                                            root.set-volume-mic(self.value);
+                                        }
                                     }
 
                                     // Medidor VU en vivo para calibrar nivel del micrófono
@@ -1396,7 +1469,7 @@ export component AppWindow inherits Window {
                             M3ProfileTile {
                                 title: "Sane Safe (CPU x264)";
                                 subtitle: "Codificación por CPU sin riesgo de GPU freeze • Ideal Polaris / Linux";
-                                badge-text: "Recomendado";
+                                badge-text: "Recomendado / Estable";
                                 icon-text: "🛡️";
                                 is-selected: root.active-profile == "sane-safe";
                                 clicked => {
@@ -1423,7 +1496,7 @@ export component AppWindow inherits Window {
                             M3ProfileTile {
                                 title: "NVIDIA Hardware (NVENC)";
                                 subtitle: "Aceleración por hardware NVIDIA en GPU GeForce";
-                                badge-text: "Hardware";
+                                badge-text: "Experimental";
                                 icon-text: "🟢";
                                 is-selected: root.active-profile == "nvidia-nvenc";
                                 clicked => {
@@ -1436,7 +1509,7 @@ export component AppWindow inherits Window {
                             M3ProfileTile {
                                 title: "Intel Hardware (QuickSync)";
                                 subtitle: "Aceleración por GPU Intel QuickSync Video (iGPU / Arc)";
-                                badge-text: "Hardware";
+                                badge-text: "Experimental";
                                 icon-text: "🔷";
                                 is-selected: root.active-profile == "intel-qsv";
                                 clicked => {
@@ -1660,6 +1733,98 @@ export component AppWindow inherits Window {
                                                 root.max-memory-mb = 500;
                                                 root.set-custom-max-ram(500);
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Gestor de Perfiles de Hardware de Equipos (~/.config/sane-rec/profiles/)
+                        M3Card {
+                            content-padding: 16px;
+                            card-background: M3Theme.surface-container;
+
+                            VerticalLayout {
+                                spacing: 14px;
+
+                                HorizontalLayout {
+                                    alignment: space-between;
+
+                                    VerticalLayout {
+                                        spacing: 2px;
+                                        Text {
+                                            text: "GESTOR DE PERFILES DE EQUIPO";
+                                            font-size: M3Theme.font-label-large;
+                                            font-weight: 700;
+                                            color: M3Theme.primary;
+                                        }
+                                        Text {
+                                            text: "Guarda, exporta y carga perfiles optimizados para PCs o laptops específicos (~/.config/sane-rec/profiles/).";
+                                            font-size: M3Theme.font-body-small;
+                                            color: M3Theme.on-surface-variant;
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3Button {
+                                            text: "Importar (.toml)";
+                                            variant: "tonal";
+                                            btn-height: 32px;
+                                            clicked => { root.import-hardware-profile(); }
+                                        }
+                                        M3Button {
+                                            text: "Guardar Actual";
+                                            variant: "tonal";
+                                            btn-height: 32px;
+                                            clicked => { root.save-hardware-profile(root.selected-profile-name); }
+                                        }
+                                    }
+                                }
+
+                                // Selector de perfiles disponibles
+                                VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Perfiles Guardados en el Sistema:";
+                                        font-size: M3Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: M3Theme.on-surface;
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        for p-name in root.available-profiles-list: M3PresetChip {
+                                            text: p-name;
+                                            is-active: root.selected-profile-name == p-name;
+                                            clicked => {
+                                                root.selected-profile-name = p-name;
+                                                root.load-hardware-profile(p-name);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Acciones sobre el perfil seleccionado
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    alignment: start;
+
+                                    M3Button {
+                                        text: "Cargar '" + root.selected-profile-name + "'";
+                                        variant: "filled";
+                                        btn-height: 34px;
+                                        clicked => {
+                                            root.load-hardware-profile(root.selected-profile-name);
+                                        }
+                                    }
+
+                                    M3Button {
+                                        text: "Exportar para compartir...";
+                                        variant: "outlined";
+                                        btn-height: 34px;
+                                        clicked => {
+                                            root.export-hardware-profile(root.selected-profile-name);
                                         }
                                     }
                                 }

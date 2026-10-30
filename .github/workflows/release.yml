@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build & Publish Release Tarball
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies (GStreamer, Slint, Fontconfig)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            libgstreamer-plugins-bad1.0-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly \
+            libasound2-dev \
+            libfontconfig1-dev \
+            libxkbcommon-dev
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Strip binary
+        run: strip target/release/sane-rec
+
+      - name: Package tarball
+        run: |
+          RELEASE_TAG=${GITHUB_REF#refs/tags/}
+          PACKAGE_DIR="sane-rec-${RELEASE_TAG}-linux-x86_64"
+          mkdir -p "${PACKAGE_DIR}/assets"
+          cp target/release/sane-rec "${PACKAGE_DIR}/"
+          cp install.sh "${PACKAGE_DIR}/"
+          cp README.md "${PACKAGE_DIR}/"
+          cp assets/sane-rec.desktop "${PACKAGE_DIR}/assets/"
+          cp assets/sane-rec.svg "${PACKAGE_DIR}/assets/"
+          tar -czf "${PACKAGE_DIR}.tar.gz" "${PACKAGE_DIR}"
+          echo "PACKAGE_NAME=${PACKAGE_DIR}.tar.gz" >> $GITHUB_ENV
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.PACKAGE_NAME }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
