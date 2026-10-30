@@ -75,6 +75,12 @@ export component AppWindow inherits Window {
     callback select-window(string, string);
     callback select-audio-sink(string);
     callback select-audio-mic(string);
+    callback select-replay-duration(int);
+    callback update-shortcuts(string, string);
+    callback set-custom-codec(string);
+    callback set-custom-preset(string);
+    callback set-custom-crf(int);
+    callback set-custom-max-ram(int);
 
     // -------------------------------------------------------------------------
     // Propiedades públicas para bindings con Rust
@@ -89,6 +95,16 @@ export component AppWindow inherits Window {
     in-out property <string> output-path: "/mnt/Files/Videos/Replays";
     in-out property <int> replay-duration: 30;
     in-out property <string> selected-format: "mp4";
+
+    // Atajos de teclado y límites
+    in-out property <string> shortcut-save: "Mod+F10";
+    in-out property <string> shortcut-record: "Mod+F9";
+    in-out property <int> max-memory-mb: 150;
+
+    // Configuración interactiva del Perfil Personalizado
+    in-out property <string> custom-codec: "libx264";
+    in-out property <string> custom-preset: "ultrafast";
+    in-out property <int> custom-crf: 23;
 
     // Video y captura
     in-out property <string> selected-screen: "DVI-D-1";
@@ -292,7 +308,7 @@ export component AppWindow inherits Window {
                                                         padding-left: 8px;
                                                         padding-right: 8px;
                                                         Text {
-                                                            text: root.is-running ? root.ram-usage : "0 MB";
+                                                            text: root.is-running ? (root.ram-usage + " / " + root.max-memory-mb + " MB") : (root.max-memory-mb + " MB máx");
                                                             font-size: M3Theme.font-label-small;
                                                             font-weight: 700;
                                                             vertical-alignment: center;
@@ -355,7 +371,7 @@ export component AppWindow inherits Window {
 
                                     M3Button {
                                         horizontal-stretch: 1;
-                                        text: "Guardar Replay (Mod+F10)";
+                                        text: "Guardar Replay (" + root.shortcut-save + ")";
                                         icon-text: "💾";
                                         variant: "filled";
                                         btn-height: 48px;
@@ -367,7 +383,7 @@ export component AppWindow inherits Window {
 
                                     M3Button {
                                         horizontal-stretch: 1;
-                                        text: root.is-recording ? ("Detener REC " + root.recording-time + " (Mod+F9)") : "Grabación Continua (Mod+F9)";
+                                        text: root.is-recording ? ("Detener REC " + root.recording-time + " (" + root.shortcut-record + ")") : ("Grabación Continua (" + root.shortcut-record + ")");
                                         icon-text: root.is-recording ? "⏹" : "⏺";
                                         variant: root.is-recording ? "filled" : "tonal";
                                         btn-height: 48px;
@@ -382,7 +398,7 @@ export component AppWindow inherits Window {
                                     spacing: 10px;
 
                                     M3Button {
-                                        text: "Guardar Replay (Mod+F10)";
+                                        text: "Guardar Replay (" + root.shortcut-save + ")";
                                         icon-text: "💾";
                                         variant: "filled";
                                         btn-height: 44px;
@@ -393,7 +409,7 @@ export component AppWindow inherits Window {
                                     }
 
                                     M3Button {
-                                        text: root.is-recording ? ("Detener REC " + root.recording-time + " (Mod+F9)") : "Grabación Continua (Mod+F9)";
+                                        text: root.is-recording ? ("Detener REC " + root.recording-time + " (" + root.shortcut-record + ")") : ("Grabación Continua (" + root.shortcut-record + ")");
                                         icon-text: root.is-recording ? "⏹" : "⏺";
                                         variant: root.is-recording ? "filled" : "tonal";
                                         btn-height: 44px;
@@ -446,7 +462,7 @@ export component AppWindow inherits Window {
                                     horizontal-stretch: 1;
                                     icon-text: "🧠";
                                     value: root.ram-usage;
-                                    label: "Consumo RAM";
+                                    label: "Consumo RAM (Máx: " + root.max-memory-mb + " MB)";
                                     badge-text: "dmabuf";
                                 }
                             }
@@ -574,7 +590,7 @@ export component AppWindow inherits Window {
                                         }
 
                                         Text {
-                                            text: "Presiona Mod+F10 o el botón superior para capturar los últimos " + root.replay-duration + " segundos.";
+                                            text: "Presiona " + root.shortcut-save + " o el botón superior para capturar los últimos " + root.replay-duration + " segundos.";
                                             font-size: M3Theme.font-body-small;
                                             color: M3Theme.on-surface-variant;
                                         }
@@ -1391,13 +1407,220 @@ export component AppWindow inherits Window {
                             // 5. Personalizado
                             M3ProfileTile {
                                 title: "Personalizado";
-                                subtitle: "Pipeline configurable manualmente en config.toml";
+                                subtitle: "Ajustes interactivos de códec, velocidad CPU, CRF y límite de RAM";
                                 badge-text: "Avanzado";
                                 icon-text: "⚙️";
                                 is-selected: root.active-profile == "custom";
                                 clicked => {
                                     root.active-profile = "custom";
                                     root.select-profile("custom");
+                                }
+                            }
+                        }
+
+                        // Parámetros interactivos del Modo Personalizado
+                        if root.active-profile == "custom": M3Card {
+                            content-padding: 16px;
+                            card-background: M3Theme.surface-container-high;
+
+                            VerticalLayout {
+                                spacing: 14px;
+
+                                Text {
+                                    text: "PARÁMETROS DEL PERFIL PERSONALIZADO";
+                                    font-size: M3Theme.font-label-large;
+                                    font-weight: 700;
+                                    color: M3Theme.primary;
+                                }
+
+                                Text {
+                                    text: "Configura el codificador, compresión y límites de memoria en vivo sin editar archivos.";
+                                    font-size: M3Theme.font-body-small;
+                                    color: M3Theme.on-surface-variant;
+                                }
+
+                                // 1. Códec de Video
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    Text {
+                                        text: "Códec de Video:";
+                                        font-size: M3Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: M3Theme.on-surface;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3PresetChip {
+                                            text: "libx264 (H.264)";
+                                            is-active: root.custom-codec == "libx264";
+                                            clicked => {
+                                                root.custom-codec = "libx264";
+                                                root.set-custom-codec("libx264");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "libx265 (HEVC)";
+                                            is-active: root.custom-codec == "libx265";
+                                            clicked => {
+                                                root.custom-codec = "libx265";
+                                                root.set-custom-codec("libx265");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "libvpx-vp9";
+                                            is-active: root.custom-codec == "libvpx-vp9";
+                                            clicked => {
+                                                root.custom-codec = "libvpx-vp9";
+                                                root.set-custom-codec("libvpx-vp9");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "h264_vaapi";
+                                            is-active: root.custom-codec == "h264_vaapi";
+                                            clicked => {
+                                                root.custom-codec = "h264_vaapi";
+                                                root.set-custom-codec("h264_vaapi");
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 2. Preset CPU (Velocidad vs CPU)
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    Text {
+                                        text: "Preset de Velocidad CPU:";
+                                        font-size: M3Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: M3Theme.on-surface;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3PresetChip {
+                                            text: "ultrafast";
+                                            is-active: root.custom-preset == "ultrafast";
+                                            clicked => {
+                                                root.custom-preset = "ultrafast";
+                                                root.set-custom-preset("ultrafast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "superfast";
+                                            is-active: root.custom-preset == "superfast";
+                                            clicked => {
+                                                root.custom-preset = "superfast";
+                                                root.set-custom-preset("superfast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "veryfast";
+                                            is-active: root.custom-preset == "veryfast";
+                                            clicked => {
+                                                root.custom-preset = "veryfast";
+                                                root.set-custom-preset("veryfast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "fast";
+                                            is-active: root.custom-preset == "fast";
+                                            clicked => {
+                                                root.custom-preset = "fast";
+                                                root.set-custom-preset("fast");
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 3. Calidad CRF
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    Text {
+                                        text: "Calidad CRF (" + root.custom-crf + " - Menor es mayor calidad):";
+                                        font-size: M3Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: M3Theme.on-surface;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3PresetChip {
+                                            text: "18 (Ultra)";
+                                            is-active: root.custom-crf == 18;
+                                            clicked => {
+                                                root.custom-crf = 18;
+                                                root.set-custom-crf(18);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "21 (Alta)";
+                                            is-active: root.custom-crf == 21;
+                                            clicked => {
+                                                root.custom-crf = 21;
+                                                root.set-custom-crf(21);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "23 (Equilibrada)";
+                                            is-active: root.custom-crf == 23;
+                                            clicked => {
+                                                root.custom-crf = 23;
+                                                root.set-custom-crf(23);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "28 (Bajo peso)";
+                                            is-active: root.custom-crf == 28;
+                                            clicked => {
+                                                root.custom-crf = 28;
+                                                root.set-custom-crf(28);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 4. Límite de Búfer RAM
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    Text {
+                                        text: "Límite Máximo de Búfer RAM (" + root.max-memory-mb + " MB):";
+                                        font-size: M3Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: M3Theme.on-surface;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3PresetChip {
+                                            text: "100 MB";
+                                            is-active: root.max-memory-mb == 100;
+                                            clicked => {
+                                                root.max-memory-mb = 100;
+                                                root.set-custom-max-ram(100);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "150 MB (Recomendado)";
+                                            is-active: root.max-memory-mb == 150;
+                                            clicked => {
+                                                root.max-memory-mb = 150;
+                                                root.set-custom-max-ram(150);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "250 MB";
+                                            is-active: root.max-memory-mb == 250;
+                                            clicked => {
+                                                root.max-memory-mb = 250;
+                                                root.set-custom-max-ram(250);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "500 MB";
+                                            is-active: root.max-memory-mb == 500;
+                                            clicked => {
+                                                root.max-memory-mb = 500;
+                                                root.set-custom-max-ram(500);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1446,37 +1669,55 @@ export component AppWindow inherits Window {
                                     M3PresetChip {
                                         text: "15s";
                                         is-active: root.replay-duration == 15;
-                                        clicked => { root.replay-duration = 15; }
+                                        clicked => {
+                                            root.replay-duration = 15;
+                                            root.select-replay-duration(15);
+                                        }
                                     }
 
                                     M3PresetChip {
                                         text: "30s";
                                         is-active: root.replay-duration == 30;
-                                        clicked => { root.replay-duration = 30; }
+                                        clicked => {
+                                            root.replay-duration = 30;
+                                            root.select-replay-duration(30);
+                                        }
                                     }
 
                                     M3PresetChip {
                                         text: "45s";
                                         is-active: root.replay-duration == 45;
-                                        clicked => { root.replay-duration = 45; }
+                                        clicked => {
+                                            root.replay-duration = 45;
+                                            root.select-replay-duration(45);
+                                        }
                                     }
 
                                     M3PresetChip {
                                         text: "60s";
                                         is-active: root.replay-duration == 60;
-                                        clicked => { root.replay-duration = 60; }
+                                        clicked => {
+                                            root.replay-duration = 60;
+                                            root.select-replay-duration(60);
+                                        }
                                     }
 
                                     M3PresetChip {
                                         text: "90s";
                                         is-active: root.replay-duration == 90;
-                                        clicked => { root.replay-duration = 90; }
+                                        clicked => {
+                                            root.replay-duration = 90;
+                                            root.select-replay-duration(90);
+                                        }
                                     }
 
                                     M3PresetChip {
                                         text: "120s";
                                         is-active: root.replay-duration == 120;
-                                        clicked => { root.replay-duration = 120; }
+                                        clicked => {
+                                            root.replay-duration = 120;
+                                            root.select-replay-duration(120);
+                                        }
                                     }
                                 }
 
@@ -1486,6 +1727,7 @@ export component AppWindow inherits Window {
                                     value: root.replay-duration;
                                     changed => {
                                         root.replay-duration = Math.round(self.value);
+                                        root.select-replay-duration(root.replay-duration);
                                     }
                                 }
                             }
@@ -1601,13 +1843,13 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Lista Visual de Atajos de Teclado
+                        // Selector interactivo de Atajos de Teclado
                         M3Card {
                             content-padding: 16px;
                             card-background: M3Theme.surface-container;
 
                             VerticalLayout {
-                                spacing: 12px;
+                                spacing: 14px;
 
                                 Text {
                                     text: "ATAJOS DE TECLADO GLOBALES (NIRI / WAYLAND)";
@@ -1616,87 +1858,143 @@ export component AppWindow inherits Window {
                                     color: M3Theme.primary;
                                 }
 
-                                HorizontalLayout {
-                                    spacing: 12px;
+                                Text {
+                                    text: "Selecciona el atajo que te resulte más cómodo. Se actualiza automáticamente en niri sin reiniciar la sesión.";
+                                    font-size: M3Theme.font-body-small;
+                                    color: M3Theme.on-surface-variant;
+                                }
 
-                                    Rectangle {
-                                        horizontal-stretch: 1;
-                                        height: 46px;
-                                        border-radius: M3Theme.corner-small;
-                                        background: M3Theme.surface-container-high;
-                                        border-width: 1px;
-                                        border-color: M3Theme.outline-variant.with-alpha(0.4);
+                                // Atajo Guardar Replay
+                                VerticalLayout {
+                                    spacing: 8px;
 
-                                        HorizontalLayout {
-                                            padding-left: 12px;
-                                            padding-right: 12px;
-                                            alignment: space-between;
-
-                                            Text {
-                                                text: "Guardar Replay Instantáneo";
-                                                font-size: M3Theme.font-body-medium;
-                                                font-weight: 600;
-                                                color: M3Theme.on-surface;
-                                                vertical-alignment: center;
-                                            }
-
-                                            Rectangle {
-                                                height: 26px;
-                                                border-radius: 6px;
-                                                background: M3Theme.primary-container;
-                                                y: (parent.height - self.height) / 2;
-                                                HorizontalLayout {
-                                                    padding-left: 8px;
-                                                    padding-right: 8px;
-                                                    Text {
-                                                        text: "Mod+F10";
-                                                        font-size: M3Theme.font-label-small;
-                                                        font-weight: 800;
-                                                        color: M3Theme.on-primary-container;
-                                                        vertical-alignment: center;
-                                                    }
+                                    HorizontalLayout {
+                                        alignment: space-between;
+                                        Text {
+                                            text: "Guardar Replay Instantáneo";
+                                            font-size: M3Theme.font-body-medium;
+                                            font-weight: 600;
+                                            color: M3Theme.on-surface;
+                                            vertical-alignment: center;
+                                        }
+                                        Rectangle {
+                                            height: 24px;
+                                            border-radius: 6px;
+                                            background: M3Theme.primary-container;
+                                            HorizontalLayout {
+                                                padding-left: 8px;
+                                                padding-right: 8px;
+                                                Text {
+                                                    text: root.shortcut-save;
+                                                    font-size: M3Theme.font-label-small;
+                                                    font-weight: 800;
+                                                    color: M3Theme.on-primary-container;
+                                                    vertical-alignment: center;
                                                 }
                                             }
                                         }
                                     }
 
-                                    Rectangle {
-                                        horizontal-stretch: 1;
-                                        height: 46px;
-                                        border-radius: M3Theme.corner-small;
-                                        background: M3Theme.surface-container-high;
-                                        border-width: 1px;
-                                        border-color: M3Theme.outline-variant.with-alpha(0.4);
-
-                                        HorizontalLayout {
-                                            padding-left: 12px;
-                                            padding-right: 12px;
-                                            alignment: space-between;
-
-                                            Text {
-                                                text: "Alternar Grabación Continua";
-                                                font-size: M3Theme.font-body-medium;
-                                                font-weight: 600;
-                                                color: M3Theme.on-surface;
-                                                vertical-alignment: center;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3PresetChip {
+                                            text: "Alt+F10 (Shadowplay)";
+                                            is-active: root.shortcut-save == "Alt+F10";
+                                            clicked => {
+                                                root.shortcut-save = "Alt+F10";
+                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
+                                        }
+                                        M3PresetChip {
+                                            text: "F10 (Directo)";
+                                            is-active: root.shortcut-save == "F10";
+                                            clicked => {
+                                                root.shortcut-save = "F10";
+                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "Mod+F10";
+                                            is-active: root.shortcut-save == "Mod+F10";
+                                            clicked => {
+                                                root.shortcut-save = "Mod+F10";
+                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "Mod+R";
+                                            is-active: root.shortcut-save == "Mod+R";
+                                            clicked => {
+                                                root.shortcut-save = "Mod+R";
+                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            }
+                                        }
+                                    }
+                                }
 
-                                            Rectangle {
-                                                height: 26px;
-                                                border-radius: 6px;
-                                                background: M3Theme.secondary-container;
-                                                y: (parent.height - self.height) / 2;
-                                                HorizontalLayout {
-                                                    padding-left: 8px;
-                                                    padding-right: 8px;
-                                                    Text {
-                                                        text: "Mod+F9";
-                                                        font-size: M3Theme.font-label-small;
-                                                        font-weight: 800;
-                                                        color: M3Theme.on-secondary-container;
-                                                        vertical-alignment: center;
-                                                    }
+                                // Atajo Alternar Grabación Continua
+                                VerticalLayout {
+                                    spacing: 8px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+                                        Text {
+                                            text: "Alternar Grabación Continua";
+                                            font-size: M3Theme.font-body-medium;
+                                            font-weight: 600;
+                                            color: M3Theme.on-surface;
+                                            vertical-alignment: center;
+                                        }
+                                        Rectangle {
+                                            height: 24px;
+                                            border-radius: 6px;
+                                            background: M3Theme.secondary-container;
+                                            HorizontalLayout {
+                                                padding-left: 8px;
+                                                padding-right: 8px;
+                                                Text {
+                                                    text: root.shortcut-record;
+                                                    font-size: M3Theme.font-label-small;
+                                                    font-weight: 800;
+                                                    color: M3Theme.on-secondary-container;
+                                                    vertical-alignment: center;
                                                 }
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3PresetChip {
+                                            text: "Alt+F9 (Shadowplay)";
+                                            is-active: root.shortcut-record == "Alt+F9";
+                                            clicked => {
+                                                root.shortcut-record = "Alt+F9";
+                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "F9 (Directo)";
+                                            is-active: root.shortcut-record == "F9";
+                                            clicked => {
+                                                root.shortcut-record = "F9";
+                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "Mod+F9";
+                                            is-active: root.shortcut-record == "Mod+F9";
+                                            clicked => {
+                                                root.shortcut-record = "Mod+F9";
+                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "Mod+Shift+R";
+                                            is-active: root.shortcut-record == "Mod+Shift+R";
+                                            clicked => {
+                                                root.shortcut-record = "Mod+Shift+R";
+                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
                                     }

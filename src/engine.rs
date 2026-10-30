@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +26,7 @@ pub struct EngineStatus {
     pub current_buffer_secs: u32,
     pub recording_elapsed_secs: u32,
     pub ram_usage_mb: f64,
+    pub max_memory_mb: u32,
     pub active_profile: String,
     pub output_dir: PathBuf,
 }
@@ -80,7 +82,7 @@ pub type Result<T> = std::result::Result<T, EngineError>;
 
 /// Motor principal de sane-rec para repetición instantánea y grabación continua con `wf-recorder`.
 pub struct ReplayEngine {
-    config: Mutex<Config>,
+    config: Arc<Mutex<Config>>,
     buffer_dir: PathBuf,
     replay_process: Mutex<Option<Child>>,
     continuous_process: Mutex<Option<Child>>,
@@ -88,6 +90,7 @@ pub struct ReplayEngine {
     start_time: Mutex<Option<Instant>>,
     continuous_start_time: Mutex<Option<Instant>>,
     audio_modules: Mutex<Vec<u32>>,
+    pruner_running: Arc<AtomicBool>,
 }
 
 impl ReplayEngine {
@@ -109,7 +112,7 @@ impl ReplayEngine {
         }
 
         let engine = Self {
-            config: Mutex::new(config),
+            config: Arc::new(Mutex::new(config)),
             buffer_dir,
             replay_process: Mutex::new(None),
             continuous_process: Mutex::new(None),
@@ -117,6 +120,7 @@ impl ReplayEngine {
             start_time: Mutex::new(None),
             continuous_start_time: Mutex::new(None),
             audio_modules: Mutex::new(Vec::new()),
+            pruner_running: Arc::new(AtomicBool::new(false)),
         };
 
         // Limpieza automática de segmentos antiguos en RAM al inicializar
@@ -138,6 +142,79 @@ impl ReplayEngine {
     /// Actualiza la configuración interna.
     pub fn update_config(&self, new_config: Config) {
         *self.config.lock().unwrap() = new_config;
+    }
+
+    /// Actualiza la duración del búfer en segundos y poda el búfer en RAM de forma inmediata.
+    pub fn update_duration(&self, duration_secs: u32) {
+        let (max_mb, dur) = {
+            let mut cfg = self.config.lock().unwrap();
+            cfg.replay.duration_secs = duration_secs;
+            let _ = cfg.save();
+            (cfg.replay.max_memory_mb, cfg.replay.duration_secs)
+        };
+        Self::prune_ram_dir(&self.buffer_dir, dur, max_mb);
+    }
+
+    /// Actualiza el límite de memoria RAM máximo y poda si es necesario.
+    pub fn update_max_memory(&self, max_memory_mb: u32) {
+        let dur = {
+            let mut cfg = self.config.lock().unwrap();
+            cfg.replay.max_memory_mb = max_memory_mb;
+            let _ = cfg.save();
+            cfg.replay.duration_secs
+        };
+        Self::prune_ram_dir(&self.buffer_dir, dur, max_memory_mb);
+    }
+
+    /// Poda los segmentos antiguos en RAM para respetar tanto el límite temporal como el de memoria.
+    pub fn prune_ram_dir(dir: &Path, duration_secs: u32, max_memory_mb: u32) {
+        let mut segments: Vec<(PathBuf, Option<std::time::SystemTime>, u64)> = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() {
+                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or_default();
+                    if (name.starts_with("seg_") || name.starts_with("segment_"))
+                        && (ext == "mp4" || ext == "ts")
+                        && !name.contains('%')
+                    {
+                        if let Ok(meta) = entry.metadata() {
+                            if meta.len() > 0 {
+                                segments.push((p, meta.modified().ok(), meta.len()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if segments.is_empty() {
+            return;
+        }
+
+        // Orden cronológico (más antiguo primero)
+        segments.sort_by(|a, b| match (a.1, b.1) {
+            (Some(ta), Some(tb)) => ta.cmp(&tb),
+            _ => a.0.cmp(&b.0),
+        });
+
+        // 1. Podar si excede la duración requerida + 3 segundos de margen
+        let max_keep = (duration_secs + 3) as usize;
+        while segments.len() > max_keep {
+            let oldest = segments.remove(0);
+            let _ = std::fs::remove_file(&oldest.0);
+        }
+
+        // 2. Podar si la suma total en RAM excede max_memory_mb
+        let max_bytes = (max_memory_mb as u64) * 1024 * 1024;
+        let mut total_bytes: u64 = segments.iter().map(|s| s.2).sum();
+        while total_bytes > max_bytes && segments.len() > 3 {
+            let oldest = segments.remove(0);
+            total_bytes = total_bytes.saturating_sub(oldest.2);
+            let _ = std::fs::remove_file(&oldest.0);
+        }
     }
 
     /// Carga un módulo pactl y retorna su ID numérico si fue exitoso.
@@ -289,8 +366,8 @@ impl ReplayEngine {
         apply_profile_args(&mut cmd, config);
 
         // Segmenter en RAM con microsegmentos de 1 segundo e intervalo keyint exacto de 1 segundo:
-        let wrap_n = config.replay.duration_secs + 5;
-        let seg_pattern = format!("{}/seg_%02d.mp4", self.buffer_dir.display());
+        let wrap_n = config.replay.duration_secs + 10;
+        let seg_pattern = format!("{}/seg_%04d.mp4", self.buffer_dir.display());
 
         cmd.args([
             "-m",
@@ -397,6 +474,29 @@ impl ReplayEngine {
 
         *self.replay_process.lock().unwrap() = Some(child);
         *self.start_time.lock().unwrap() = Some(Instant::now());
+        self.pruner_running.store(true, Ordering::SeqCst);
+
+        // Lanza hilo podador activo para garantizar límites estrictos de RAM y duración
+        let pruner_flag = self.pruner_running.clone();
+        let pruner_buf = self.buffer_dir.clone();
+        let pruner_cfg = self.config.clone();
+        std::thread::Builder::new()
+            .name("sane-rec-ram-pruner".to_string())
+            .spawn(move || {
+                while pruner_flag.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(1000));
+                    if !pruner_flag.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let (dur_secs, max_mb) = {
+                        let c = pruner_cfg.lock().unwrap();
+                        (c.replay.duration_secs, c.replay.max_memory_mb)
+                    };
+                    Self::prune_ram_dir(&pruner_buf, dur_secs, max_mb);
+                }
+            })
+            .ok();
+
         play_feedback_sound("device-added");
 
         Ok(())
@@ -404,6 +504,7 @@ impl ReplayEngine {
 
     /// Detiene el proceso de repetición instantánea enviando SIGINT, descarga módulos de audio y limpia la RAM.
     pub fn stop_replay(&self) -> Result<()> {
+        self.pruner_running.store(false, Ordering::SeqCst);
         let mut guard = self.replay_process.lock().unwrap();
         if let Some(mut child) = guard.take() {
             unsafe {
@@ -702,6 +803,7 @@ impl ReplayEngine {
             current_buffer_secs,
             recording_elapsed_secs,
             ram_usage_mb,
+            max_memory_mb: config.replay.max_memory_mb,
             active_profile: config.profile.active_profile,
             output_dir: config.storage.output_dir,
         }
@@ -811,6 +913,7 @@ impl ReplayEngine {
 
 impl Drop for ReplayEngine {
     fn drop(&mut self) {
+        self.pruner_running.store(false, Ordering::SeqCst);
         if let Ok(mut guard) = self.replay_process.lock() {
             if let Some(mut child) = guard.take() {
                 unsafe {
@@ -865,6 +968,12 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
                 "-p",
                 "tune=zerolatency",
                 "-p",
+                "crf=24",
+                "-p",
+                "maxrate=8M",
+                "-p",
+                "bufsize=16M",
+                "-p",
                 "keyint=60",
                 "-p",
                 "g=60",
@@ -882,8 +991,31 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
         EncoderProfile::IntelHardware => {
             cmd.args(["-c", "h264_vaapi", "-b", "0"]);
         }
-        EncoderProfile::Custom(ref c) => {
-            cmd.args(["-c", c.as_str(), "-b", "0"]);
+        EncoderProfile::Custom(_) => {
+            let codec = if config.video.codec.is_empty() {
+                "libx264"
+            } else {
+                &config.video.codec
+            };
+            let preset_arg = format!("preset={}", config.video.preset);
+            let crf_arg = format!("crf={}", config.video.crf);
+            cmd.args([
+                "-c",
+                codec,
+                "-p",
+                &preset_arg,
+                "-p",
+                &crf_arg,
+                "-p",
+                "tune=zerolatency",
+                "-p",
+                "keyint=60",
+                "-p",
+                "g=60",
+                "-b",
+                "0",
+                "--no-dmabuf",
+            ]);
         }
     }
 }
@@ -952,6 +1084,7 @@ mod tests {
             current_buffer_secs: 14,
             recording_elapsed_secs: 0,
             ram_usage_mb: 28.5,
+            max_memory_mb: 150,
             active_profile: "sane-safe".to_string(),
             output_dir: PathBuf::from("/mnt/Files/Videos/Replays"),
         };

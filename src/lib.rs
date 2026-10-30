@@ -6,7 +6,7 @@ pub mod ipc;
 pub mod profiles;
 
 pub use audio_monitor::AudioPeakMonitor;
-pub use config::Config;
+pub use config::{update_niri_shortcuts, Config, ShortcutsConfig};
 pub use discovery::{
     get_audio_devices, get_connected_outputs, get_open_windows, get_recent_clips,
     run_interactive_slurp, AudioDeviceInfo, ClipInfo, OutputInfo, WindowInfo,

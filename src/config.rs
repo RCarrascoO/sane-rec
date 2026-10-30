@@ -13,6 +13,8 @@ pub struct Config {
     pub storage: StorageConfig,
     #[serde(default)]
     pub profile: ProfileConfig,
+    #[serde(default)]
+    pub shortcuts: ShortcutsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -38,6 +40,12 @@ pub struct VideoConfig {
     pub threads: u32,
     pub preset: String,
     pub crf: u32,
+    #[serde(default = "default_video_codec")]
+    pub codec: String,
+}
+
+fn default_video_codec() -> String {
+    "libx264".to_string()
 }
 
 impl Default for VideoConfig {
@@ -49,6 +57,7 @@ impl Default for VideoConfig {
             threads: 4,
             preset: "ultrafast".to_string(),
             crf: 23,
+            codec: "libx264".to_string(),
         }
     }
 }
@@ -98,6 +107,57 @@ impl Default for ProfileConfig {
             active_profile: "sane-safe".to_string(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShortcutsConfig {
+    pub save_replay: String,
+    pub toggle_record: String,
+}
+
+impl Default for ShortcutsConfig {
+    fn default() -> Self {
+        Self {
+            save_replay: "Mod+F10".to_string(),
+            toggle_record: "Mod+F9".to_string(),
+        }
+    }
+}
+
+/// Actualiza los atajos de teclado de sane-rec en el archivo de configuración de niri.
+pub fn update_niri_shortcuts(save_bind: &str, record_bind: &str) -> std::io::Result<bool> {
+    let path = if let Some(dirs) = directories::BaseDirs::new() {
+        dirs.home_dir().join(".config/niri/config.d/70-binds.kdl")
+    } else {
+        PathBuf::from("/home/sane/.config/niri/config.d/70-binds.kdl")
+    };
+
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let content = std::fs::read_to_string(&path)?;
+    let mut lines: Vec<String> = content.lines().map(String::from).collect();
+    let mut updated = false;
+
+    for i in 0..lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.contains("spawn \"sane-rec\" \"save\"") {
+            lines[i] = format!("    {} {{ spawn \"sane-rec\" \"save\"; }}", save_bind);
+            updated = true;
+        } else if trimmed.contains("spawn \"sane-rec\" \"record\"") {
+            lines[i] = format!("    {} {{ spawn \"sane-rec\" \"record\" \"toggle\"; }}", record_bind);
+            updated = true;
+        }
+    }
+
+    if updated {
+        let mut new_content = lines.join("\n");
+        new_content.push('\n');
+        std::fs::write(&path, new_content)?;
+    }
+
+    Ok(updated)
 }
 
 #[derive(Debug)]
@@ -165,6 +225,7 @@ impl Default for Config {
             audio: AudioConfig::default(),
             storage: StorageConfig::default(),
             profile: ProfileConfig::default(),
+            shortcuts: ShortcutsConfig::default(),
         }
     }
 }
@@ -240,6 +301,7 @@ mod tests {
         assert_eq!(cfg.video.threads, 4);
         assert_eq!(cfg.video.preset, "ultrafast");
         assert_eq!(cfg.video.crf, 23);
+        assert_eq!(cfg.video.codec, "libx264");
 
         assert!(cfg.audio.capture_desktop);
         assert!(!cfg.audio.capture_mic);
@@ -250,6 +312,8 @@ mod tests {
         assert_eq!(cfg.storage.format, "mp4");
 
         assert_eq!(cfg.profile.active_profile, "sane-safe");
+        assert_eq!(cfg.shortcuts.save_replay, "Mod+F10");
+        assert_eq!(cfg.shortcuts.toggle_record, "Mod+F9");
     }
 
     #[test]

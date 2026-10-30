@@ -308,6 +308,24 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
             engine.update_config(cfg);
             cmd.ok(format!("Perfil cambiado a {}", prof));
         }
+        action if action.starts_with("set_duration:") => {
+            let dur_str = action.trim_start_matches("set_duration:").trim();
+            if let Ok(dur) = dur_str.parse::<u32>() {
+                engine.update_duration(dur);
+                cmd.ok(format!("Duración del búfer actualizada a {}s", dur));
+            } else {
+                cmd.error("Duración inválida");
+            }
+        }
+        action if action.starts_with("set_max_memory:") => {
+            let ram_str = action.trim_start_matches("set_max_memory:").trim();
+            if let Ok(ram) = ram_str.parse::<u32>() {
+                engine.update_max_memory(ram);
+                cmd.ok(format!("Límite de memoria RAM actualizado a {} MB", ram));
+            } else {
+                cmd.error("Límite de RAM inválido");
+            }
+        }
         other => {
             cmd.error(format!("Acción desconocida: {}", other));
         }
@@ -336,6 +354,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_selected_screen(config.video.target.clone().into());
     ui.set_audio_system(config.audio.capture_desktop);
     ui.set_audio_mic(config.audio.capture_mic);
+    ui.set_shortcut_save(config.shortcuts.save_replay.clone().into());
+    ui.set_shortcut_record(config.shortcuts.toggle_record.clone().into());
+    ui.set_max_memory_mb(config.replay.max_memory_mb as i32);
+    ui.set_custom_codec(config.video.codec.clone().into());
+    ui.set_custom_preset(config.video.preset.clone().into());
+    ui.set_custom_crf(config.video.crf as i32);
 
     // Cargar salidas de pantalla, ventanas activas y dispositivos de audio descubiertos
     update_screens_model(&ui);
@@ -691,6 +715,140 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Callback select-replay-duration
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_select_replay_duration(move |dur| {
+            let d = dur as u32;
+            if daemon_running {
+                let _ = ipc::send_command_sync(&format!("set_duration:{}", d));
+            } else if let Some(ref eng) = engine_clone {
+                eng.update_duration(d);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.replay.duration_secs = d;
+                let _ = cfg.save();
+            }
+
+            if let Some(ui) = ui_weak.upgrade() {
+                show_toast(&ui, "⏱️", &format!("Búfer de repetición fijado a {}s", d));
+            }
+        });
+    }
+
+    // Callback update-shortcuts
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_update_shortcuts(move |save_key, rec_key| {
+            let save_str = save_key.as_str();
+            let rec_str = rec_key.as_str();
+
+            let _ = sane_rec::update_niri_shortcuts(save_str, rec_str);
+
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.shortcuts.save_replay = save_str.to_string();
+                cfg.shortcuts.toggle_record = rec_str.to_string();
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.shortcuts.save_replay = save_str.to_string();
+                cfg.shortcuts.toggle_record = rec_str.to_string();
+                let _ = cfg.save();
+            }
+
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_shortcut_save(save_str.into());
+                ui.set_shortcut_record(rec_str.into());
+                show_toast(&ui, "⌨️", &format!("Atajos actualizados en niri ({}, {})", save_str, rec_str));
+            }
+        });
+    }
+
+    // Callback set-custom-codec
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_set_custom_codec(move |codec| {
+            let c = codec.as_str();
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.video.codec = c.to_string();
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.video.codec = c.to_string();
+                let _ = cfg.save();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                show_toast(&ui, "⚙️", &format!("Códec personalizado: {}", c));
+            }
+        });
+    }
+
+    // Callback set-custom-preset
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_set_custom_preset(move |preset| {
+            let p = preset.as_str();
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.video.preset = p.to_string();
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.video.preset = p.to_string();
+                let _ = cfg.save();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                show_toast(&ui, "⚡", &format!("Preset CPU: {}", p));
+            }
+        });
+    }
+
+    // Callback set-custom-crf
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_set_custom_crf(move |crf| {
+            let c = crf as u32;
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.video.crf = c;
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.video.crf = c;
+                let _ = cfg.save();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                show_toast(&ui, "🎚️", &format!("Calidad CRF: {}", c));
+            }
+        });
+    }
+
+    // Callback set-custom-max-ram
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_set_custom_max_ram(move |max_ram| {
+            let ram = max_ram as u32;
+            if daemon_running {
+                let _ = ipc::send_command_sync(&format!("set_max_memory:{}", ram));
+            } else if let Some(ref eng) = engine_clone {
+                eng.update_max_memory(ram);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.replay.max_memory_mb = ram;
+                let _ = cfg.save();
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                show_toast(&ui, "🧠", &format!("Límite búfer RAM: {} MB", ram));
+            }
+        });
+    }
+
     // Inicia monitor de picos de audio en tiempo real para calibración visual (VU meter)
     let audio_monitor = std::sync::Arc::new(sane_rec::AudioPeakMonitor::new(None, None));
 
@@ -732,6 +890,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(status) = status_opt {
                         ui.set_is_running(status.is_running);
                         ui.set_is_recording(status.is_recording);
+                        ui.set_max_memory_mb(status.max_memory_mb as i32);
                         ui.set_ram_usage(format!("~{:.1} MB", status.ram_usage_mb).into());
                         let buf_text = if status.is_running {
                             format!(
@@ -955,6 +1114,12 @@ mod tests {
         assert_eq!(ui.get_system_volume_peak(), 0.0);
         assert_eq!(ui.get_recording_time(), "00:00");
         assert_eq!(ui.get_toast_visible(), false);
+        assert_eq!(ui.get_shortcut_save(), "Mod+F10");
+        assert_eq!(ui.get_shortcut_record(), "Mod+F9");
+        assert_eq!(ui.get_max_memory_mb(), 150);
+        assert_eq!(ui.get_custom_codec(), "libx264");
+        assert_eq!(ui.get_custom_preset(), "ultrafast");
+        assert_eq!(ui.get_custom_crf(), 23);
         let _ = std::fs::remove_dir_all(&empty_dir);
     }
 
