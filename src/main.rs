@@ -10,7 +10,7 @@ slint::include_modules!();
 #[command(
     name = "sane-rec",
     author = "RCarrascoO",
-    version = "0.1.0",
+    version,
     about = "Material Design 3 Instant Replay & Screen Recorder for Linux with CPU-first architecture"
 )]
 pub struct Cli {
