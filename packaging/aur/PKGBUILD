@@ -1,6 +1,6 @@
 # Maintainer: RCarrascoO <https://github.com/RCarrascoO>
 pkgname=sane-rec-bin
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Lightweight Material Design 3 Instant Replay & Screen Recorder for Linux (Wayland/niri) with CPU-first architecture"
 arch=('x86_64')
