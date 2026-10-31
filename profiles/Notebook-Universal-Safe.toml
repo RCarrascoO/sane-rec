@@ -1,0 +1,10 @@
+name = "Notebook-Universal-Safe"
+description = "Ahorro de batería y bajo consumo térmico para portátiles con gráficos integrados (30 FPS)"
+target_device = "Notebook / Laptop universal"
+codec = "libx264"
+preset = "superfast"
+crf = 23
+fps = 30
+resolution = "1280x720"
+max_memory_mb = 100
+audio_track_mode = 0

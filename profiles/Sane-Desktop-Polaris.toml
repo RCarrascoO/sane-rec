@@ -1,0 +1,10 @@
+name = "Sane-Desktop-Polaris"
+description = "Optimizado para PC de escritorio con AMD Polaris (RX 570) y CPU multinúcleo (60 FPS)"
+target_device = "AMD Polaris RX 570 / Desktop"
+codec = "libx264"
+preset = "ultrafast"
+crf = 21
+fps = 60
+resolution = "1360x768"
+max_memory_mb = 150
+audio_track_mode = 0

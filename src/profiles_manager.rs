@@ -74,6 +74,19 @@ pub fn init_default_profiles() {
         audio_track_mode: 0,
     };
 
+    let hime = HardwareProfile {
+        name: "hime-config".to_string(),
+        description: "Optimizado para YukiOS: AMD Ryzen 5 5500 + Radeon RX 9060 XT (RDNA 4) a 1080p 60 FPS con 32GB RAM".to_string(),
+        target_device: "AMD Ryzen 5 5500 / Radeon RX 9060 XT (RDNA 4) / Hyprland".to_string(),
+        codec: "libx264".to_string(),
+        preset: "superfast".to_string(),
+        crf: 20,
+        fps: 60,
+        resolution: "1920x1080".to_string(),
+        max_memory_mb: 512,
+        audio_track_mode: 0,
+    };
+
     let p_path = dir.join("Sane-Desktop-Polaris.toml");
     if !p_path.exists() {
         let _ = save_profile(&polaris);
@@ -82,6 +95,11 @@ pub fn init_default_profiles() {
     let n_path = dir.join("Notebook-Universal-Safe.toml");
     if !n_path.exists() {
         let _ = save_profile(&notebook);
+    }
+
+    let h_path = dir.join("hime-config.toml");
+    if !h_path.exists() {
+        let _ = save_profile(&hime);
     }
 }
 
@@ -196,5 +214,6 @@ mod tests {
         let profiles = list_profiles();
         assert!(profiles.contains(&"Sane-Desktop-Polaris".to_string()));
         assert!(profiles.contains(&"Notebook-Universal-Safe".to_string()));
+        assert!(profiles.contains(&"hime-config".to_string()));
     }
 }
