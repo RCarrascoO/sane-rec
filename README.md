@@ -46,20 +46,17 @@ sudo dnf install wf-recorder ffmpeg pulseaudio-utils
 
 ---
 
-### Opción 1: Instalación Rápida desde Release (Recomendada)
-Descarga la versión precompilada más reciente desde [GitHub Releases](https://github.com/RCarrascoO/sane-rec/releases):
+### ⚡ Instalación en 1 Línea (Recomendada para cualquier Linux)
+Descarga e instala automáticamente la versión oficial precompilada más reciente, el icono y el acceso directo al menú de aplicaciones:
 
 ```bash
-# 1. Descarga el paquete tar.gz de la última versión
-curl -sSL https://github.com/RCarrascoO/sane-rec/releases/latest/download/sane-rec-v0.1.0-linux-x86_64.tar.gz | tar -xz
-
-# 2. Ingresa a la carpeta extraída e instala
-cd sane-rec-v0.1.0-linux-x86_64
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/RCarrascoO/sane-rec/main/install.sh | bash
 ```
 
-El script `install.sh` instala:
-- El binario en `~/.local/bin/sane-rec`
+*(También puedes descargar manualmente el archivo `.tar.gz` de la última versión desde [GitHub Releases](https://github.com/RCarrascoO/sane-rec/releases) y ejecutar `./install.sh`).*
+
+El script `install.sh` configura:
+- El ejecutable en `~/.local/bin/sane-rec`
 - El acceso directo en `~/.local/share/applications/sane-rec.desktop`
 - El icono vectorial en `~/.local/share/icons/hicolor/scalable/apps/sane-rec.svg`
 

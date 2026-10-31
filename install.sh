@@ -1,15 +1,45 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# sane-rec installer — Instalador local para Wayland & Linux
+# sane-rec installer — Instalador universal para Wayland & Linux
 # ==============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
+if [[ -n "${SCRIPT_SOURCE}" && -f "${SCRIPT_SOURCE}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_SOURCE}")" && pwd)"
+else
+    SCRIPT_DIR=""
+fi
+
 BIN_DEST="${HOME}/.local/bin"
 DESKTOP_DEST="${HOME}/.local/share/applications"
 ICON_DEST="${HOME}/.local/share/icons/hicolor/scalable/apps"
 
 echo "=== Instalando sane-rec ==="
+
+# Si se ejecuta directamente vía `curl ... | bash` o fuera de la carpeta del paquete:
+if [[ -z "${SCRIPT_DIR}" || (! -f "${SCRIPT_DIR}/sane-rec" && ! -f "${SCRIPT_DIR}/target/release/sane-rec") ]]; then
+    echo "⬇ Descargando el último release oficial desde GitHub..."
+    TMP_DIR="$(mktemp -d /tmp/sane-rec-install.XXXXXX)"
+    trap 'rm -rf "${TMP_DIR}"' EXIT
+
+    TARBALL_URL=$(curl -s "https://api.github.com/repos/RCarrascoO/sane-rec/releases/latest" \
+        | grep -o '"browser_download_url": *"[^"]*linux-x86_64\.tar\.gz"' \
+        | head -n1 \
+        | cut -d '"' -f 4)
+
+    if [[ -z "${TARBALL_URL}" ]]; then
+        echo "❌ Error: No se pudo localizar el paquete de descarga en GitHub Releases."
+        exit 1
+    fi
+
+    echo "📦 Obteniendo paquete: ${TARBALL_URL}"
+    curl -sSL "${TARBALL_URL}" -o "${TMP_DIR}/release.tar.gz"
+    tar -xzf "${TMP_DIR}/release.tar.gz" -C "${TMP_DIR}"
+
+    EXTRACTED_DIR=$(find "${TMP_DIR}" -mindepth 1 -maxdepth 1 -type d | head -n1)
+    SCRIPT_DIR="${EXTRACTED_DIR}"
+fi
 
 # 1. Crear directorios necesarios
 mkdir -p "${BIN_DEST}" "${DESKTOP_DEST}" "${ICON_DEST}"
@@ -25,7 +55,7 @@ elif [[ -f "${SCRIPT_DIR}/target/release/sane-rec" ]]; then
     chmod +x "${BIN_DEST}/sane-rec"
     echo "✔ Binario compilado instalado en: ${BIN_DEST}/sane-rec"
 else
-    echo "❌ Error: No se encontró el binario 'sane-rec'. Ejecuta 'cargo build --release' primero."
+    echo "❌ Error: No se encontró el binario 'sane-rec'."
     exit 1
 fi
 
