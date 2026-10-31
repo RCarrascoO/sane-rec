@@ -1664,7 +1664,7 @@ export component AppWindow inherits Window {
                                         spacing: 8px;
                                         M3PresetChip {
                                             text: "18 (Ultra)";
-                                            is-active: root.custom-crf == 18;
+                                            is-active: root.custom-crf <= 18;
                                             clicked => {
                                                 root.custom-crf = 18;
                                                 root.set-custom-crf(18);
@@ -1672,7 +1672,7 @@ export component AppWindow inherits Window {
                                         }
                                         M3PresetChip {
                                             text: "21 (Alta)";
-                                            is-active: root.custom-crf == 21;
+                                            is-active: root.custom-crf > 18 && root.custom-crf <= 21;
                                             clicked => {
                                                 root.custom-crf = 21;
                                                 root.set-custom-crf(21);
@@ -1680,7 +1680,7 @@ export component AppWindow inherits Window {
                                         }
                                         M3PresetChip {
                                             text: "23 (Equilibrada)";
-                                            is-active: root.custom-crf == 23;
+                                            is-active: root.custom-crf > 21 && root.custom-crf <= 25;
                                             clicked => {
                                                 root.custom-crf = 23;
                                                 root.set-custom-crf(23);
@@ -1688,7 +1688,7 @@ export component AppWindow inherits Window {
                                         }
                                         M3PresetChip {
                                             text: "28 (Bajo peso)";
-                                            is-active: root.custom-crf == 28;
+                                            is-active: root.custom-crf > 25;
                                             clicked => {
                                                 root.custom-crf = 28;
                                                 root.set-custom-crf(28);
@@ -1710,7 +1710,7 @@ export component AppWindow inherits Window {
                                         spacing: 8px;
                                         M3PresetChip {
                                             text: "100 MB";
-                                            is-active: root.max-memory-mb == 100;
+                                            is-active: root.max-memory-mb <= 120;
                                             clicked => {
                                                 root.max-memory-mb = 100;
                                                 root.set-custom-max-ram(100);
@@ -1718,7 +1718,7 @@ export component AppWindow inherits Window {
                                         }
                                         M3PresetChip {
                                             text: "150 MB (Recomendado)";
-                                            is-active: root.max-memory-mb == 150;
+                                            is-active: root.max-memory-mb > 120 && root.max-memory-mb <= 200;
                                             clicked => {
                                                 root.max-memory-mb = 150;
                                                 root.set-custom-max-ram(150);
@@ -1726,7 +1726,7 @@ export component AppWindow inherits Window {
                                         }
                                         M3PresetChip {
                                             text: "250 MB";
-                                            is-active: root.max-memory-mb == 250;
+                                            is-active: root.max-memory-mb > 200 && root.max-memory-mb <= 350;
                                             clicked => {
                                                 root.max-memory-mb = 250;
                                                 root.set-custom-max-ram(250);
@@ -1734,10 +1734,18 @@ export component AppWindow inherits Window {
                                         }
                                         M3PresetChip {
                                             text: "500 MB";
-                                            is-active: root.max-memory-mb == 500;
+                                            is-active: root.max-memory-mb > 350 && root.max-memory-mb <= 750;
                                             clicked => {
                                                 root.max-memory-mb = 500;
                                                 root.set-custom-max-ram(500);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "1 GB (Gamer)";
+                                            is-active: root.max-memory-mb > 750;
+                                            clicked => {
+                                                root.max-memory-mb = 1024;
+                                                root.set-custom-max-ram(1024);
                                             }
                                         }
                                     }

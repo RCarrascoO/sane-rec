@@ -80,10 +80,10 @@ pub fn init_default_profiles() {
         target_device: "AMD Radeon RX 9060 XT (RDNA 4) / Ryzen 5 5500 / Hyprland".to_string(),
         codec: "h264_vaapi".to_string(),
         preset: "fast".to_string(),
-        crf: 20,
+        crf: 18,
         fps: 60,
         resolution: "1920x1080".to_string(),
-        max_memory_mb: 512,
+        max_memory_mb: 500,
         audio_track_mode: 0,
     };
 
