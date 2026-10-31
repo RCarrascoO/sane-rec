@@ -459,8 +459,18 @@ impl ReplayEngine {
         ]);
 
         cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stdout(std::process::Stdio::null());
+
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(crate::crash_handler::get_engine_log_path())
+        {
+            cmd.stderr(std::process::Stdio::from(f));
+        } else {
+            cmd.stderr(std::process::Stdio::null());
+        }
 
         cmd
     }
@@ -483,8 +493,18 @@ impl ReplayEngine {
         cmd.arg("-f").arg(output_path);
 
         cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stdout(std::process::Stdio::null());
+
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(crate::crash_handler::get_engine_log_path())
+        {
+            cmd.stderr(std::process::Stdio::from(f));
+        } else {
+            cmd.stderr(std::process::Stdio::null());
+        }
 
         cmd
     }
@@ -515,16 +535,19 @@ impl ReplayEngine {
         let mut cmd = self.build_replay_command(&config);
         let mut child = cmd.spawn()?;
 
-        // Manejo seguro del Perfil Experimental (Resiliencia en fallos de GPU)
-        if is_hardware {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            let failed = match child.try_wait() {
-                Ok(Some(status)) => !status.success(),
-                Err(_) => true,
-                Ok(None) => false,
-            };
+        // Manejo seguro de inicio y captura de fallos
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let failed = match child.try_wait() {
+            Ok(Some(status)) => !status.success(),
+            Err(_) => true,
+            Ok(None) => false,
+        };
 
-            if failed {
+        if failed {
+            let code = child.try_wait().ok().flatten().and_then(|s| s.code());
+            crate::crash_handler::log_engine_failure("Inicio del Búfer de Repetición", code);
+
+            if is_hardware {
                 let _ = notify_rust::Notification::new()
                     .appname("sane-rec")
                     .summary("Aviso: Hardware encoder no soportado en esta GPU; usando Sane Safe (CPU)")
@@ -540,6 +563,8 @@ impl ReplayEngine {
                 self.cleanup_audio_modules();
                 let mut fallback_cmd = self.build_replay_command(&fallback_config);
                 child = fallback_cmd.spawn()?;
+            } else {
+                return Err(EngineError::Custom("wf-recorder falló al iniciar el búfer de repetición. Revisa ~/.config/sane-rec/crash.log".into()));
             }
         }
 
@@ -617,7 +642,17 @@ impl ReplayEngine {
         if let Some(ref mut child) = *guard {
             match child.try_wait() {
                 Ok(None) => true,
-                _ => {
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        crate::crash_handler::log_engine_failure(
+                            "Búfer de Repetición en Segundo Plano",
+                            status.code(),
+                        );
+                    }
+                    *guard = None;
+                    false
+                }
+                Err(_) => {
                     *guard = None;
                     false
                 }
@@ -659,16 +694,19 @@ impl ReplayEngine {
         let mut cmd = self.build_continuous_command(&config, &output_path);
         let mut child = cmd.spawn()?;
 
-        // Manejo seguro del Perfil Experimental (Resiliencia en fallos de GPU)
-        if is_hardware {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            let failed = match child.try_wait() {
-                Ok(Some(status)) => !status.success(),
-                Err(_) => true,
-                Ok(None) => false,
-            };
+        // Manejo seguro de inicio y captura de fallos
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let failed = match child.try_wait() {
+            Ok(Some(status)) => !status.success(),
+            Err(_) => true,
+            Ok(None) => false,
+        };
 
-            if failed {
+        if failed {
+            let code = child.try_wait().ok().flatten().and_then(|s| s.code());
+            crate::crash_handler::log_engine_failure("Inicio de Grabación Continua", code);
+
+            if is_hardware {
                 let _ = notify_rust::Notification::new()
                     .appname("sane-rec")
                     .summary("Aviso: Hardware encoder no soportado en esta GPU; usando Sane Safe (CPU)")
@@ -684,6 +722,8 @@ impl ReplayEngine {
                 self.cleanup_audio_modules();
                 let mut fallback_cmd = self.build_continuous_command(&fallback_config, &output_path);
                 child = fallback_cmd.spawn()?;
+            } else {
+                return Err(EngineError::Custom("wf-recorder falló al iniciar la grabación continua. Revisa ~/.config/sane-rec/crash.log".into()));
             }
         }
 
@@ -754,7 +794,17 @@ impl ReplayEngine {
         if let Some(ref mut child) = *guard {
             match child.try_wait() {
                 Ok(None) => true,
-                _ => {
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        crate::crash_handler::log_engine_failure(
+                            "Grabación Continua en Segundo Plano",
+                            status.code(),
+                        );
+                    }
+                    *guard = None;
+                    false
+                }
+                Err(_) => {
                     *guard = None;
                     false
                 }
@@ -839,6 +889,7 @@ impl ReplayEngine {
             let err_msg = String::from_utf8_lossy(&concat_out.stderr);
             let _ = std::fs::remove_file(&staging_file);
             self.is_saving.store(false, Ordering::SeqCst);
+            crate::crash_handler::write_crash_report("Error de concatenación en ffmpeg al guardar replay", &err_msg);
             return Err(EngineError::FfmpegError(format!(
                 "ffmpeg concat error: {}",
                 err_msg
@@ -866,6 +917,7 @@ impl ReplayEngine {
 
         if !trim_out.status.success() {
             let err_msg = String::from_utf8_lossy(&trim_out.stderr);
+            crate::crash_handler::write_crash_report("Error de recorte (-sseof) en ffmpeg al guardar replay", &err_msg);
             return Err(EngineError::FfmpegError(format!(
                 "ffmpeg trim error: {}",
                 err_msg

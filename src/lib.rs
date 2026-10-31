@@ -1,5 +1,6 @@
 pub mod audio_monitor;
 pub mod config;
+pub mod crash_handler;
 pub mod discovery;
 pub mod engine;
 pub mod ipc;

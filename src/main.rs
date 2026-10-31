@@ -45,6 +45,9 @@ pub enum RecordAction {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Instalar manejador global de pánicos y fallos críticos
+    sane_rec::crash_handler::install_panic_hook();
+
     let cli = Cli::parse();
 
     match cli.command {
