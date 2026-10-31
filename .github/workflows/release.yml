@@ -11,7 +11,7 @@ permissions:
 jobs:
   build-release:
     name: Build & Publish Release Tarball
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -23,14 +23,10 @@ jobs:
       - name: Install system dependencies (GStreamer, Slint, Fontconfig)
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
-            libgstreamer-plugins-bad1.0-dev \
-            gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-bad \
-            gstreamer1.0-plugins-ugly \
             libasound2-dev \
             libfontconfig1-dev \
             libxkbcommon-dev
