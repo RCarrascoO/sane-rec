@@ -376,7 +376,7 @@ pub fn parse_pactl_sources(
             .and_then(|n| n.as_str())
             .unwrap_or("")
             .to_string();
-        if name.is_empty() {
+        if name.is_empty() || name.starts_with("sane_rec_mix") {
             continue;
         }
 
@@ -643,6 +643,13 @@ mod tests {
             {
                 "name": "easyeffects_source",
                 "description": "Easy Effects Source",
+                "properties": {
+                    "media.class": "Audio/Source/Virtual"
+                }
+            },
+            {
+                "name": "sane_rec_mix.monitor",
+                "description": "SaneRecMix Monitor",
                 "properties": {
                     "media.class": "Audio/Source/Virtual"
                 }

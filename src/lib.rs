@@ -14,7 +14,10 @@ pub use discovery::{
     get_audio_devices, get_connected_outputs, get_open_windows, get_recent_clips,
     run_interactive_slurp, AudioDeviceInfo, ClipInfo, OutputInfo, WindowInfo,
 };
-pub use engine::{get_default_audio_source, EngineError, EngineStatus, ReplayEngine};
+pub use engine::{
+    get_default_audio_sink, get_default_audio_source, is_source_available, EngineError,
+    EngineStatus, ReplayEngine,
+};
 pub use ipc::{IpcCommand, IpcRequest, IpcResponse};
 pub use profiles::EncoderProfile;
 pub use profiles_manager::HardwareProfile;

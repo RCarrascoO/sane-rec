@@ -244,11 +244,52 @@ impl ReplayEngine {
             .output();
     }
 
-    /// Descarga y limpia todos los módulos PipeWire/PulseAudio cargados por sane-rec.
+    /// Descarga y limpia todos los módulos PipeWire/PulseAudio cargados por sane-rec,
+    /// incluyendo posibles módulos huérfanos de sesiones previas terminadas abruptamente.
     pub fn cleanup_audio_modules(&self) {
         let mut modules = self.audio_modules.lock().unwrap();
         for id in modules.drain(..).rev() {
             Self::unload_pactl_module(id);
+        }
+        Self::cleanup_orphaned_audio_modules();
+    }
+
+    /// Limpia cualquier módulo huérfano de sane-rec dejado en PulseAudio / PipeWire por una terminación anómala previa.
+    pub fn cleanup_orphaned_audio_modules() {
+        let output = match Command::new("pactl").args(["list", "modules"]).output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => return,
+        };
+
+        let mut current_id: Option<u32> = None;
+        let mut is_sane_rec = false;
+
+        for line in output.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("Module #") {
+                if is_sane_rec {
+                    if let Some(id) = current_id {
+                        Self::unload_pactl_module(id);
+                    }
+                }
+                current_id = trimmed
+                    .trim_start_matches("Module #")
+                    .trim()
+                    .parse::<u32>()
+                    .ok();
+                is_sane_rec = false;
+            } else if trimmed.contains("sane_rec_mix")
+                || trimmed.contains("sane_rec_system")
+                || trimmed.contains("sane_rec_mic")
+            {
+                is_sane_rec = true;
+            }
+        }
+
+        if is_sane_rec {
+            if let Some(id) = current_id {
+                Self::unload_pactl_module(id);
+            }
         }
     }
 
@@ -272,16 +313,21 @@ impl ReplayEngine {
 
         let mut loaded = Vec::new();
 
-        // 1. pactl load-module module-null-sink sink_name=sane_rec_mix sink_properties=device.description=SaneRecMix
+        // 1. pactl load-module module-null-sink
+        // Aislamiento PipeWire / WirePlumber / EasyEffects:
+        // - device.intended_roles=record: indica que el sink es exclusivo para grabación interna.
+        // - node.passive=true y node.virtual=true: previene que EasyEffects o WirePlumber lo capturen
+        //   como un dispositivo de salida estándar o enruten aplicaciones a él.
+        // - node.dont-reconnect=true: evita reconexiones dinámicas indeseadas.
         let sink_id = Self::load_pactl_module(&[
             "module-null-sink",
             "sink_name=sane_rec_mix",
-            "sink_properties=device.description=SaneRecMix",
+            "sink_properties=device.description=SaneRecMix device.intended_roles=record node.passive=true node.virtual=true node.dont-reconnect=true",
         ]);
 
         loaded.push(sink_id?);
 
-        // 2. pactl load-module module-loopback source=<desktop_sink>.monitor sink=sane_rec_mix
+        // 2. pactl load-module module-loopback para el audio del sistema / escritorio
         let desktop_monitor = if desktop_sink.ends_with(".monitor") {
             desktop_sink.to_string()
         } else {
@@ -292,7 +338,11 @@ impl ReplayEngine {
             "module-loopback",
             &format!("source={}", desktop_monitor),
             "sink=sane_rec_mix",
-            "sink_input_properties=media.role=sane_rec_system",
+            "source_dont_move=true",
+            "sink_dont_move=true",
+            "latency_msec=40",
+            "source_output_properties=media.role=sane_rec_system node.passive=true node.dont-reconnect=true node.virtual=true",
+            "sink_input_properties=media.role=sane_rec_system node.passive=true node.dont-reconnect=true node.virtual=true",
         ]);
 
         match loop1_id {
@@ -305,12 +355,16 @@ impl ReplayEngine {
             }
         };
 
-        // 3. pactl load-module module-loopback source=<mic_source> sink=sane_rec_mix
+        // 3. pactl load-module module-loopback para el micrófono
         let loop2_id = Self::load_pactl_module(&[
             "module-loopback",
             &format!("source={}", mic_source),
             "sink=sane_rec_mix",
-            "sink_input_properties=media.role=sane_rec_mic",
+            "source_dont_move=true",
+            "sink_dont_move=true",
+            "latency_msec=40",
+            "source_output_properties=media.role=sane_rec_mic node.passive=true node.dont-reconnect=true node.virtual=true",
+            "sink_input_properties=media.role=sane_rec_mic node.passive=true node.dont-reconnect=true node.virtual=true",
         ]);
 
         match loop2_id {
@@ -397,6 +451,9 @@ impl ReplayEngine {
                 cmd.args(["-C", "aac"]);
                 return;
             }
+        } else {
+            // Si no se requiere mezcla dual, asegura que cualquier módulo de mezcla previo quede liberado
+            self.cleanup_audio_modules();
         }
 
         if capture_desktop {
@@ -1199,6 +1256,22 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
     }
 }
 
+/// Comprueba si una fuente de audio específica está disponible en PulseAudio / PipeWire.
+pub fn is_source_available(source_name: &str) -> bool {
+    let output = match Command::new("pactl")
+        .args(["list", "short", "sources"])
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => return false,
+    };
+
+    output.lines().any(|line| {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        parts.get(1).map_or(false, |name| *name == source_name)
+    })
+}
+
 /// Obtiene el monitor o nombre del sink de audio por defecto usando pactl.
 pub fn get_default_audio_sink() -> Option<String> {
     let output = Command::new("pactl")
@@ -1216,7 +1289,14 @@ pub fn get_default_audio_sink() -> Option<String> {
 }
 
 /// Obtiene la fuente de entrada (micrófono) por defecto usando pactl.
+/// Si EasyEffects está activo con su fuente virtual (`easyeffects_source`),
+/// se prioriza para capturar la voz procesada limpia con cancelación de ruido y ecualización,
+/// evitando además intercepciones conflictivas o relinks de WirePlumber/EasyEffects.
 pub fn get_default_audio_source() -> Option<String> {
+    if is_source_available("easyeffects_source") {
+        return Some("easyeffects_source".to_string());
+    }
+
     let output = Command::new("pactl")
         .arg("get-default-source")
         .output()
@@ -1446,5 +1526,10 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_is_source_available_nonexistent() {
+        assert!(!super::is_source_available("nonexistent_device_source_xyz_12345"));
     }
 }
