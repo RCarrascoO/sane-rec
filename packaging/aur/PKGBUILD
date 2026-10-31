@@ -1,0 +1,41 @@
+# Maintainer: RCarrascoO <https://github.com/RCarrascoO>
+pkgname=sane-rec-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Lightweight Material Design 3 Instant Replay & Screen Recorder for Linux (Wayland/niri) with CPU-first architecture"
+arch=('x86_64')
+url="https://github.com/RCarrascoO/sane-rec"
+license=('MIT')
+depends=(
+    'gstreamer'
+    'gst-plugins-base'
+    'gst-plugins-good'
+    'gst-plugins-bad'
+    'wf-recorder'
+    'fontconfig'
+    'libxkbcommon'
+)
+optdepends=(
+    'gst-plugin-va: Aceleración por hardware VA-API en GPUs AMD e Intel'
+    'libnotify: Notificaciones nativas de escritorio'
+)
+provides=('sane-rec')
+conflicts=('sane-rec')
+source=("https://github.com/RCarrascoO/sane-rec/releases/download/v${pkgver}/sane-rec-v${pkgver}-linux-x86_64.tar.gz")
+sha256sums=('9508ae96e5762d986065091823a359a4cda9f49ee421cea642edbd3206f3f9f5')
+
+package() {
+    cd "${srcdir}/sane-rec-v${pkgver}-linux-x86_64"
+
+    # Instalar binario compilado
+    install -Dm755 sane-rec "${pkgdir}/usr/bin/sane-rec"
+
+    # Instalar entrada de escritorio (.desktop)
+    install -Dm644 assets/sane-rec.desktop "${pkgdir}/usr/share/applications/sane-rec.desktop"
+
+    # Instalar icono vectorial SVG
+    install -Dm644 assets/sane-rec.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/sane-rec.svg"
+
+    # Instalar documentación y licencia
+    install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}
