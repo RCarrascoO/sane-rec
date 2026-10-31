@@ -1379,6 +1379,34 @@ fn show_toast(ui: &AppWindow, icon: &str, message: &str) {
     });
 }
 
+/// Obtiene la duración real del clip de video formateada como MM:SS usando ffprobe.
+fn get_clip_duration_str(path: &std::path::Path) -> String {
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output();
+
+    if let Ok(out) = output {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            if let Ok(secs) = s.trim().parse::<f64>() {
+                let total_secs = secs.round() as u64;
+                let mins = total_secs / 60;
+                let rem_secs = total_secs % 60;
+                return format!("{:02}:{:02}", mins, rem_secs);
+            }
+        }
+    }
+    "00:30".to_string()
+}
+
 /// Actualiza el modelo de clips de la galería leyendo el directorio de salida en disco.
 fn update_gallery_model(ui: &AppWindow, output_dir: &std::path::Path) {
     let clips = sane_rec::get_recent_clips(output_dir);
@@ -1397,11 +1425,13 @@ fn update_gallery_model(ui: &AppWindow, output_dir: &std::path::Path) {
                     })
                     .unwrap_or_else(|| "Reciente".into());
 
+                let duration_text = get_clip_duration_str(&c.path);
+
                 ClipEntry {
                     filename: c.name.into(),
                     file_size: format!("{:.1} MB", c.size_mb).into(),
                     date_text: date_str.into(),
-                    duration_text: "00:30".into(),
+                    duration_text: duration_text.into(),
                     filepath: c.path.to_string_lossy().to_string().into(),
                 }
             })

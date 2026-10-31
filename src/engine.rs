@@ -782,22 +782,19 @@ impl ReplayEngine {
             }
         });
 
-        // Toma exactamente los últimos duration_secs segmentos cronológicos
-        let duration_secs = self.config().replay.duration_secs as usize;
-        let count = segments.len();
-        let selected_segments = if count > duration_secs {
-            &segments[count - duration_secs..]
-        } else {
-            &segments[..]
-        };
-
         self.is_saving.store(true, Ordering::SeqCst);
+
+        let duration_secs = self.config().replay.duration_secs;
 
         // 2. Crea el archivo de lista único con líneas "file '<abs_path>'"
         let unique_id = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let list_file = self.buffer_dir.join(format!("concat_list_{}.txt", unique_id));
+        let staging_file = self
+            .buffer_dir
+            .join(format!(".staging_concat_{}.{}", unique_id, self.config().storage.format));
+
         let mut list_content = String::new();
-        for seg in selected_segments {
+        for seg in &segments {
             list_content.push_str(&format!("file '{}'\n", seg.display()));
         }
         if let Err(e) = std::fs::write(&list_file, list_content) {
@@ -808,6 +805,7 @@ impl ReplayEngine {
         // 3. Determina el destino final
         let config = self.config();
         if let Err(e) = config.ensure_output_dir() {
+            let _ = std::fs::remove_file(&list_file);
             self.is_saving.store(false, Ordering::SeqCst);
             return Err(EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
         }
@@ -818,22 +816,58 @@ impl ReplayEngine {
         let filename = format!("{}.{}", timestamp, config.storage.format);
         let output_path = config.storage.output_dir.join(filename);
 
-        // 4. Concatena los segmentos usando ffmpeg con copia directa de streams
-        let ffmpeg_res = Command::new("ffmpeg")
+        // 4. Concatena los segmentos en RAM hacia el archivo staging
+        let concat_res = Command::new("ffmpeg")
             .args(["-y", "-f", "concat", "-safe", "0", "-i"])
             .arg(&list_file)
+            .args(["-c", "copy"])
+            .arg(&staging_file)
+            .output();
+
+        let _ = std::fs::remove_file(&list_file);
+
+        let concat_out = match concat_res {
+            Ok(o) => o,
+            Err(e) => {
+                let _ = std::fs::remove_file(&staging_file);
+                self.is_saving.store(false, Ordering::SeqCst);
+                return Err(EngineError::Io(e));
+            }
+        };
+
+        if !concat_out.status.success() {
+            let err_msg = String::from_utf8_lossy(&concat_out.stderr);
+            let _ = std::fs::remove_file(&staging_file);
+            self.is_saving.store(false, Ordering::SeqCst);
+            return Err(EngineError::FfmpegError(format!(
+                "ffmpeg concat error: {}",
+                err_msg
+            )));
+        }
+
+        // 5. Recorta de forma exacta los últimos duration_secs usando -sseof (0 pérdida, ultra-rápido)
+        let trim_arg = format!("-{}", duration_secs);
+        let trim_res = Command::new("ffmpeg")
+            .args(["-y", "-sseof", &trim_arg, "-i"])
+            .arg(&staging_file)
             .args(["-c", "copy", "-movflags", "+faststart"])
             .arg(&output_path)
             .output();
 
-        let _ = std::fs::remove_file(&list_file);
+        let _ = std::fs::remove_file(&staging_file);
         self.is_saving.store(false, Ordering::SeqCst);
 
-        let output = ffmpeg_res?;
-        if !output.status.success() {
-            let err_msg = String::from_utf8_lossy(&output.stderr);
+        let trim_out = match trim_res {
+            Ok(o) => o,
+            Err(e) => {
+                return Err(EngineError::Io(e));
+            }
+        };
+
+        if !trim_out.status.success() {
+            let err_msg = String::from_utf8_lossy(&trim_out.stderr);
             return Err(EngineError::FfmpegError(format!(
-                "ffmpeg concat error: {}",
+                "ffmpeg trim error: {}",
                 err_msg
             )));
         }
@@ -1059,6 +1093,8 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
                 "keyint=60",
                 "-p",
                 "g=60",
+                "-p",
+                "x264-params=keyint=60:min-keyint=60:no-scenecut=1",
                 "-b",
                 "0",
                 "--no-dmabuf",
@@ -1094,6 +1130,8 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
                 "keyint=60",
                 "-p",
                 "g=60",
+                "-p",
+                "x264-params=keyint=60:min-keyint=60:no-scenecut=1",
                 "-b",
                 "0",
                 "--no-dmabuf",
