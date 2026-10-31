@@ -76,10 +76,10 @@ pub fn init_default_profiles() {
 
     let hime = HardwareProfile {
         name: "hime-config".to_string(),
-        description: "Optimizado para YukiOS: AMD Ryzen 5 5500 + Radeon RX 9060 XT (RDNA 4) a 1080p 60 FPS con 32GB RAM".to_string(),
-        target_device: "AMD Ryzen 5 5500 / Radeon RX 9060 XT (RDNA 4) / Hyprland".to_string(),
-        codec: "libx264".to_string(),
-        preset: "superfast".to_string(),
+        description: "Aceleración por GPU AMD RDNA 4 (RX 9060 XT) via VA-API a 1080p 60 FPS con 32GB RAM".to_string(),
+        target_device: "AMD Radeon RX 9060 XT (RDNA 4) / Ryzen 5 5500 / Hyprland".to_string(),
+        codec: "h264_vaapi".to_string(),
+        preset: "fast".to_string(),
         crf: 20,
         fps: 60,
         resolution: "1920x1080".to_string(),

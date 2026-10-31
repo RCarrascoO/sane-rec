@@ -1,8 +1,8 @@
 name = "hime-config"
-description = "Optimizado para YukiOS: AMD Ryzen 5 5500 + Radeon RX 9060 XT (RDNA 4) a 1080p 60 FPS con 32GB RAM"
-target_device = "AMD Ryzen 5 5500 / Radeon RX 9060 XT (RDNA 4) / Hyprland"
-codec = "libx264"
-preset = "superfast"
+description = "Aceleración por GPU AMD RDNA 4 (RX 9060 XT) via VA-API a 1080p 60 FPS con 32GB RAM"
+target_device = "AMD Radeon RX 9060 XT (RDNA 4) / Ryzen 5 5500 / Hyprland"
+codec = "h264_vaapi"
+preset = "fast"
 crf = 20
 fps = 60
 resolution = "1920x1080"

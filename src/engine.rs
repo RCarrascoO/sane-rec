@@ -1115,27 +1115,34 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
             } else {
                 &config.video.codec
             };
-            let preset_arg = format!("preset={}", config.video.preset);
-            let crf_arg = format!("crf={}", config.video.crf);
-            cmd.args([
-                "-c",
-                codec,
-                "-p",
-                &preset_arg,
-                "-p",
-                &crf_arg,
-                "-p",
-                "tune=zerolatency",
-                "-p",
-                "keyint=60",
-                "-p",
-                "g=60",
-                "-p",
-                "x264-params=keyint=60:min-keyint=60:no-scenecut=1",
-                "-b",
-                "0",
-                "--no-dmabuf",
-            ]);
+
+            if codec.contains("vaapi") || codec.contains("nvenc") || codec.contains("qsv") {
+                // Aceleración por hardware nativa en GPU (VA-API / NVENC / QSV) con DMA-BUF directo
+                cmd.args(["-c", codec, "-b", "0"]);
+            } else {
+                // Encoder por software en CPU (libx264, etc.)
+                let preset_arg = format!("preset={}", config.video.preset);
+                let crf_arg = format!("crf={}", config.video.crf);
+                cmd.args([
+                    "-c",
+                    codec,
+                    "-p",
+                    &preset_arg,
+                    "-p",
+                    &crf_arg,
+                    "-p",
+                    "tune=zerolatency",
+                    "-p",
+                    "keyint=60",
+                    "-p",
+                    "g=60",
+                    "-p",
+                    "x264-params=keyint=60:min-keyint=60:no-scenecut=1",
+                    "-b",
+                    "0",
+                    "--no-dmabuf",
+                ]);
+            }
         }
     }
 }
