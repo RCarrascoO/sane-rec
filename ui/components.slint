@@ -796,7 +796,8 @@ export component M3MetricTile inherits Rectangle {
     in-out property <string> badge-text: "";
     in-out property <bool> highlight: false;
 
-    min-height: 84px;
+    min-height: 98px;
+    preferred-height: 106px;
     border-radius: M3Theme.corner-medium;
     background: root.highlight ?
         M3Theme.primary-container.with-alpha(0.35) :
@@ -807,11 +808,15 @@ export component M3MetricTile inherits Rectangle {
         M3Theme.outline-variant.with-alpha(0.35);
 
     VerticalLayout {
-        padding: 12px;
-        spacing: 6px;
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 4px;
         alignment: space-between;
 
         HorizontalLayout {
+            height: 28px;
             alignment: space-between;
 
             Rectangle {
@@ -854,6 +859,7 @@ export component M3MetricTile inherits Rectangle {
 
         VerticalLayout {
             spacing: 2px;
+            alignment: end;
             Text {
                 text: root.value;
                 font-size: 18px;
@@ -863,7 +869,7 @@ export component M3MetricTile inherits Rectangle {
             }
             Text {
                 text: root.label;
-                font-size: M3Theme.font-label-small;
+                font-size: 11px;
                 font-weight: 500;
                 overflow: elide;
                 color: M3Theme.on-surface-variant;
@@ -1302,6 +1308,51 @@ export component M3Toast inherits Rectangle {
             color: M3Theme.on-surface;
             vertical-alignment: center;
             overflow: elide;
+        }
+    }
+}
+
+// =============================================================================
+// M3InputField: Campo de texto con estilo Material Design 3
+// =============================================================================
+export component M3InputField inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in-out property <string> placeholder: "";
+    in-out property <string> icon-text: "⌨️";
+    in-out property <bool> enabled: true;
+    callback accepted(string);
+    callback edited(string);
+
+    height: 38px;
+    border-radius: M3Theme.corner-small;
+    background: M3Theme.surface-container-high;
+    border-width: input.has-focus ? 1.5px : 1px;
+    border-color: input.has-focus ? M3Theme.primary : M3Theme.outline-variant.with-alpha(0.5);
+
+    animate border-color { duration: 150ms; }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        alignment: center;
+
+        Text {
+            text: root.icon-text;
+            font-size: 14px;
+            vertical-alignment: center;
+            opacity: 0.8;
+        }
+
+        input := TextInput {
+            horizontal-stretch: 1;
+            font-size: M3Theme.font-body-medium;
+            color: M3Theme.on-surface;
+            vertical-alignment: center;
+            single-line: true;
+            enabled: root.enabled;
+            accepted => { root.accepted(self.text); }
+            edited => { root.edited(self.text); }
         }
     }
 }

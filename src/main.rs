@@ -390,6 +390,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_volume_mic(config.audio.volume_mic);
     ui.set_shortcut_save(config.shortcuts.save_replay.clone().into());
     ui.set_shortcut_record(config.shortcuts.toggle_record.clone().into());
+    ui.set_custom_save_text(config.shortcuts.save_replay.clone().into());
+    ui.set_custom_record_text(config.shortcuts.toggle_record.clone().into());
     ui.set_max_memory_mb(config.replay.max_memory_mb as i32);
     ui.set_custom_codec(config.video.codec.clone().into());
     ui.set_custom_preset(config.video.preset.clone().into());
@@ -868,6 +870,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_shortcut_save(save_str.into());
                 ui.set_shortcut_record(rec_str.into());
+                ui.set_custom_save_text(save_str.into());
+                ui.set_custom_record_text(rec_str.into());
                 show_toast(&ui, "⌨️", &format!("Atajos actualizados en niri ({}, {})", save_str, rec_str));
             }
         });
@@ -1461,6 +1465,12 @@ mod tests {
         assert_eq!(ui.get_is_recording(), false);
         ui.set_is_recording(true);
         assert_eq!(ui.get_is_recording(), true);
+
+        assert_eq!(ui.get_shortcut_save(), "Mod+F10");
+        assert_eq!(ui.get_shortcut_record(), "Mod+F9");
+        ui.set_shortcut_save("Ctrl+F12".into());
+        assert_eq!(ui.get_shortcut_save(), "Ctrl+F12");
+        ui.set_shortcut_save("Mod+F10".into());
 
         // Verificación de sincronización de galería vacía (elimina mock data)
         use slint::Model;

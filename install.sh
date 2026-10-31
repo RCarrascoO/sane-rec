@@ -15,6 +15,7 @@ echo "=== Instalando sane-rec ==="
 mkdir -p "${BIN_DEST}" "${DESKTOP_DEST}" "${ICON_DEST}"
 
 # 2. Copiar binario
+rm -f "${BIN_DEST}/sane-rec"
 if [[ -f "${SCRIPT_DIR}/sane-rec" ]]; then
     cp "${SCRIPT_DIR}/sane-rec" "${BIN_DEST}/sane-rec"
     chmod +x "${BIN_DEST}/sane-rec"

@@ -15,7 +15,8 @@ import {
     M3DropdownCard,
     M3ClipCard,
     M3VuMeter,
-    M3Toast
+    M3Toast,
+    M3InputField
 } from "components.slint";
 import { ScrollView, Slider } from "std-widgets.slint";
 
@@ -118,6 +119,8 @@ export component AppWindow inherits Window {
     // Atajos de teclado y límites
     in-out property <string> shortcut-save: "Mod+F10";
     in-out property <string> shortcut-record: "Mod+F9";
+    in-out property <string> custom-save-text: "Mod+F10";
+    in-out property <string> custom-record-text: "Mod+F9";
     in-out property <int> max-memory-mb: 150;
 
     // Configuración interactiva del Perfil Personalizado
@@ -490,6 +493,7 @@ export component AppWindow inherits Window {
                         // Métricas del Sistema: 1 fila de 4 cuando ancho >= 820px, 2x2 cuando vertical / estrecho (< 820px)
                         if root.width >= 820px: HorizontalLayout {
                             spacing: 12px;
+                            height: 104px;
 
                             M3MetricTile {
                                 horizontal-stretch: 1;
@@ -530,6 +534,7 @@ export component AppWindow inherits Window {
 
                             HorizontalLayout {
                                 spacing: 12px;
+                                height: 104px;
 
                                 M3MetricTile {
                                     horizontal-stretch: 1;
@@ -551,6 +556,7 @@ export component AppWindow inherits Window {
 
                             HorizontalLayout {
                                 spacing: 12px;
+                                height: 104px;
 
                                 M3MetricTile {
                                     horizontal-stretch: 1;
@@ -2108,6 +2114,7 @@ export component AppWindow inherits Window {
                                             is-active: root.shortcut-save == "Alt+F10";
                                             clicked => {
                                                 root.shortcut-save = "Alt+F10";
+                                                root.custom-save-text = "Alt+F10";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
@@ -2116,6 +2123,7 @@ export component AppWindow inherits Window {
                                             is-active: root.shortcut-save == "F10";
                                             clicked => {
                                                 root.shortcut-save = "F10";
+                                                root.custom-save-text = "F10";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
@@ -2124,6 +2132,7 @@ export component AppWindow inherits Window {
                                             is-active: root.shortcut-save == "Mod+F10";
                                             clicked => {
                                                 root.shortcut-save = "Mod+F10";
+                                                root.custom-save-text = "Mod+F10";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
@@ -2132,7 +2141,36 @@ export component AppWindow inherits Window {
                                             is-active: root.shortcut-save == "Mod+R";
                                             clicked => {
                                                 root.shortcut-save = "Mod+R";
+                                                root.custom-save-text = "Mod+R";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            }
+                                        }
+                                    }
+
+                                    // Campo interactivo para atajo personalizado libre
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        M3InputField {
+                                            horizontal-stretch: 1;
+                                            icon-text: "⌨️";
+                                            text <=> root.custom-save-text;
+                                            placeholder: "Personalizado (ej. Ctrl+Shift+S, F8, Mod+Print)";
+                                            accepted(val) => {
+                                                if val != "" {
+                                                    root.shortcut-save = val;
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
+                                            }
+                                        }
+                                        M3Button {
+                                            text: "Aplicar Atajo";
+                                            variant: "filled";
+                                            btn-height: 38px;
+                                            clicked => {
+                                                if root.custom-save-text != "" {
+                                                    root.shortcut-save = root.custom-save-text;
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
                                             }
                                         }
                                     }
@@ -2176,6 +2214,7 @@ export component AppWindow inherits Window {
                                             is-active: root.shortcut-record == "Alt+F9";
                                             clicked => {
                                                 root.shortcut-record = "Alt+F9";
+                                                root.custom-record-text = "Alt+F9";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
@@ -2184,6 +2223,7 @@ export component AppWindow inherits Window {
                                             is-active: root.shortcut-record == "F9";
                                             clicked => {
                                                 root.shortcut-record = "F9";
+                                                root.custom-record-text = "F9";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
@@ -2192,6 +2232,7 @@ export component AppWindow inherits Window {
                                             is-active: root.shortcut-record == "Mod+F9";
                                             clicked => {
                                                 root.shortcut-record = "Mod+F9";
+                                                root.custom-record-text = "Mod+F9";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
@@ -2200,7 +2241,36 @@ export component AppWindow inherits Window {
                                             is-active: root.shortcut-record == "Mod+Shift+R";
                                             clicked => {
                                                 root.shortcut-record = "Mod+Shift+R";
+                                                root.custom-record-text = "Mod+Shift+R";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            }
+                                        }
+                                    }
+
+                                    // Campo interactivo para atajo personalizado libre
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        M3InputField {
+                                            horizontal-stretch: 1;
+                                            icon-text: "⌨️";
+                                            text <=> root.custom-record-text;
+                                            placeholder: "Personalizado (ej. Ctrl+Shift+R, F9, Mod+Shift+Record)";
+                                            accepted(val) => {
+                                                if val != "" {
+                                                    root.shortcut-record = val;
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
+                                            }
+                                        }
+                                        M3Button {
+                                            text: "Aplicar Atajo";
+                                            variant: "filled";
+                                            btn-height: 38px;
+                                            clicked => {
+                                                if root.custom-record-text != "" {
+                                                    root.shortcut-record = root.custom-record-text;
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
                                             }
                                         }
                                     }
