@@ -831,6 +831,13 @@ impl ReplayEngine {
 
         play_feedback_sound("complete");
 
+        // Si el modo "doble clip" está activo, genera en segundo plano la copia optimizada para Discord
+        let current_cfg = Config::load().unwrap_or_else(|_| self.config());
+        if current_cfg.storage.dual_clip {
+            let target_mb = current_cfg.storage.discord_target_mb;
+            crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
+        }
+
         Ok(output_path)
     }
 
@@ -990,6 +997,13 @@ impl ReplayEngine {
             .show();
 
         play_feedback_sound("screen-capture");
+
+        // Si el modo "doble clip" está activo, genera en segundo plano la copia optimizada para Discord
+        let current_cfg = Config::load().unwrap_or_else(|_| self.config());
+        if current_cfg.storage.dual_clip {
+            let target_mb = current_cfg.storage.discord_target_mb;
+            crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
+        }
 
         Ok(output_path)
     }

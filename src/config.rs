@@ -93,11 +93,19 @@ impl Default for AudioConfig {
     }
 }
 
+fn default_discord_target_mb() -> u32 {
+    10
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageConfig {
     pub output_dir: PathBuf,
     pub filename_format: String,
     pub format: String,
+    #[serde(default)]
+    pub dual_clip: bool,
+    #[serde(default = "default_discord_target_mb")]
+    pub discord_target_mb: u32,
 }
 
 impl Default for StorageConfig {
@@ -106,6 +114,8 @@ impl Default for StorageConfig {
             output_dir: PathBuf::from("/mnt/Files/Videos/Replays"),
             filename_format: "Replay_%Y-%m-%d_%H-%M-%S".to_string(),
             format: "mp4".to_string(),
+            dual_clip: false,
+            discord_target_mb: default_discord_target_mb(),
         }
     }
 }
@@ -328,6 +338,8 @@ mod tests {
         assert_eq!(cfg.storage.output_dir, PathBuf::from("/mnt/Files/Videos/Replays"));
         assert_eq!(cfg.storage.filename_format, "Replay_%Y-%m-%d_%H-%M-%S");
         assert_eq!(cfg.storage.format, "mp4");
+        assert!(!cfg.storage.dual_clip);
+        assert_eq!(cfg.storage.discord_target_mb, 10);
 
         assert_eq!(cfg.profile.active_profile, "sane-safe");
         assert_eq!(cfg.shortcuts.save_replay, "Mod+F10");

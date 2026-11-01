@@ -335,6 +335,14 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
             cmd.ok("sane-rec daemon detenido exitosamente");
             should_exit = true;
         }
+        "reload_config" => {
+            if let Ok(cfg) = Config::load() {
+                engine.update_config(cfg);
+                cmd.ok("Configuración recargada exitosamente");
+            } else {
+                cmd.error("Error al leer archivo de configuración");
+            }
+        }
         action if action.starts_with("set_profile:") => {
             let prof = action.trim_start_matches("set_profile:").trim();
             let mut cfg = engine.config();
@@ -386,6 +394,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     );
     ui.set_replay_duration(config.replay.duration_secs as i32);
     ui.set_selected_format(config.storage.format.clone().into());
+    ui.set_dual_clip(config.storage.dual_clip);
+    ui.set_discord_target_mb(config.storage.discord_target_mb as i32);
     ui.set_selected_screen(config.video.target.clone().into());
     ui.set_audio_system(config.audio.capture_desktop);
     ui.set_audio_mic(config.audio.capture_mic);
@@ -1207,6 +1217,121 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // -------------------------------------------------------------------------
+    // Modo Doble Clip & Compresor Discord
+    // -------------------------------------------------------------------------
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_toggle_dual_clip(move |enabled| {
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.storage.dual_clip = enabled;
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.storage.dual_clip = enabled;
+                let _ = cfg.save();
+            }
+            let _ = ipc::send_command_sync("reload_config");
+
+            if let Some(ui) = ui_weak.upgrade() {
+                let msg = if enabled {
+                    "Modo Doble Clip activado (copia Discord automática)"
+                } else {
+                    "Modo Doble Clip desactivado"
+                };
+                show_toast(&ui, "💬", msg);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_set_discord_target_mb(move |target_mb| {
+            let mb = target_mb.max(1) as u32;
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.storage.discord_target_mb = mb;
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.storage.discord_target_mb = mb;
+                let _ = cfg.save();
+            }
+            let _ = ipc::send_command_sync("reload_config");
+
+            if let Some(ui) = ui_weak.upgrade() {
+                show_toast(&ui, "💬", &format!("Límite para Discord fijado a {} MB", mb));
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        let out_dir_clone = config.storage.output_dir.clone();
+        ui.on_compress_clip_for_discord(move |path_str| {
+            let path = PathBuf::from(path_str.as_str());
+            let target_mb = Config::load()
+                .map(|c| c.storage.discord_target_mb)
+                .unwrap_or_else(|_| {
+                    if let Some(ref eng) = engine_clone {
+                        eng.config().storage.discord_target_mb
+                    } else {
+                        10
+                    }
+                });
+
+            if let Some(ui) = ui_weak.upgrade() {
+                show_toast(&ui, "⏳", "Generando versión optimizada para Discord...");
+            }
+
+            let ui_weak_bg = ui_weak.clone();
+            let target_dir = if let Some(ref eng) = engine_clone {
+                eng.config().storage.output_dir
+            } else {
+                out_dir_clone.clone()
+            };
+
+            std::thread::spawn(move || {
+                let out_path = sane_rec::get_discord_clip_path(&path);
+                match sane_rec::compress_to_target_size(&path, &out_path, target_mb as f64) {
+                    Ok(out) => {
+                        let size_mb = out
+                            .metadata()
+                            .map(|m| (m.len() as f64) / (1024.0 * 1024.0))
+                            .unwrap_or(0.0);
+                        let filename = out
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("clip_discord.mp4");
+
+                        let _ = notify_rust::Notification::new()
+                            .appname("sane-rec")
+                            .summary("💬 Versión Discord Lista")
+                            .body(&format!("Guardado: {}\nPeso: {:.1} MB", filename, size_mb))
+                            .icon("video-x-generic")
+                            .show();
+
+                        sane_rec::engine::play_feedback_sound("message");
+
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak_bg.upgrade() {
+                                update_gallery_model(&ui, &target_dir);
+                                show_toast(&ui, "💬", &format!("Clip Discord listo: {:.1} MB", size_mb));
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        sane_rec::crash_handler::write_crash_report("Error al comprimir clip para Discord", &e);
+                    }
+                }
+            });
+        });
+    }
+
     // Inicia monitor de picos de audio en tiempo real para calibración visual (VU meter)
     let audio_monitor = std::sync::Arc::new(sane_rec::AudioPeakMonitor::new(None, None));
 
@@ -1429,6 +1554,7 @@ fn update_gallery_model(ui: &AppWindow, output_dir: &std::path::Path) {
                     .unwrap_or_else(|| "Reciente".into());
 
                 let duration_text = get_clip_duration_str(&c.path);
+                let is_discord = c.name.contains("_discord");
 
                 ClipEntry {
                     filename: c.name.into(),
@@ -1436,6 +1562,7 @@ fn update_gallery_model(ui: &AppWindow, output_dir: &std::path::Path) {
                     date_text: date_str.into(),
                     duration_text: duration_text.into(),
                     filepath: c.path.to_string_lossy().to_string().into(),
+                    is_discord,
                 }
             })
             .collect();
@@ -1521,6 +1648,16 @@ mod tests {
         assert_eq!(ui.get_custom_codec(), "libx264");
         assert_eq!(ui.get_custom_preset(), "ultrafast");
         assert_eq!(ui.get_custom_crf(), 23);
+
+        // Modo doble clip y compresión Discord
+        assert_eq!(ui.get_dual_clip(), false);
+        ui.set_dual_clip(true);
+        assert_eq!(ui.get_dual_clip(), true);
+
+        assert_eq!(ui.get_discord_target_mb(), 10);
+        ui.set_discord_target_mb(15);
+        assert_eq!(ui.get_discord_target_mb(), 15);
+
         let _ = std::fs::remove_dir_all(&empty_dir);
     }
 

@@ -47,6 +47,7 @@ jobs:
           cp README.md "${PACKAGE_DIR}/"
           cp assets/sane-rec.desktop "${PACKAGE_DIR}/assets/"
           cp assets/sane-rec.svg "${PACKAGE_DIR}/assets/"
+          cp assets/sane-rec.png "${PACKAGE_DIR}/assets/"
           tar -czf "${PACKAGE_DIR}.tar.gz" "${PACKAGE_DIR}"
           echo "PACKAGE_NAME=${PACKAGE_DIR}.tar.gz" >> $GITHUB_ENV
 

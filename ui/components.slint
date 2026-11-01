@@ -1,15 +1,304 @@
 // Material Design 3 (M3 Expressive) Components for sane-rec
-import { M3Theme } from "theme.slint";
+// Google Pixel UI - Android 15/16 Material You Expressive Design System
+import { Theme, M3Theme } from "theme.slint";
 
 // =============================================================================
-// M3Card: Contenedor de superficie M3 con bordes redondeados y padding
+// M3Icon: Iconografía Monocromática Nativa Slint (Material Symbols Rounded)
+// =============================================================================
+export component M3Icon inherits Rectangle {
+    in-out property <string> name: "";
+    in-out property <color> icon-color: Theme.on-surface;
+    in-out property <length> icon-size: 20px;
+
+    width: root.icon-size;
+    height: root.icon-size;
+    background: Colors.transparent;
+
+    if root.name == "dashboard": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M4 13h6c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v8c0 .55.45 1 1 1zm0 8h6c.55 0 1-.45 1-1v-4c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v4c0 .55.45 1 1 1zm10 0h6c.55 0 1-.45 1-1v-8c0-.55-.45-1-1-1h-6c-.55 0-1 .45-1 1v8c0 .55.45 1 1 1zM13 4v4c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1h-6c-.55 0-1 .45-1 1z";
+    }
+
+    if root.name == "desktop" || root.name == "monitor": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M20 3H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h6l-1.5 2.5c-.32.53.06 1.5.69 1.5h5.62c.63 0 1.01-.97.69-1.5L14 17h6c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 11c0 .55-.45 1-1 1H5c-.55 0-1-.45-1-1V6c0-.55.45-1 1-1h14c.55 0 1 .45 1 1v8z";
+    }
+
+    if root.name == "mic": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V20c0 .55.45 1 1 1s1-.45 1-1v-2.28c3.28-.49 6-3.31 6-6.72h-1.7z";
+    }
+
+    if root.name == "settings" || root.name == "tune": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z";
+    }
+
+    if root.name == "folder": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M10.59 4.59C10.21 4.21 9.7 4 9.17 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-1.41-1.41z";
+    }
+
+    if root.name == "bolt" || root.name == "speed": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M11 21c-.45 0-.83-.3-.94-.73l-1.4-5.61H5.43c-.66 0-1.12-.66-.9-1.28l4.07-10.46c.2-.52.7-.86 1.26-.86h4.57c.72 0 1.25.68 1.07 1.38L14.28 8h4.29c.66 0 1.12.66.9 1.28l-7.29 11.23c-.22.34-.6.49-.98.49z";
+    }
+
+    if root.name == "memory" || root.name == "ram": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z";
+    }
+
+    if root.name == "save": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H6c-.55 0-1-.45-1-1V5c0-.55.45-1 1-1h9c.55 0 1 .45 1 1v3c0 .55-.45 1-1 1z";
+    }
+
+    if root.name == "record": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z";
+    }
+
+    if root.name == "stop": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M8 6h8c1.1 0 2 .9 2 2v8c0 1.1-.9 2-2 2H8c-1.1 0-2-.9-2-2V8c0-1.1.9-2 2-2z";
+    }
+
+    if root.name == "refresh": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z";
+    }
+
+    if root.name == "play": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M8 6.82v10.36c0 .79.87 1.27 1.54.84l8.14-5.18c.62-.39.62-1.29 0-1.69L9.54 5.98C8.87 5.55 8 6.03 8 6.82z";
+    }
+
+    if root.name == "window": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M19 4H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H5V8h14v10z";
+    }
+
+    if root.name == "crop" || root.name == "slurp": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M17 15h2V7c0-1.1-.9-2-2-2H9v2h8v8zM7 17V1H5v4H1v2h4v10c0 1.1.9 2 2 2h10v4h2v-4h4v-2H7z";
+    }
+
+    if root.name == "volume_up" || root.name == "speaker": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M3 10v4c0 .55.45 1 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71V6.41c0-.89-1.08-1.34-1.71-.71L7 9H4c-.55 0-1 .45-1 1zm13.5 2c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 4.45v.55c0 .38.25.71.6.85C17.18 6.94 19 9.25 19 12s-1.82 5.06-4.4 6.15c-.35.14-.6.47-.6.85v.55c0 .61.55 1.07 1.14.88C18.42 19.16 21 15.88 21 12s-2.58-7.16-5.86-8.43c-.59-.19-1.14.27-1.14.88z";
+    }
+
+    if root.name == "chat" || root.name == "discord": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z";
+    }
+
+    if root.name == "keyboard": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z";
+    }
+
+    if root.name == "shield": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm0 17.9c-3.35-1.07-6-4.79-6-8.81V6.3l6-2.25 6 2.25v4.79c0 4.02-2.65 7.74-6 8.81z";
+    }
+
+    if root.name == "warning": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M12 2.5a1.5 1.5 0 0 1 1.3 0.75l8.5 15A1.5 1.5 0 0 1 20.5 20.5h-17a1.5 1.5 0 0 1-1.3-2.25l8.5-15A1.5 1.5 0 0 1 12 2.5zm0 5a1 1 0 0 0-1 1v4a1 1 0 0 0 2 0v-4a1 1 0 0 0-1-1zm0 8a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5z";
+    }
+
+    if root.name == "info": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z";
+    }
+
+    if root.name == "check": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
+    }
+
+    if root.name == "arrow_down" || root.name == "expand_more": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z";
+    }
+
+    if root.name == "arrow_up" || root.name == "expand_less": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z";
+    }
+
+    if root.name == "rocket": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M12 2.5s-4 4-4 8c0 2.21 1.79 4 4 4s4-1.79 4-4c0-4-4-8-4-8zm-1 8c0-.55.45-1 1-1s1 .45 1 1-.45 1-1 1-1-.45-1-1zm-6 9.5c0-.83.67-1.5 1.5-1.5H8v3H6.5c-.83 0-1.5-.67-1.5-1.5zm11.5 1.5H16v-3h1.5c.83 0 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5z";
+    }
+
+    if root.name == "lightbulb": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-1.3l-.85-.6A4.996 4.996 0 0 1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z";
+    }
+}
+
+// =============================================================================
+// M3Card: Contenedor con Tonal Elevation (Cero Bordes, Radios M3 Expressive)
 // =============================================================================
 export component M3Card inherits Rectangle {
-    in-out property <length> content-padding: M3Theme.space-xl;
-    in-out property <color> card-background: M3Theme.surface-container;
-    in-out property <color> card-border-color: M3Theme.outline-variant.with-alpha(0.35);
-    in-out property <length> card-border-width: 1px;
-    in-out property <length> card-radius: M3Theme.corner-large;
+    in-out property <length> content-padding: Theme.radius-lg;
+    in-out property <color> card-background: Theme.surface-container-low;
+    in-out property <color> card-border-color: Colors.transparent;
+    in-out property <length> card-border-width: 0px;
+    in-out property <length> card-radius: Theme.radius-xl;
 
     background: root.card-background;
     border-radius: root.card-radius;
@@ -24,41 +313,43 @@ export component M3Card inherits Rectangle {
 }
 
 // =============================================================================
-// M3Button: Botón M3 con variantes filled, tonal y outlined
+// M3Button: Botón M3 Expressive con variantes filled, tonal y outlined
 // =============================================================================
 export component M3Button inherits Rectangle {
     in-out property <string> text: "Acción";
     in-out property <string> variant: "filled"; // "filled" | "tonal" | "outlined"
     in-out property <bool> enabled: true;
-    in-out property <length> btn-height: 42px;
+    in-out property <length> btn-height: 44px;
     in-out property <length> btn-padding-h: 22px;
+    in-out property <string> icon-name: "";
     in-out property <string> icon-text: "";
 
     callback clicked();
 
     height: root.btn-height;
-    border-radius: M3Theme.corner-full;
+    border-radius: Theme.radius-full;
     clip: true;
 
-    // Fondo interactivo
+    // Fondo interactivo por elevación tonal
     background: !root.enabled ?
-        (root.variant == "outlined" ? Colors.transparent : M3Theme.surface-container-highest.with-alpha(0.38)) :
+        (root.variant == "outlined" ? Colors.transparent : Theme.surface-container-highest.with-alpha(0.38)) :
         touch.pressed ?
-            (root.variant == "filled" ? M3Theme.primary.darker(0.18) :
-             root.variant == "tonal" ? M3Theme.secondary-container.darker(0.18) :
-             M3Theme.primary.with-alpha(0.18)) :
+            (root.variant == "filled" ? Theme.primary.darker(0.18) :
+             root.variant == "tonal" ? Theme.secondary-container.darker(0.18) :
+             Theme.primary.with-alpha(0.18)) :
         touch.has-hover ?
-            (root.variant == "filled" ? M3Theme.primary.darker(0.08) :
-             root.variant == "tonal" ? M3Theme.secondary-container.darker(0.08) :
-             M3Theme.primary.with-alpha(0.08)) :
-        (root.variant == "filled" ? M3Theme.primary :
-         root.variant == "tonal" ? M3Theme.secondary-container :
+            (root.variant == "filled" ? Theme.primary.darker(0.08) :
+             root.variant == "tonal" ? Theme.secondary-container.darker(0.08) :
+             Theme.primary.with-alpha(0.08)) :
+        (root.variant == "filled" ? Theme.primary :
+         root.variant == "tonal" ? Theme.secondary-container :
          Colors.transparent);
 
+    // Cero bordes en filled y tonal; 1px solo en outlined
     border-width: root.variant == "outlined" ? 1px : 0px;
-    border-color: !root.enabled ? M3Theme.outline.with-alpha(0.2) :
-                  touch.has-hover ? M3Theme.primary :
-                  M3Theme.outline;
+    border-color: !root.enabled ? Theme.outline.with-alpha(0.2) :
+                  touch.has-hover ? Theme.primary :
+                  Theme.outline-variant;
 
     animate background { duration: 150ms; easing: ease-out; }
     animate border-color { duration: 150ms; easing: ease-out; }
@@ -69,27 +360,37 @@ export component M3Button inherits Rectangle {
         spacing: 8px;
         alignment: center;
 
-        if root.icon-text != "": Text {
+        if root.icon-name != "": M3Icon {
+            name: root.icon-name;
+            icon-size: 18px;
+            icon-color: !root.enabled ? Theme.on-surface.with-alpha(0.38) :
+                        root.variant == "filled" ? Theme.on-primary :
+                        root.variant == "tonal" ? Theme.on-secondary-container :
+                        Theme.primary;
+            y: (parent.height - self.height) / 2;
+        }
+
+        if root.icon-name == "" && root.icon-text != "": Text {
             text: root.icon-text;
-            font-size: 16px;
+            font-size: 15px;
             vertical-alignment: center;
-            color: !root.enabled ? M3Theme.on-surface.with-alpha(0.38) :
-                   root.variant == "filled" ? M3Theme.on-primary :
-                   root.variant == "tonal" ? M3Theme.on-secondary-container :
-                   M3Theme.primary;
+            color: !root.enabled ? Theme.on-surface.with-alpha(0.38) :
+                   root.variant == "filled" ? Theme.on-primary :
+                   root.variant == "tonal" ? Theme.on-secondary-container :
+                   Theme.primary;
         }
 
         Text {
             text: root.text;
-            font-size: M3Theme.font-label-large;
+            font-size: Theme.font-label-large;
             font-weight: 600;
             vertical-alignment: center;
             horizontal-alignment: center;
             overflow: elide;
-            color: !root.enabled ? M3Theme.on-surface.with-alpha(0.38) :
-                   root.variant == "filled" ? M3Theme.on-primary :
-                   root.variant == "tonal" ? M3Theme.on-secondary-container :
-                   M3Theme.primary;
+            color: !root.enabled ? Theme.on-surface.with-alpha(0.38) :
+                   root.variant == "filled" ? Theme.on-primary :
+                   root.variant == "tonal" ? Theme.on-secondary-container :
+                   Theme.primary;
         }
     }
 
@@ -102,8 +403,21 @@ export component M3Button inherits Rectangle {
     }
 }
 
+// Botones específicos auxiliares
+export component M3FilledButton inherits M3Button {
+    variant: "filled";
+}
+
+export component M3TonalButton inherits M3Button {
+    variant: "tonal";
+}
+
+export component M3OutlinedButton inherits M3Button {
+    variant: "outlined";
+}
+
 // =============================================================================
-// M3Switch: Toggle M3 con animación suave
+// M3Switch: Toggle M3 Expressive
 // =============================================================================
 export component M3Switch inherits Rectangle {
     in-out property <bool> checked: false;
@@ -114,10 +428,10 @@ export component M3Switch inherits Rectangle {
     height: 32px;
     border-radius: 16px;
 
-    background: !root.enabled ? M3Theme.surface-container-highest.with-alpha(0.38) :
-                root.checked ? M3Theme.primary : M3Theme.surface-container-highest;
+    background: !root.enabled ? Theme.surface-container-highest.with-alpha(0.38) :
+                root.checked ? Theme.primary : Theme.surface-container-highest;
     border-width: root.checked ? 0px : 2px;
-    border-color: !root.enabled ? M3Theme.outline.with-alpha(0.2) : M3Theme.outline;
+    border-color: !root.enabled ? Theme.outline.with-alpha(0.2) : Theme.outline;
 
     animate background { duration: 180ms; easing: ease-out; }
     animate border-color { duration: 180ms; easing: ease-out; }
@@ -132,8 +446,8 @@ export component M3Switch inherits Rectangle {
         height: root.checked ? 24px : 16px;
         border-radius: 12px;
 
-        background: !root.enabled ? M3Theme.on-surface.with-alpha(0.38) :
-                    root.checked ? M3Theme.on-primary : M3Theme.outline;
+        background: !root.enabled ? Theme.on-surface.with-alpha(0.38) :
+                    root.checked ? Theme.on-primary : Theme.outline;
 
         animate x { duration: 180ms; easing: ease-out; }
         animate width { duration: 150ms; easing: ease-out; }
@@ -152,29 +466,24 @@ export component M3Switch inherits Rectangle {
 }
 
 // =============================================================================
-// M3Badge / M3StatusChip: Indicador de estado con halo circular de color
+// M3StatusChip: Indicador de estado con halo circular y tonal elevation (Cero bordes)
 // =============================================================================
 export component M3StatusChip inherits Rectangle {
     in-out property <string> text: "Detenido";
     in-out property <string> status: "idle"; // "recording" | "active" | "idle"
 
-    height: 30px;
-    border-radius: M3Theme.corner-full;
+    height: 32px;
+    border-radius: Theme.radius-full;
+    border-width: 0px;
 
-    background: root.status == "recording" ? M3Theme.error-container.with-alpha(0.45) :
-                root.status == "active" ? M3Theme.success-container.with-alpha(0.4) :
-                M3Theme.surface-container-high;
-
-    border-width: 1px;
-    border-color: root.status == "recording" ? M3Theme.error.with-alpha(0.6) :
-                  root.status == "active" ? M3Theme.success.with-alpha(0.6) :
-                  M3Theme.outline-variant;
+    background: root.status == "recording" ? Theme.error-container :
+                root.status == "active" ? Theme.secondary-container :
+                Theme.surface-container-high;
 
     animate background { duration: 200ms; }
-    animate border-color { duration: 200ms; }
 
     HorizontalLayout {
-        padding-left: 10px;
+        padding-left: 12px;
         padding-right: 14px;
         spacing: 8px;
         alignment: center;
@@ -185,8 +494,8 @@ export component M3StatusChip inherits Rectangle {
             height: 14px;
             border-radius: 7px;
             y: (parent.height - self.height) / 2;
-            background: root.status == "recording" ? M3Theme.error.with-alpha(0.25) :
-                        root.status == "active" ? M3Theme.success.with-alpha(0.25) :
+            background: root.status == "recording" ? Theme.error.with-alpha(0.25) :
+                        root.status == "active" ? Theme.primary.with-alpha(0.25) :
                         Colors.transparent;
 
             // Dot central
@@ -196,26 +505,27 @@ export component M3StatusChip inherits Rectangle {
                 width: 8px;
                 height: 8px;
                 border-radius: 4px;
-                background: root.status == "recording" ? M3Theme.error :
-                            root.status == "active" ? M3Theme.success :
-                            M3Theme.outline;
+                background: root.status == "recording" ? Theme.error :
+                            root.status == "active" ? Theme.primary :
+                            Theme.outline;
             }
         }
 
         Text {
             text: root.text;
-            font-size: M3Theme.font-label-medium;
+            font-size: Theme.font-label-medium;
             font-weight: 700;
             vertical-alignment: center;
-            color: root.status == "recording" ? M3Theme.error :
-                   root.status == "active" ? M3Theme.success :
-                   M3Theme.on-surface-variant;
+            color: root.status == "recording" ? Theme.on-error-container :
+                   root.status == "active" ? Theme.on-secondary-container :
+                   Theme.on-surface-variant;
         }
     }
 }
 
 // =============================================================================
-// M3ProfileTile: Tarjeta/Chip seleccionable para los perfiles de hardware
+// M3ProfileTile / M3RadioCard: Lista estilo Android Settings (Cero bordes)
+// Icono a la izquierda, Título+Descripción al centro, Radio Button anclado a la derecha
 // =============================================================================
 export component M3ProfileTile inherits Rectangle {
     in-out property <string> title: "Perfil";
@@ -223,50 +533,53 @@ export component M3ProfileTile inherits Rectangle {
     in-out property <string> badge-text: "";
     in-out property <string> warning-text: "";
     in-out property <bool> is-selected: false;
-    in-out property <string> icon-text: "⚡";
+    in-out property <string> icon-name: "bolt";
+    in-out property <string> icon-text: "";
 
     callback clicked();
 
-    border-radius: M3Theme.corner-medium;
-    background: root.is-selected ?
-        M3Theme.primary-container :
-        touch.has-hover ?
-            M3Theme.surface-container-highest :
-            M3Theme.surface-container-high;
+    border-radius: Theme.radius-lg;
+    border-width: 0px;
 
-    border-width: root.is-selected ? 1.5px : 1px;
-    border-color: root.is-selected ?
-        M3Theme.primary :
+    background: root.is-selected ?
+        Theme.secondary-container :
         touch.has-hover ?
-            M3Theme.outline :
-            M3Theme.outline-variant.with-alpha(0.5);
+            Theme.surface-container-high :
+            Theme.surface-container;
 
     animate background { duration: 150ms; }
-    animate border-color { duration: 150ms; }
 
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
 
         HorizontalLayout {
-            padding-left: 14px;
-            padding-right: 14px;
-            padding-top: 10px;
-            padding-bottom: 10px;
-            spacing: 12px;
+            padding-left: 20px;
+            padding-right: 20px;
+            padding-top: 14px;
+            padding-bottom: 14px;
+            spacing: 16px;
             alignment: center;
 
-            // Icono
+            // Icono a la izquierda
             Rectangle {
-                width: 36px;
-                height: 36px;
-                border-radius: 18px;
+                width: 42px;
+                height: 42px;
+                border-radius: 21px;
                 background: root.is-selected ?
-                    M3Theme.primary.with-alpha(0.2) :
-                    M3Theme.surface-container;
+                    Theme.primary.with-alpha(0.2) :
+                    Theme.surface-container-highest;
                 y: (parent.height - self.height) / 2;
 
-                Text {
+                if root.icon-name != "": M3Icon {
+                    name: root.icon-name;
+                    icon-size: 20px;
+                    icon-color: root.is-selected ? Theme.primary : Theme.on-surface-variant;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                if root.icon-name == "" && root.icon-text != "": Text {
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                     text: root.icon-text;
@@ -276,11 +589,11 @@ export component M3ProfileTile inherits Rectangle {
                 }
             }
 
-            // Textos
+            // Bloque vertical alineado al centro a la izquierda
             VerticalLayout {
                 horizontal-stretch: 1;
                 alignment: center;
-                spacing: 3px;
+                spacing: 4px;
 
                 HorizontalLayout {
                     spacing: 8px;
@@ -288,18 +601,19 @@ export component M3ProfileTile inherits Rectangle {
 
                     Text {
                         text: root.title;
-                        font-size: M3Theme.font-title-small;
+                        font-size: Theme.font-title-small;
                         font-weight: root.is-selected ? 700 : 600;
-                        color: root.is-selected ? M3Theme.on-primary-container : M3Theme.on-surface;
+                        color: root.is-selected ? Theme.on-secondary-container : Theme.on-surface;
                         vertical-alignment: center;
                     }
 
                     if root.badge-text != "": Rectangle {
                         height: 20px;
-                        border-radius: 10px;
+                        border-radius: Theme.radius-full;
+                        border-width: 0px;
                         background: root.badge-text == "Experimental" ?
-                            M3Theme.error-container :
-                            (root.is-selected ? M3Theme.primary : M3Theme.secondary-container);
+                            Theme.error-container :
+                            (root.is-selected ? Theme.primary : Theme.surface-container-highest);
                         y: (parent.height - self.height) / 2;
 
                         HorizontalLayout {
@@ -307,41 +621,41 @@ export component M3ProfileTile inherits Rectangle {
                             padding-right: 8px;
                             Text {
                                 text: root.badge-text;
-                                font-size: M3Theme.font-label-small;
+                                font-size: Theme.font-label-small;
                                 font-weight: 700;
                                 vertical-alignment: center;
                                 color: root.badge-text == "Experimental" ?
-                                    M3Theme.error :
-                                    (root.is-selected ? M3Theme.on-primary : M3Theme.on-secondary-container);
+                                    Theme.on-error-container :
+                                    (root.is-selected ? Theme.on-primary : Theme.on-surface-variant);
                             }
                         }
                     }
                 }
 
                 if root.warning-text != "": Rectangle {
-                    height: 22px;
-                    border-radius: 6px;
-                    background: M3Theme.error-container.with-alpha(0.85);
-                    border-width: 1px;
-                    border-color: M3Theme.error.with-alpha(0.5);
+                    height: 24px;
+                    border-radius: Theme.radius-xs;
+                    border-width: 0px;
+                    background: Theme.error-container;
 
                     HorizontalLayout {
                         padding-left: 8px;
                         padding-right: 8px;
-                        spacing: 4px;
+                        spacing: 6px;
                         alignment: start;
 
-                        Text {
-                            text: "⚠️";
-                            font-size: 11px;
-                            vertical-alignment: center;
+                        M3Icon {
+                            name: "warning";
+                            icon-size: 14px;
+                            icon-color: Theme.on-error-container;
+                            y: (parent.height - self.height) / 2;
                         }
 
                         Text {
                             text: root.warning-text;
                             font-size: 11px;
                             font-weight: 700;
-                            color: M3Theme.error;
+                            color: Theme.on-error-container;
                             vertical-alignment: center;
                         }
                     }
@@ -349,95 +663,54 @@ export component M3ProfileTile inherits Rectangle {
 
                 if root.subtitle != "": Text {
                     text: root.subtitle;
-                    font-size: M3Theme.font-body-small;
+                    font-size: Theme.font-body-small;
                     color: root.is-selected ?
-                        M3Theme.on-primary-container.with-alpha(0.8) :
-                        M3Theme.on-surface-variant;
+                        Theme.on-secondary-container.with-alpha(0.85) :
+                        Theme.on-surface-variant;
                 }
             }
 
-            // Radio dot indicator
+            // Radio Button anclado completamente a la derecha
             Rectangle {
-                width: 20px;
-                height: 20px;
-                border-radius: 10px;
+                width: 22px;
+                height: 22px;
+                border-radius: 11px;
                 y: (parent.height - self.height) / 2;
                 border-width: 2px;
-                border-color: root.is-selected ? M3Theme.primary : M3Theme.outline;
+                border-color: root.is-selected ? Theme.primary : Theme.outline;
                 background: Colors.transparent;
 
                 if root.is-selected: Rectangle {
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
-                    width: 10px;
-                    height: 10px;
-                    border-radius: 5px;
-                    background: M3Theme.primary;
+                    width: 12px;
+                    height: 12px;
+                    border-radius: 6px;
+                    background: Theme.primary;
                 }
             }
         }
     }
 }
 
+export component M3RadioCard inherits M3ProfileTile {}
+
 // =============================================================================
-// M3SegmentItem: Opción individual de selector segmentado
+// M3SegmentItem: Opción de botón segmentado M3 Expressive (Píldora tonal)
 // =============================================================================
 export component M3SegmentItem inherits Rectangle {
     in-out property <string> text: "Opción";
+    in-out property <string> icon-name: "";
     in-out property <bool> is-selected: false;
     callback clicked();
 
-    border-radius: M3Theme.corner-small;
+    border-radius: Theme.radius-full;
+    border-width: 0px;
     background: root.is-selected ?
-        M3Theme.secondary-container :
+        Theme.primary :
         touch.has-hover ?
-            M3Theme.surface-container-highest :
+            Theme.surface-container-highest :
             Colors.transparent;
-
-    animate background { duration: 150ms; }
-
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-
-        HorizontalLayout {
-            padding-left: 12px;
-            padding-right: 12px;
-            alignment: center;
-
-            Text {
-                text: root.text;
-                font-size: M3Theme.font-label-medium;
-                font-weight: root.is-selected ? 700 : 500;
-                vertical-alignment: center;
-                color: root.is-selected ?
-                    M3Theme.on-secondary-container :
-                    M3Theme.on-surface-variant;
-            }
-        }
-    }
-}
-
-// =============================================================================
-// M3PresetChip: Chip pequeño para presets numéricos (ej. 15s, 30s, 60s)
-// =============================================================================
-export component M3PresetChip inherits Rectangle {
-    in-out property <string> text: "30s";
-    in-out property <bool> is-active: false;
-    callback clicked();
-
-    height: 32px;
-    border-radius: 16px;
-    background: root.is-active ?
-        M3Theme.primary :
-        touch.has-hover ?
-            M3Theme.surface-container-highest :
-            M3Theme.surface-container-high;
-
-    border-width: 1px;
-    border-color: root.is-active ?
-        M3Theme.primary :
-        M3Theme.outline-variant;
 
     animate background { duration: 150ms; }
 
@@ -448,38 +721,92 @@ export component M3PresetChip inherits Rectangle {
         HorizontalLayout {
             padding-left: 14px;
             padding-right: 14px;
+            spacing: 6px;
             alignment: center;
+
+            if root.icon-name != "": M3Icon {
+                name: root.icon-name;
+                icon-size: 16px;
+                icon-color: root.is-selected ? Theme.on-primary : Theme.on-surface-variant;
+                y: (parent.height - self.height) / 2;
+            }
 
             Text {
                 text: root.text;
-                font-size: M3Theme.font-label-medium;
-                font-weight: root.is-active ? 700 : 500;
+                font-size: Theme.font-label-medium;
+                font-weight: root.is-selected ? 700 : 500;
                 vertical-alignment: center;
-                color: root.is-active ?
-                    M3Theme.on-primary :
-                    M3Theme.on-surface-variant;
+                color: root.is-selected ?
+                    Theme.on-primary :
+                    Theme.on-surface-variant;
             }
         }
     }
 }
 
 // =============================================================================
-// M3NavItem: Botón en píldora para el Navigation Rail con indicador tonal
+// M3PresetChip: Chip de presets sin bordes
+// =============================================================================
+export component M3PresetChip inherits Rectangle {
+    in-out property <string> text: "30s";
+    in-out property <bool> is-active: false;
+    callback clicked();
+
+    height: 34px;
+    border-radius: Theme.radius-full;
+    border-width: 0px;
+    background: root.is-active ?
+        Theme.primary :
+        touch.has-hover ?
+            Theme.surface-container-highest :
+            Theme.surface-container-high;
+
+    animate background { duration: 150ms; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            alignment: center;
+
+            Text {
+                text: root.text;
+                font-size: Theme.font-label-medium;
+                font-weight: root.is-active ? 700 : 500;
+                vertical-alignment: center;
+                color: root.is-active ?
+                    Theme.on-primary :
+                    Theme.on-surface-variant;
+            }
+        }
+    }
+}
+
+export component M3Chip inherits M3PresetChip {}
+
+// =============================================================================
+// M3NavItem: Píldora del Navigation Rail (M3 Expressive)
 // =============================================================================
 export component M3NavItem inherits Rectangle {
-    in-out property <string> icon-text: "🎬";
-    in-out property <string> text: "Dashboard";
+    in-out property <string> icon-name: "dashboard";
+    in-out property <string> icon-text: "";
+    in-out property <string> text: "Panel";
     in-out property <string> badge-text: "";
     in-out property <bool> is-selected: false;
     in-out property <bool> compact: false;
     callback clicked();
 
-    height: root.compact ? 52px : 48px;
-    border-radius: root.compact ? M3Theme.corner-medium : M3Theme.corner-full;
+    height: root.compact ? 56px : 48px;
+    border-radius: Theme.radius-full;
+    border-width: 0px;
+
     background: root.is-selected ?
-        M3Theme.primary-container :
+        Theme.secondary-container :
         touch.has-hover ?
-            M3Theme.surface-container-high :
+            Theme.surface-container-high :
             Colors.transparent;
 
     animate background { duration: 160ms; easing: ease-out; }
@@ -489,12 +816,19 @@ export component M3NavItem inherits Rectangle {
         clicked => { root.clicked(); }
 
         if !root.compact: HorizontalLayout {
-            padding-left: 14px;
-            padding-right: 14px;
+            padding-left: 16px;
+            padding-right: 16px;
             spacing: 12px;
             alignment: start;
 
-            Text {
+            if root.icon-name != "": M3Icon {
+                name: root.icon-name;
+                icon-size: 20px;
+                icon-color: root.is-selected ? Theme.on-secondary-container : Theme.on-surface-variant;
+                y: (parent.height - self.height) / 2;
+            }
+
+            if root.icon-name == "" && root.icon-text != "": Text {
                 text: root.icon-text;
                 font-size: 18px;
                 vertical-alignment: center;
@@ -503,19 +837,20 @@ export component M3NavItem inherits Rectangle {
             Text {
                 horizontal-stretch: 1;
                 text: root.text;
-                font-size: M3Theme.font-label-large;
+                font-size: Theme.font-label-large;
                 font-weight: root.is-selected ? 700 : 500;
                 vertical-alignment: center;
                 overflow: elide;
                 color: root.is-selected ?
-                    M3Theme.on-primary-container :
-                    M3Theme.on-surface-variant;
+                    Theme.on-secondary-container :
+                    Theme.on-surface-variant;
             }
 
             if root.badge-text != "": Rectangle {
                 height: 20px;
-                border-radius: 10px;
-                background: root.is-selected ? M3Theme.primary : M3Theme.surface-container-highest;
+                border-radius: Theme.radius-full;
+                border-width: 0px;
+                background: root.is-selected ? Theme.primary : Theme.surface-container-highest;
                 y: (parent.height - self.height) / 2;
 
                 HorizontalLayout {
@@ -523,9 +858,9 @@ export component M3NavItem inherits Rectangle {
                     padding-right: 7px;
                     Text {
                         text: root.badge-text;
-                        font-size: M3Theme.font-label-small;
+                        font-size: Theme.font-label-small;
                         font-weight: 700;
-                        color: root.is-selected ? M3Theme.on-primary : M3Theme.on-surface-variant;
+                        color: root.is-selected ? Theme.on-primary : Theme.on-surface-variant;
                         vertical-alignment: center;
                     }
                 }
@@ -534,54 +869,54 @@ export component M3NavItem inherits Rectangle {
 
         if root.compact: VerticalLayout {
             alignment: center;
-            spacing: 2px;
+            spacing: 3px;
             padding-top: 4px;
             padding-bottom: 4px;
 
-            Text {
+            if root.icon-name != "": M3Icon {
+                name: root.icon-name;
+                icon-size: 22px;
+                icon-color: root.is-selected ? Theme.on-secondary-container : Theme.on-surface-variant;
+                x: (parent.width - self.width) / 2;
+            }
+
+            if root.icon-name == "" && root.icon-text != "": Text {
                 text: root.icon-text;
-                font-size: 20px;
+                font-size: 18px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
 
             Text {
                 text: root.text;
-                font-size: 9px;
+                font-size: 10px;
                 font-weight: root.is-selected ? 700 : 500;
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 overflow: elide;
                 color: root.is-selected ?
-                    M3Theme.on-primary-container :
-                    M3Theme.on-surface-variant;
+                    Theme.on-secondary-container :
+                    Theme.on-surface-variant;
             }
         }
     }
 }
 
 // =============================================================================
-// M3NavigationRail: Barra lateral de navegación vertical M3 Expressive
+// M3NavigationRail: Navigation Rail Vertical M3 Expressive
+// Sin bordes con el contenido, cabecera con sane-rec.png, píldoras tonales
 // =============================================================================
 export component M3NavigationRail inherits Rectangle {
     in-out property <int> active-view: 0;
     in-out property <bool> compact: false;
     callback view-selected(int);
 
-    width: root.compact ? 64px : 180px;
-    background: M3Theme.surface-container;
+    width: root.compact ? 68px : 188px;
+    background: Theme.surface;
+    border-width: 0px;
     clip: true;
 
     animate width { duration: 160ms; easing: ease-out; }
-
-    // Borde separador lateral derecho
-    Rectangle {
-        x: parent.width - 1px;
-        y: 0px;
-        width: 1px;
-        height: parent.height;
-        background: M3Theme.outline-variant.with-alpha(0.35);
-    }
 
     VerticalLayout {
         padding-left: root.compact ? 6px : 12px;
@@ -590,28 +925,27 @@ export component M3NavigationRail inherits Rectangle {
         padding-bottom: 16px;
         spacing: 16px;
 
-        // Logo y Brand
+        // Logo e Identidad Visual M3 Expressive
         if !root.compact: HorizontalLayout {
-            padding-left: 4px;
-            padding-right: 4px;
+            padding-left: 6px;
+            padding-right: 6px;
             spacing: 12px;
             alignment: start;
 
             Rectangle {
-                width: 38px;
-                height: 38px;
-                border-radius: 19px;
-                background: M3Theme.primary-container;
+                width: 44px;
+                height: 44px;
+                border-radius: 14px;
+                background: Theme.surface-container-high;
+                border-width: 0px;
+                clip: true;
                 y: (parent.height - self.height) / 2;
 
-                Text {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    text: "⏺";
-                    font-size: 19px;
-                    color: M3Theme.primary;
-                    vertical-alignment: center;
-                    horizontal-alignment: center;
+                Image {
+                    source: @image-url("../assets/sane-rec.png");
+                    image-fit: contain;
+                    width: 100%;
+                    height: 100%;
                 }
             }
 
@@ -621,41 +955,34 @@ export component M3NavigationRail inherits Rectangle {
 
                 Text {
                     text: "sane-rec";
-                    font-size: M3Theme.font-title-medium;
+                    font-size: Theme.font-title-medium;
                     font-weight: 800;
-                    color: M3Theme.on-surface;
+                    color: Theme.on-surface;
                 }
 
                 Text {
                     text: "M3 Expressive";
-                    font-size: M3Theme.font-label-small;
-                    color: M3Theme.on-surface-variant;
+                    font-size: Theme.font-label-small;
+                    color: Theme.on-surface-variant;
                 }
             }
         }
 
         if root.compact: Rectangle {
-            width: 38px;
-            height: 38px;
-            border-radius: 19px;
-            background: M3Theme.primary-container;
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            background: Theme.surface-container-high;
+            border-width: 0px;
+            clip: true;
             x: (parent.width - self.width) / 2;
 
-            Text {
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-                text: "⏺";
-                font-size: 20px;
-                color: M3Theme.primary;
-                vertical-alignment: center;
-                horizontal-alignment: center;
+            Image {
+                source: @image-url("../assets/sane-rec.png");
+                image-fit: contain;
+                width: 100%;
+                height: 100%;
             }
-        }
-
-        // Separador horizontal sutil
-        Rectangle {
-            height: 1px;
-            background: M3Theme.outline-variant.with-alpha(0.3);
         }
 
         // Elementos de Navegación (Píldoras M3)
@@ -664,8 +991,8 @@ export component M3NavigationRail inherits Rectangle {
 
             M3NavItem {
                 compact: root.compact;
-                icon-text: "🎬";
-                text: "Dashboard";
+                icon-name: "dashboard";
+                text: "Panel";
                 is-selected: root.active-view == 0;
                 clicked => {
                     root.active-view = 0;
@@ -675,7 +1002,7 @@ export component M3NavigationRail inherits Rectangle {
 
             M3NavItem {
                 compact: root.compact;
-                icon-text: "🖥️";
+                icon-name: "monitor";
                 text: "Fuentes";
                 is-selected: root.active-view == 1;
                 clicked => {
@@ -686,7 +1013,7 @@ export component M3NavigationRail inherits Rectangle {
 
             M3NavItem {
                 compact: root.compact;
-                icon-text: "🎙️";
+                icon-name: "mic";
                 text: "Audio";
                 is-selected: root.active-view == 2;
                 clicked => {
@@ -697,7 +1024,7 @@ export component M3NavigationRail inherits Rectangle {
 
             M3NavItem {
                 compact: root.compact;
-                icon-text: "⚙️";
+                icon-name: "settings";
                 text: "Ajustes";
                 is-selected: root.active-view == 3;
                 clicked => {
@@ -708,7 +1035,7 @@ export component M3NavigationRail inherits Rectangle {
 
             M3NavItem {
                 compact: root.compact;
-                icon-text: "📂";
+                icon-name: "folder";
                 text: "Galería";
                 is-selected: root.active-view == 4;
                 clicked => {
@@ -723,25 +1050,24 @@ export component M3NavigationRail inherits Rectangle {
             vertical-stretch: 1;
         }
 
-        // Footer informativo
+        // Footer informativo tonal sin bordes
         if !root.compact: Rectangle {
-            height: 48px;
-            border-radius: M3Theme.corner-medium;
-            background: M3Theme.surface-container-high.with-alpha(0.6);
-            border-width: 1px;
-            border-color: M3Theme.outline-variant.with-alpha(0.25);
+            height: 52px;
+            border-radius: Theme.radius-md;
+            background: Theme.surface-container-low;
+            border-width: 0px;
 
             HorizontalLayout {
-                padding-left: 10px;
-                padding-right: 10px;
-                spacing: 8px;
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 10px;
                 alignment: start;
 
                 Rectangle {
                     width: 8px;
                     height: 8px;
                     border-radius: 4px;
-                    background: M3Theme.success;
+                    background: Theme.success;
                     y: (parent.height - self.height) / 2;
                 }
 
@@ -751,15 +1077,15 @@ export component M3NavigationRail inherits Rectangle {
 
                     Text {
                         text: "Wayland / niri";
-                        font-size: M3Theme.font-label-small;
+                        font-size: Theme.font-label-small;
                         font-weight: 700;
-                        color: M3Theme.on-surface;
+                        color: Theme.on-surface;
                     }
 
                     Text {
                         text: "PipeWire • 60 FPS";
                         font-size: 10px;
-                        color: M3Theme.on-surface-variant;
+                        color: Theme.on-surface-variant;
                     }
                 }
             }
@@ -769,16 +1095,15 @@ export component M3NavigationRail inherits Rectangle {
             width: 36px;
             height: 36px;
             border-radius: 18px;
-            background: M3Theme.surface-container-high.with-alpha(0.6);
-            border-width: 1px;
-            border-color: M3Theme.outline-variant.with-alpha(0.25);
+            background: Theme.surface-container-low;
+            border-width: 0px;
             x: (parent.width - self.width) / 2;
 
             Rectangle {
                 width: 8px;
                 height: 8px;
                 border-radius: 4px;
-                background: M3Theme.success;
+                background: Theme.success;
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
             }
@@ -787,31 +1112,30 @@ export component M3NavigationRail inherits Rectangle {
 }
 
 // =============================================================================
-// M3MetricTile: Métrica de alto impacto visual para el Dashboard
+// M3MetricTile: Métrica visual M3 con Cero Bordes y Tonal Elevation
 // =============================================================================
 export component M3MetricTile inherits Rectangle {
-    in-out property <string> icon-text: "⚡";
+    in-out property <string> icon-name: "bolt";
+    in-out property <string> icon-text: "";
     in-out property <string> value: "60 FPS";
-    in-out property <string> label: "Tasa de Refresco";
+    in-out property <string> label: "Tasa de refresco";
     in-out property <string> badge-text: "";
     in-out property <bool> highlight: false;
 
     min-height: 98px;
     preferred-height: 106px;
-    border-radius: M3Theme.corner-medium;
+    border-radius: Theme.radius-lg;
+    border-width: 0px;
+
     background: root.highlight ?
-        M3Theme.primary-container.with-alpha(0.35) :
-        M3Theme.surface-container-high;
-    border-width: 1px;
-    border-color: root.highlight ?
-        M3Theme.primary.with-alpha(0.4) :
-        M3Theme.outline-variant.with-alpha(0.35);
+        Theme.surface-container-high :
+        Theme.surface-container;
 
     VerticalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        padding-top: 10px;
-        padding-bottom: 10px;
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 12px;
         spacing: 4px;
         alignment: space-between;
 
@@ -820,14 +1144,23 @@ export component M3MetricTile inherits Rectangle {
             alignment: space-between;
 
             Rectangle {
-                width: 28px;
-                height: 28px;
-                border-radius: 14px;
+                width: 30px;
+                height: 30px;
+                border-radius: 15px;
                 background: root.highlight ?
-                    M3Theme.primary.with-alpha(0.25) :
-                    M3Theme.surface-container-highest;
+                    Theme.primary.with-alpha(0.2) :
+                    Theme.surface-container-highest;
+                border-width: 0px;
 
-                Text {
+                if root.icon-name != "": M3Icon {
+                    name: root.icon-name;
+                    icon-size: 16px;
+                    icon-color: root.highlight ? Theme.primary : Theme.on-surface-variant;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                if root.icon-name == "" && root.icon-text != "": Text {
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                     text: root.icon-text;
@@ -838,19 +1171,20 @@ export component M3MetricTile inherits Rectangle {
             }
 
             if root.badge-text != "": Rectangle {
-                height: 18px;
-                border-radius: 9px;
-                background: root.highlight ? M3Theme.primary : M3Theme.surface-container-highest;
+                height: 20px;
+                border-radius: Theme.radius-full;
+                border-width: 0px;
+                background: root.highlight ? Theme.secondary-container : Theme.surface-container-highest;
                 y: (parent.height - self.height) / 2;
 
                 HorizontalLayout {
-                    padding-left: 6px;
-                    padding-right: 6px;
+                    padding-left: 8px;
+                    padding-right: 8px;
                     Text {
                         text: root.badge-text;
                         font-size: 10px;
                         font-weight: 700;
-                        color: root.highlight ? M3Theme.on-primary : M3Theme.on-surface-variant;
+                        color: root.highlight ? Theme.on-secondary-container : Theme.on-surface-variant;
                         vertical-alignment: center;
                     }
                 }
@@ -865,21 +1199,21 @@ export component M3MetricTile inherits Rectangle {
                 font-size: 18px;
                 font-weight: 800;
                 overflow: elide;
-                color: root.highlight ? M3Theme.primary : M3Theme.on-surface;
+                color: root.highlight ? Theme.primary : Theme.on-surface;
             }
             Text {
                 text: root.label;
                 font-size: 11px;
                 font-weight: 500;
                 overflow: elide;
-                color: M3Theme.on-surface-variant;
+                color: Theme.on-surface-variant;
             }
         }
     }
 }
 
 // =============================================================================
-// M3OptionItem: Opción de selección con checkmark y badge
+// M3OptionItem: Fila de selección con checkmark M3 y Cero Bordes
 // =============================================================================
 export component M3OptionItem inherits Rectangle {
     in-out property <string> text: "Opción";
@@ -887,13 +1221,15 @@ export component M3OptionItem inherits Rectangle {
     in-out property <bool> is-selected: false;
     callback clicked();
 
-    height: 38px;
-    border-radius: M3Theme.corner-small;
+    height: 42px;
+    border-radius: Theme.radius-sm;
+    border-width: 0px;
+
     background: root.is-selected ?
-        M3Theme.primary-container :
+        Theme.secondary-container :
         touch.has-hover ?
-            M3Theme.surface-container-highest :
-            M3Theme.surface-container;
+            Theme.surface-container-high :
+            Theme.surface-container;
 
     animate background { duration: 120ms; }
 
@@ -902,46 +1238,46 @@ export component M3OptionItem inherits Rectangle {
         clicked => { root.clicked(); }
 
         HorizontalLayout {
-            padding-left: 12px;
-            padding-right: 12px;
-            spacing: 8px;
+            padding-left: 14px;
+            padding-right: 14px;
+            spacing: 10px;
             alignment: space-between;
 
             HorizontalLayout {
-                spacing: 8px;
+                spacing: 10px;
                 alignment: start;
 
-                Text {
-                    text: root.is-selected ? "✓" : " ";
-                    font-size: 13px;
-                    font-weight: 700;
-                    color: root.is-selected ? M3Theme.primary : Colors.transparent;
-                    vertical-alignment: center;
+                M3Icon {
+                    name: "check";
+                    icon-size: 16px;
+                    icon-color: root.is-selected ? Theme.primary : Colors.transparent;
+                    y: (parent.height - self.height) / 2;
                 }
 
                 Text {
                     text: root.text;
-                    font-size: M3Theme.font-label-medium;
+                    font-size: Theme.font-label-medium;
                     font-weight: root.is-selected ? 700 : 500;
-                    color: root.is-selected ? M3Theme.on-primary-container : M3Theme.on-surface;
+                    color: root.is-selected ? Theme.on-secondary-container : Theme.on-surface;
                     vertical-alignment: center;
                 }
             }
 
             if root.badge-text != "": Rectangle {
-                height: 18px;
-                border-radius: 9px;
-                background: root.is-selected ? M3Theme.primary : M3Theme.surface-container-high;
+                height: 20px;
+                border-radius: Theme.radius-full;
+                border-width: 0px;
+                background: root.is-selected ? Theme.primary : Theme.surface-container-highest;
                 y: (parent.height - self.height) / 2;
 
                 HorizontalLayout {
-                    padding-left: 6px;
-                    padding-right: 6px;
+                    padding-left: 8px;
+                    padding-right: 8px;
                     Text {
                         text: root.badge-text;
                         font-size: 10px;
                         font-weight: 600;
-                        color: root.is-selected ? M3Theme.on-primary : M3Theme.on-surface-variant;
+                        color: root.is-selected ? Theme.on-primary : Theme.on-surface-variant;
                         vertical-alignment: center;
                     }
                 }
@@ -951,31 +1287,28 @@ export component M3OptionItem inherits Rectangle {
 }
 
 // =============================================================================
-// M3DropdownCard: Tarjeta compacta estilo elemento de lista M3 con selector desplegable
+// M3DropdownCard: Tarjeta desplegable M3 con Cero Bordes
 // =============================================================================
 export component M3DropdownCard inherits Rectangle {
     in-out property <string> title: "Opción";
     in-out property <string> description: "";
-    in-out property <string> icon-text: "⚙️";
+    in-out property <string> icon-name: "settings";
+    in-out property <string> icon-text: "";
     in-out property <string> current-value: "Seleccionado";
     in-out property <bool> is-open: false;
     callback toggled();
 
-    border-radius: M3Theme.corner-medium;
-    background: M3Theme.surface-container-high;
-    border-width: 1px;
-    border-color: root.is-open ? M3Theme.primary : M3Theme.outline-variant.with-alpha(0.35);
-
-    animate border-color { duration: 150ms; }
+    border-radius: Theme.radius-lg;
+    border-width: 0px;
+    background: Theme.surface-container-low;
 
     VerticalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        padding-top: 8px;
-        padding-bottom: 8px;
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 10px;
+        padding-bottom: 10px;
         spacing: 0px;
 
-        // Fila horizontal compacta estilo M3 list item (56px a 64px de alto)
         TouchArea {
             mouse-cursor: pointer;
             clicked => {
@@ -984,25 +1317,32 @@ export component M3DropdownCard inherits Rectangle {
             }
 
             HorizontalLayout {
-                min-height: 44px;
-                spacing: 12px;
+                min-height: 48px;
+                spacing: 14px;
                 alignment: space-between;
 
-                // Fila izquierda: Icono y Textos
                 HorizontalLayout {
                     horizontal-stretch: 1;
-                    spacing: 12px;
+                    spacing: 14px;
                     alignment: start;
 
-                    // Icono circular
                     Rectangle {
-                        width: 36px;
-                        height: 36px;
-                        border-radius: 18px;
-                        background: M3Theme.surface-container;
+                        width: 40px;
+                        height: 40px;
+                        border-radius: 20px;
+                        background: Theme.surface-container-high;
+                        border-width: 0px;
                         y: (parent.height - self.height) / 2;
 
-                        Text {
+                        if root.icon-name != "": M3Icon {
+                            name: root.icon-name;
+                            icon-size: 20px;
+                            icon-color: Theme.primary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        if root.icon-name == "" && root.icon-text != "": Text {
                             x: (parent.width - self.width) / 2;
                             y: (parent.height - self.height) / 2;
                             text: root.icon-text;
@@ -1012,7 +1352,6 @@ export component M3DropdownCard inherits Rectangle {
                         }
                     }
 
-                    // Columna vertical compacta: título y descripción
                     VerticalLayout {
                         horizontal-stretch: 1;
                         alignment: center;
@@ -1020,57 +1359,55 @@ export component M3DropdownCard inherits Rectangle {
 
                         Text {
                             text: root.title;
-                            font-size: M3Theme.font-title-small;
+                            font-size: Theme.font-title-small;
                             font-weight: 600;
-                            color: M3Theme.on-surface;
+                            color: Theme.on-surface;
                             overflow: elide;
                         }
 
                         if root.description != "": Text {
                             text: root.description;
-                            font-size: M3Theme.font-body-small;
-                            color: M3Theme.on-surface-variant;
+                            font-size: Theme.font-body-small;
+                            color: Theme.on-surface-variant;
                             overflow: elide;
                         }
                     }
                 }
 
-                // Derecha: Selector / Dropdown en píldora estilizada
+                // Selector píldora tonal
                 Rectangle {
-                    height: 32px;
-                    border-radius: M3Theme.corner-small;
-                    background: root.is-open ? M3Theme.primary-container : M3Theme.surface-container-highest;
-                    border-width: 1px;
-                    border-color: root.is-open ? M3Theme.primary : M3Theme.outline-variant.with-alpha(0.5);
+                    height: 36px;
+                    border-radius: Theme.radius-full;
+                    border-width: 0px;
+                    background: root.is-open ? Theme.secondary-container : Theme.surface-container-high;
                     y: (parent.height - self.height) / 2;
 
                     HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 10px;
+                        padding-left: 14px;
+                        padding-right: 12px;
                         spacing: 8px;
                         alignment: center;
 
                         Text {
                             text: root.current-value;
-                            font-size: M3Theme.font-label-medium;
+                            font-size: Theme.font-label-medium;
                             font-weight: 600;
-                            color: root.is-open ? M3Theme.on-primary-container : M3Theme.primary;
+                            color: root.is-open ? Theme.on-secondary-container : Theme.primary;
                             vertical-alignment: center;
                             overflow: elide;
                         }
 
-                        Text {
-                            text: root.is-open ? "▲" : "▼";
-                            font-size: 10px;
-                            color: root.is-open ? M3Theme.on-primary-container : M3Theme.on-surface-variant;
-                            vertical-alignment: center;
+                        M3Icon {
+                            name: root.is-open ? "arrow_up" : "arrow_down";
+                            icon-size: 14px;
+                            icon-color: root.is-open ? Theme.on-secondary-container : Theme.on-surface-variant;
+                            y: (parent.height - self.height) / 2;
                         }
                     }
                 }
             }
         }
 
-        // Contenedor expandible para opciones
         Rectangle {
             clip: true;
             height: root.is-open ? options-box.preferred-height : 0px;
@@ -1078,7 +1415,7 @@ export component M3DropdownCard inherits Rectangle {
 
             options-box := VerticalLayout {
                 y: 0px;
-                padding-top: 8px;
+                padding-top: 10px;
                 spacing: 6px;
                 @children
             }
@@ -1087,7 +1424,7 @@ export component M3DropdownCard inherits Rectangle {
 }
 
 // =============================================================================
-// M3ClipCard: Elemento de lista para la Galería de Replays
+// M3ClipCard: Fila de la Galería de Replays con Cero Bordes
 // =============================================================================
 export component M3ClipCard inherits Rectangle {
     in-out property <string> filename: "replay_2026-10-29.mp4";
@@ -1095,33 +1432,36 @@ export component M3ClipCard inherits Rectangle {
     in-out property <string> date-text: "Hoy, 19:20";
     in-out property <string> duration-text: "00:30";
     in-out property <string> filepath: "";
+    in-out property <bool> is-discord: false;
 
     callback play-clicked(string);
     callback folder-clicked(string);
+    callback compress-clicked(string);
 
-    border-radius: M3Theme.corner-medium;
-    background: M3Theme.surface-container-high;
-    border-width: 1px;
-    border-color: M3Theme.outline-variant.with-alpha(0.35);
+    border-radius: Theme.radius-lg;
+    border-width: 0px;
+    background: Theme.surface-container;
 
     HorizontalLayout {
-        padding: 12px;
-        spacing: 14px;
+        padding: 14px;
+        spacing: 16px;
         alignment: space-between;
 
-        // Thumbnail / Icono de Video
+        // Thumbnail tonal
         Rectangle {
             width: 48px;
             height: 48px;
-            border-radius: M3Theme.corner-small;
-            background: M3Theme.primary-container;
+            border-radius: Theme.radius-md;
+            border-width: 0px;
+            background: root.is-discord ? #5865F2.with-alpha(0.2) : Theme.secondary-container;
             y: (parent.height - self.height) / 2;
 
-            Text {
+            M3Icon {
+                name: root.is-discord ? "chat" : "play";
+                icon-size: 22px;
+                icon-color: root.is-discord ? #D0BCFF : Theme.on-secondary-container;
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                text: "🎬";
-                font-size: 20px;
             }
         }
 
@@ -1133,31 +1473,52 @@ export component M3ClipCard inherits Rectangle {
 
             Text {
                 text: root.filename;
-                font-size: M3Theme.font-title-small;
+                font-size: Theme.font-title-small;
                 font-weight: 700;
-                color: M3Theme.on-surface;
+                color: Theme.on-surface;
                 overflow: elide;
             }
 
             HorizontalLayout {
-                spacing: 10px;
+                spacing: 8px;
                 alignment: start;
 
                 // Tag duración
                 Rectangle {
-                    height: 18px;
-                    border-radius: 9px;
-                    background: M3Theme.secondary-container;
+                    height: 20px;
+                    border-radius: Theme.radius-full;
+                    border-width: 0px;
+                    background: Theme.surface-container-high;
                     y: (parent.height - self.height) / 2;
 
                     HorizontalLayout {
-                        padding-left: 6px;
-                        padding-right: 6px;
+                        padding-left: 8px;
+                        padding-right: 8px;
                         Text {
-                            text: "⏱️ " + root.duration-text;
+                            text: root.duration-text;
                             font-size: 11px;
                             font-weight: 600;
-                            color: M3Theme.on-secondary-container;
+                            color: Theme.on-surface-variant;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                if root.is-discord: Rectangle {
+                    height: 20px;
+                    border-radius: Theme.radius-full;
+                    border-width: 0px;
+                    background: #5865F2.with-alpha(0.25);
+                    y: (parent.height - self.height) / 2;
+
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        Text {
+                            text: "Discord";
+                            font-size: 11px;
+                            font-weight: 700;
+                            color: #D0BCFF;
                             vertical-alignment: center;
                         }
                     }
@@ -1165,25 +1526,35 @@ export component M3ClipCard inherits Rectangle {
 
                 Text {
                     text: root.file-size + " • " + root.date-text;
-                    font-size: M3Theme.font-body-small;
-                    color: M3Theme.on-surface-variant;
+                    font-size: Theme.font-body-small;
+                    color: Theme.on-surface-variant;
                     vertical-alignment: center;
                 }
             }
         }
 
-        // Acciones: Reproducir y Carpeta
+        // Acciones: Botones sin emojis
         HorizontalLayout {
             spacing: 8px;
             alignment: end;
             y: (parent.height - self.height) / 2;
 
-            M3Button {
-                text: "Ver";
-                icon-text: "▶";
-                variant: "filled";
+            if !root.is-discord: M3Button {
+                text: "Discord";
+                variant: "tonal";
                 btn-height: 36px;
                 btn-padding-h: 14px;
+                clicked => {
+                    root.compress-clicked(root.filepath != "" ? root.filepath : root.filename);
+                }
+            }
+
+            M3Button {
+                text: "Ver";
+                icon-name: "play";
+                variant: "filled";
+                btn-height: 36px;
+                btn-padding-h: 16px;
                 clicked => {
                     root.play-clicked(root.filepath != "" ? root.filepath : root.filename);
                 }
@@ -1191,10 +1562,10 @@ export component M3ClipCard inherits Rectangle {
 
             M3Button {
                 text: "Carpeta";
-                icon-text: "📁";
+                icon-name: "folder";
                 variant: "outlined";
                 btn-height: 36px;
-                btn-padding-h: 12px;
+                btn-padding-h: 14px;
                 clicked => {
                     root.folder-clicked(root.filepath != "" ? root.filepath : root.filename);
                 }
@@ -1204,48 +1575,49 @@ export component M3ClipCard inherits Rectangle {
 }
 
 // =============================================================================
-// M3VuMeter: Indicador visual en tiempo real de picos de audio (VU Meter)
+// M3VuMeter: Medidor VU con bordes redondeados (radius-full) y paleta armónica M3
 // =============================================================================
 export component M3VuMeter inherits Rectangle {
     in-out property <float> peak-level: 0.0; // 0.0 a 1.0
     in-out property <bool> active: true;
     in-out property <string> label: "";
 
-    height: 18px;
+    height: 20px;
     background: Colors.transparent;
 
     HorizontalLayout {
-        spacing: 8px;
+        spacing: 10px;
         alignment: stretch;
 
         if root.label != "": Text {
             text: root.label;
             font-size: 11px;
             font-weight: 600;
-            color: M3Theme.on-surface-variant;
+            color: Theme.on-surface-variant;
             vertical-alignment: center;
-            width: 45px;
+            width: 48px;
         }
 
-        // Barra de nivel VU
+        // Barra con radius-full (999px)
         bar-bg := Rectangle {
             horizontal-stretch: 1;
-            height: 8px;
+            height: 10px;
             y: (parent.height - self.height) / 2;
-            border-radius: 4px;
-            background: M3Theme.surface-container-highest;
+            border-radius: Theme.radius-full;
+            background: Theme.surface-container-highest;
+            border-width: 0px;
             clip: true;
 
-            // Relleno dinámico con animación suave
+            // Relleno dinámico armónico con M3
             Rectangle {
                 x: 0px;
                 y: 0px;
                 height: parent.height;
                 width: root.active ? Math.clamp(root.peak-level, 0.0, 1.0) * parent.width : 0px;
-                border-radius: 4px;
+                border-radius: Theme.radius-full;
                 background: root.peak-level > 0.85 ?
-                    M3Theme.error :
-                    (root.peak-level > 0.65 ? #eab308 : #22c55e);
+                    Theme.error :
+                    (root.peak-level > 0.65 ? Theme.warning : Theme.success);
 
                 animate width { duration: 60ms; easing: ease-out; }
                 animate background { duration: 100ms; }
@@ -1257,45 +1629,126 @@ export component M3VuMeter inherits Rectangle {
             text: root.active ? (Math.round(root.peak-level * 100) + "%") : "Mudo";
             font-size: 11px;
             font-weight: 700;
-            color: !root.active ? M3Theme.on-surface-variant.with-alpha(0.5) :
-                   root.peak-level > 0.85 ? M3Theme.error :
-                   M3Theme.on-surface-variant;
+            color: !root.active ? Theme.on-surface-variant.with-alpha(0.5) :
+                   root.peak-level > 0.85 ? Theme.error :
+                   Theme.on-surface-variant;
             vertical-alignment: center;
             horizontal-alignment: end;
-            width: 38px;
+            width: 40px;
         }
     }
 }
 
 // =============================================================================
-// M3Toast: Notificación flotante / Banner emergente M3
+// M3Slider: Slider M3 Expressive (pista gruesa 12px, radius-full, thumb Theme.primary)
+// =============================================================================
+export component M3Slider inherits Rectangle {
+    in-out property <float> minimum: 0.0;
+    in-out property <float> maximum: 1.0;
+    in-out property <float> value: 0.5;
+    in-out property <bool> enabled: true;
+
+    callback changed(float);
+
+    height: 36px;
+    background: Colors.transparent;
+
+    track-bg := Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: 12px;
+        border-radius: Theme.radius-full;
+        background: Theme.surface-container-highest;
+        border-width: 0px;
+        clip: true;
+
+        track-active := Rectangle {
+            x: 0px;
+            y: 0px;
+            height: parent.height;
+            width: Math.clamp((root.value - root.minimum) / Math.max(0.0001, root.maximum - root.minimum), 0.0, 1.0) * parent.width;
+            border-radius: Theme.radius-full;
+            background: root.enabled ? Theme.primary : Theme.outline.with-alpha(0.38);
+
+            animate width { duration: 50ms; }
+        }
+    }
+
+    thumb := Rectangle {
+        property <float> progress: Math.clamp((root.value - root.minimum) / Math.max(0.0001, root.maximum - root.minimum), 0.0, 1.0);
+        x: self.progress * (root.width - self.width);
+        y: (root.height - self.height) / 2;
+        width: 20px;
+        height: 20px;
+        border-radius: 10px;
+        border-width: 0px;
+        background: root.enabled ? Theme.primary : Theme.outline;
+        drop-shadow-color: Colors.black.with-alpha(0.35);
+        drop-shadow-blur: 4px;
+        drop-shadow-offset-y: 1px;
+
+        animate x { duration: 50ms; }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+
+        moved => {
+            if self.pressed {
+                root.update-pos(self.mouse-x);
+            }
+        }
+
+        clicked => {
+            root.update-pos(self.mouse-x);
+        }
+    }
+
+    function update-pos(mx: length) {
+        let total-w = root.width / 1px;
+        let pos-x = mx / 1px;
+        let fraction = Math.clamp(pos-x / Math.max(1.0, total-w), 0.0, 1.0);
+        root.value = root.minimum + fraction * (root.maximum - root.minimum);
+        root.changed(root.value);
+    }
+}
+
+// =============================================================================
+// M3Toast: Notificación emergente M3 con Cero Bordes y Sombra Suave
 // =============================================================================
 export component M3Toast inherits Rectangle {
     in-out property <string> message: "";
-    in-out property <string> icon-text: "🎬";
+    in-out property <string> icon-name: "info";
+    in-out property <string> icon-text: "";
     in-out property <bool> is-visible: false;
 
-    height: 44px;
-    border-radius: 22px;
-    background: M3Theme.surface-container-highest;
-    border-width: 1px;
-    border-color: M3Theme.primary.with-alpha(0.5);
+    height: 48px;
+    border-radius: Theme.radius-full;
+    background: Theme.surface-container-highest;
+    border-width: 0px;
     drop-shadow-color: Colors.black.with-alpha(0.45);
     drop-shadow-blur: 16px;
     drop-shadow-offset-y: 4px;
     opacity: root.is-visible ? 1.0 : 0.0;
-    y: root.is-visible ? 14px : -60px;
+    y: root.is-visible ? 16px : -60px;
 
     animate opacity { duration: 250ms; easing: ease-out; }
     animate y { duration: 300ms; easing: ease-out; }
 
     HorizontalLayout {
-        padding-left: 18px;
-        padding-right: 18px;
-        spacing: 10px;
+        padding-left: 20px;
+        padding-right: 20px;
+        spacing: 12px;
         alignment: center;
 
-        Text {
+        if root.icon-name != "": M3Icon {
+            name: root.icon-name;
+            icon-size: 18px;
+            icon-color: Theme.primary;
+            y: (parent.height - self.height) / 2;
+        }
+
+        if root.icon-name == "" && root.icon-text != "": Text {
             text: root.icon-text;
             font-size: 16px;
             vertical-alignment: center;
@@ -1303,9 +1756,9 @@ export component M3Toast inherits Rectangle {
 
         Text {
             text: root.message;
-            font-size: M3Theme.font-label-large;
+            font-size: Theme.font-label-large;
             font-weight: 600;
-            color: M3Theme.on-surface;
+            color: Theme.on-surface;
             vertical-alignment: center;
             overflow: elide;
         }
@@ -1313,31 +1766,39 @@ export component M3Toast inherits Rectangle {
 }
 
 // =============================================================================
-// M3InputField: Campo de texto con estilo Material Design 3
+// M3InputField: Campo de texto con estilo M3 Expressive
 // =============================================================================
 export component M3InputField inherits Rectangle {
     in-out property <string> text <=> input.text;
     in-out property <string> placeholder: "";
-    in-out property <string> icon-text: "⌨️";
+    in-out property <string> icon-name: "keyboard";
+    in-out property <string> icon-text: "";
     in-out property <bool> enabled: true;
     callback accepted(string);
     callback edited(string);
 
-    height: 38px;
-    border-radius: M3Theme.corner-small;
-    background: M3Theme.surface-container-high;
-    border-width: input.has-focus ? 1.5px : 1px;
-    border-color: input.has-focus ? M3Theme.primary : M3Theme.outline-variant.with-alpha(0.5);
+    height: 42px;
+    border-radius: Theme.radius-sm;
+    background: Theme.surface-container-high;
+    border-width: input.has-focus ? 1.5px : 0px;
+    border-color: input.has-focus ? Theme.primary : Colors.transparent;
 
     animate border-color { duration: 150ms; }
 
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 8px;
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 10px;
         alignment: center;
 
-        Text {
+        if root.icon-name != "": M3Icon {
+            name: root.icon-name;
+            icon-size: 16px;
+            icon-color: Theme.on-surface-variant;
+            y: (parent.height - self.height) / 2;
+        }
+
+        if root.icon-name == "" && root.icon-text != "": Text {
             text: root.icon-text;
             font-size: 14px;
             vertical-alignment: center;
@@ -1346,8 +1807,8 @@ export component M3InputField inherits Rectangle {
 
         input := TextInput {
             horizontal-stretch: 1;
-            font-size: M3Theme.font-body-medium;
-            color: M3Theme.on-surface;
+            font-size: Theme.font-body-medium;
+            color: Theme.on-surface;
             vertical-alignment: center;
             single-line: true;
             enabled: root.enabled;
@@ -1356,5 +1817,3 @@ export component M3InputField inherits Rectangle {
         }
     }
 }
-
-

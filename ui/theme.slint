@@ -1,68 +1,70 @@
 // Material Design 3 (M3 Expressive) Theme Tokens for sane-rec
+// Google Pixel UI - Android 15/16 Material You Expressive Dark Theme
 
-export global M3Theme {
-    // -------------------------------------------------------------------------
-    // M3 Dark Color Palette
-    // -------------------------------------------------------------------------
-    out property <color> surface: #141218;
-    out property <color> surface-container: #211f26;
-    out property <color> surface-container-high: #2b2930;
-    out property <color> surface-container-highest: #36343b;
+export global Theme {
+    // Superficies (Elevación tonal en lugar de bordes)
+    out property <color> surface: #141218;                  // Fondo principal de la ventana y Navigation Rail
+    out property <color> surface-dim: #141218;
+    out property <color> surface-container-lowest: #0F0D13;
+    out property <color> surface-container-low: #1D1B20;    // Tarjetas de sección grandes
+    out property <color> surface-container: #211F26;        // Tarjetas estándar (Métricas, filas de lista)
+    out property <color> surface-container-high: #2B2930;   // Contenedores interactivos / Hover
+    out property <color> surface-container-highest: #36343B;// Sliders inactivos, badges secundarios
 
-    out property <color> on-surface: #e6e0e9;
-    out property <color> on-surface-variant: #cac4d0;
-    out property <color> outline: #938f99;
-    out property <color> outline-variant: #49454f;
+    // Primarios (Acentos principales, switches, sliders activos, CTA)
+    out property <color> primary: #D0BCFF;
+    out property <color> on-primary: #381E72;
+    out property <color> primary-container: #4F378B;
+    out property <color> on-primary-container: #EADDFF;
 
-    // Primary
-    out property <color> primary: #d0bcff;
-    out property <color> on-primary: #381e72;
-    out property <color> primary-container: #4f378b;
-    out property <color> on-primary-container: #eaddff;
+    // Secundarios (Navigation Rail pill activa, botones tonales)
+    out property <color> secondary: #CCC2DC;
+    out property <color> on-secondary: #332D41;
+    out property <color> secondary-container: #4A4458;
+    out property <color> on-secondary-container: #E8DEF8;
 
-    // Secondary
-    out property <color> secondary: #ccc2dc;
-    out property <color> on-secondary: #332d41;
-    out property <color> secondary-container: #4a4458;
-    out property <color> on-secondary-container: #e8def8;
+    // Terciarios / Estados (Indicadores de búfer activo, alertas suaves)
+    out property <color> tertiary: #EFB8C8;
+    out property <color> on-tertiary: #492532;
+    out property <color> tertiary-container: #633B48;
+    out property <color> on-tertiary-container: #FFD8E4;
 
-    // Functional status
-    out property <color> error: #f2b8b5;
+    // Error / Peligro (Advertencias de hardware como RX 570 / Grabación activa)
+    out property <color> error: #F2B8B5;
     out property <color> on-error: #601410;
-    out property <color> error-container: #8c1d18;
-    out property <color> on-error-container: #f9dedc;
+    out property <color> error-container: #8C1D18;
+    out property <color> on-error-container: #F9DEDC;
 
-    out property <color> success: #a6d388;
+    // Textos y Bordes
+    out property <color> on-surface: #E6E0E9;               // Texto principal
+    out property <color> on-surface-variant: #CAC4D0;       // Subtítulos y descripciones
+    out property <color> outline: #938F99;                  // Solo para Outlined Buttons
+    out property <color> outline-variant: #49454F;          // Divisores sutiles
+
+    // Radios de esquina (M3 Expressive)
+    out property <length> radius-xs: 8px;
+    out property <length> radius-sm: 12px;
+    out property <length> radius-md: 16px;
+    out property <length> radius-lg: 20px;
+    out property <length> radius-xl: 28px;
+    out property <length> radius-full: 999px;
+
+    // Estados funcionales armónicos M3
+    out property <color> success: #A8DAB5;
     out property <color> on-success: #133800;
     out property <color> success-container: #295111;
-    out property <color> on-success-container: #c2ef9f;
+    out property <color> on-success-container: #C2EF9F;
 
-    // -------------------------------------------------------------------------
-    // M3 Corner Radii
-    // -------------------------------------------------------------------------
-    out property <length> corner-small: 8px;
-    out property <length> corner-medium: 12px;
-    out property <length> corner-large: 16px;
-    out property <length> corner-full: 9999px;
+    out property <color> warning: #FDD663;
+    out property <color> on-warning: #3E2E00;
+    out property <color> warning-container: #5C4300;
+    out property <color> on-warning-container: #FFE082;
 
-    // -------------------------------------------------------------------------
-    // Spacing Scale
-    // -------------------------------------------------------------------------
-    out property <length> space-xs: 4px;
-    out property <length> space-sm: 8px;
-    out property <length> space-md: 12px;
-    out property <length> space-lg: 16px;
-    out property <length> space-xl: 20px;
-    out property <length> space-xxl: 24px;
-    out property <length> space-xxxl: 32px;
+    // Tipografía
+    out property <string> font-family: "Roboto, Inter, system-ui, sans-serif";
 
-    // -------------------------------------------------------------------------
-    // Typography Scale
-    // -------------------------------------------------------------------------
-    out property <string> font-family: "Inter, Roboto, sans-serif";
-
-    out property <length> font-headline: 24px;
-    out property <length> font-title-large: 20px;
+    out property <length> font-headline: 28px;
+    out property <length> font-title-large: 22px;
     out property <length> font-title-medium: 16px;
     out property <length> font-title-small: 14px;
     out property <length> font-body-large: 15px;
@@ -71,4 +73,20 @@ export global M3Theme {
     out property <length> font-label-large: 14px;
     out property <length> font-label-medium: 12px;
     out property <length> font-label-small: 10px;
+
+    // Aliases para máxima compatibilidad con código existente
+    out property <length> corner-small: radius-xs;
+    out property <length> corner-medium: radius-sm;
+    out property <length> corner-large: radius-md;
+    out property <length> corner-full: radius-full;
+
+    out property <length> space-xs: 4px;
+    out property <length> space-sm: 8px;
+    out property <length> space-md: 12px;
+    out property <length> space-lg: 16px;
+    out property <length> space-xl: 20px;
+    out property <length> space-xxl: 24px;
+    out property <length> space-xxxl: 32px;
 }
+
+export { Theme as M3Theme }

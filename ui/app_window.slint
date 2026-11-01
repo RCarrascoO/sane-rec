@@ -1,13 +1,20 @@
-// sane-rec: Material Design 3 (M3 Expressive) Main Window with Navigation Rail
-import { M3Theme } from "theme.slint";
+// sane-rec: Material Design 3 (Google Pixel UI - Android 15/16 Material You Expressive)
+// Main Window with Navigation Rail and Tonal Elevation (Zero Outer Borders)
+import { Theme, M3Theme } from "theme.slint";
 import {
+    M3Icon,
     M3Card,
     M3Button,
+    M3FilledButton,
+    M3TonalButton,
+    M3OutlinedButton,
     M3Switch,
     M3StatusChip,
     M3ProfileTile,
+    M3RadioCard,
     M3SegmentItem,
     M3PresetChip,
+    M3Chip,
     M3NavItem,
     M3NavigationRail,
     M3MetricTile,
@@ -15,10 +22,11 @@ import {
     M3DropdownCard,
     M3ClipCard,
     M3VuMeter,
+    M3Slider,
     M3Toast,
     M3InputField
 } from "components.slint";
-import { ScrollView, Slider } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 
 export struct ClipEntry {
     filename: string,
@@ -26,6 +34,7 @@ export struct ClipEntry {
     date-text: string,
     duration-text: string,
     filepath: string,
+    is-discord: bool,
 }
 
 export struct OutputEntry {
@@ -51,12 +60,13 @@ export struct AudioDeviceEntry {
 
 export component AppWindow inherits Window {
     title: "sane-rec — Instant Replay & Screen Recorder";
+    icon: @image-url("../assets/sane-rec.png");
     min-width: 480px;
-    preferred-width: 1000px;
+    preferred-width: 1020px;
     min-height: 540px;
     preferred-height: 740px;
-    background: M3Theme.surface;
-    default-font-family: M3Theme.font-family;
+    background: Theme.surface;
+    default-font-family: Theme.font-family;
 
     // -------------------------------------------------------------------------
     // Callbacks públicos para integración con Rust
@@ -92,11 +102,14 @@ export component AppWindow inherits Window {
     callback import-hardware-profile();
     callback refresh-hardware-profiles();
     callback trigger-update();
+    callback toggle-dual-clip(bool);
+    callback set-discord-target-mb(int);
+    callback compress-clip-for-discord(string);
 
     // -------------------------------------------------------------------------
     // Propiedades públicas para bindings con Rust
     // -------------------------------------------------------------------------
-    in-out property <int> active-view: 0; // 0: Dashboard, 1: Fuentes, 2: Audio, 3: Ajustes, 4: Galería
+    in-out property <int> active-view: 0; // 0: Panel, 1: Fuentes, 2: Audio, 3: Ajustes, 4: Galería
 
     in-out property <string> active-profile: "sane-safe";
     in-out property <bool> is-running: false;
@@ -106,6 +119,8 @@ export component AppWindow inherits Window {
     in-out property <string> output-path: "/mnt/Files/Videos/Replays";
     in-out property <int> replay-duration: 30;
     in-out property <string> selected-format: "mp4";
+    in-out property <bool> dual-clip: false;
+    in-out property <int> discord-target-mb: 10;
 
     // Auto-actualizador
     in-out property <bool> has-update: false;
@@ -152,7 +167,7 @@ export component AppWindow inherits Window {
 
     // Notificaciones Toast flotantes en la app
     in-out property <string> toast-message: "";
-    in-out property <string> toast-icon: "🎬";
+    in-out property <string> toast-icon: "info";
     in-out property <bool> toast-visible: false;
 
     // Estado desplegable interno para dropdowns
@@ -189,7 +204,8 @@ export component AppWindow inherits Window {
     ];
 
     // =========================================================================
-    // 1. Navigation Rail Lateral Izquierdo (Responsivo: 64px si < 720px, 180px si >= 720px)
+    // 1. Navigation Rail Lateral Izquierdo (M3 Expressive)
+    // Sin línea divisoria con el contenido, descansando en Theme.surface
     // =========================================================================
     rail := M3NavigationRail {
         x: 0px;
@@ -207,7 +223,8 @@ export component AppWindow inherits Window {
         y: 0px;
         width: parent.width - rail.width;
         height: parent.height;
-        background: M3Theme.surface;
+        background: Theme.surface;
+        border-width: 0px;
         clip: true;
 
         ScrollView {
@@ -219,38 +236,38 @@ export component AppWindow inherits Window {
                 alignment: center;
                 padding-left: root.width < 820px ? 12px : 24px;
                 padding-right: root.width < 820px ? 12px : 24px;
-                padding-top: root.height < 800px ? 12px : M3Theme.space-xl;
-                padding-bottom: M3Theme.space-xxl;
+                padding-top: root.height < 800px ? 14px : 20px;
+                padding-bottom: 24px;
 
                 VerticalLayout {
                     width: Math.min(root.width - rail.width - (root.width < 820px ? 24px : 48px), 1020px);
-                    spacing: root.height < 800px ? 14px : 20px;
+                    spacing: root.height < 800px ? 16px : 20px;
 
-                    // Banner flotante de auto-actualización disponible
+                    // Banner flotante de auto-actualización disponible (Tonal, cero bordes)
                     if root.has-update: Rectangle {
-                        height: 44px;
-                        border-radius: M3Theme.corner-medium;
-                        background: M3Theme.primary-container;
-                        border-width: 1px;
-                        border-color: M3Theme.primary.with-alpha(0.6);
+                        height: 48px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.primary-container;
+                        border-width: 0px;
 
                         HorizontalLayout {
                             padding-left: 16px;
-                            padding-right: 12px;
+                            padding-right: 14px;
                             alignment: space-between;
 
                             HorizontalLayout {
                                 spacing: 10px;
-                                Text {
-                                    text: "🚀";
-                                    font-size: 16px;
-                                    vertical-alignment: center;
+                                M3Icon {
+                                    name: "rocket";
+                                    icon-size: 18px;
+                                    icon-color: Theme.on-primary-container;
+                                    y: (parent.height - self.height) / 2;
                                 }
                                 Text {
-                                    text: "¡Nueva versión disponible: " + root.update-version + "!";
-                                    font-size: M3Theme.font-body-medium;
+                                    text: "Nueva versión disponible: " + root.update-version;
+                                    font-size: Theme.font-body-medium;
                                     font-weight: 700;
-                                    color: M3Theme.on-primary-container;
+                                    color: Theme.on-primary-container;
                                     vertical-alignment: center;
                                 }
                             }
@@ -260,7 +277,8 @@ export component AppWindow inherits Window {
                                 M3Button {
                                     text: root.is-updating ? "Actualizando..." : "Actualizar ahora";
                                     variant: "filled";
-                                    btn-height: 30px;
+                                    btn-height: 32px;
+                                    btn-padding-h: 14px;
                                     enabled: !root.is-updating;
                                     clicked => { root.trigger-update(); }
                                 }
@@ -269,33 +287,33 @@ export component AppWindow inherits Window {
                     }
 
                     // ---------------------------------------------------------
-                    // VISTA 0: DASHBOARD (Monitor en vivo)
+                    // VISTA 0: DASHBOARD (Panel de control)
                     // ---------------------------------------------------------
                     if root.active-view == 0: VerticalLayout {
                         spacing: 20px;
 
-                        // Header Dashboard
+                        // Header Dashboard (Sentence case)
                         HorizontalLayout {
                             alignment: space-between;
 
                             VerticalLayout {
                                 spacing: 2px;
                                 Text {
-                                    text: "PANEL DE CONTROL";
-                                    font-size: M3Theme.font-title-large;
-                                    font-weight: 800;
-                                    color: M3Theme.on-surface;
+                                    text: "Panel de control";
+                                    font-size: 28px;
+                                    font-weight: 600;
+                                    color: Theme.on-surface;
                                 }
                                 Text {
                                     text: "Monitor en vivo del búfer de repetición y estado del sistema";
-                                    font-size: M3Theme.font-body-small;
-                                    color: M3Theme.on-surface-variant;
+                                    font-size: 13px;
+                                    color: Theme.on-surface-variant;
                                 }
                             }
 
                             M3StatusChip {
                                 y: (parent.height - self.height) / 2;
-                                text: root.is-recording ? ("🔴 REC " + root.recording-time) :
+                                text: root.is-recording ? ("REC " + root.recording-time) :
                                       root.is-running ? (root.buffer-status == "Detenido" ? "Búfer Activo" : root.buffer-status) :
                                       "Detenido";
                                 status: root.is-recording ? "recording" :
@@ -303,13 +321,11 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Hero Card: Estado en vivo del Replay en RAM
+                        // Hero Card: Estado en vivo del Replay en RAM (Tonal Elevation, Cero bordes)
                         M3Card {
-                            card-background: M3Theme.surface-container-high;
-                            card-border-color: root.is-running ?
-                                M3Theme.primary.with-alpha(0.4) :
-                                M3Theme.outline-variant.with-alpha(0.25);
-                            card-border-width: 1.5px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
                                 spacing: 18px;
@@ -319,24 +335,26 @@ export component AppWindow inherits Window {
                                     alignment: space-between;
 
                                     HorizontalLayout {
-                                        spacing: 14px;
+                                        spacing: 16px;
                                         alignment: start;
 
-                                        // Icono circular
+                                        // Icono circular tonal
                                         Rectangle {
                                             width: 48px;
                                             height: 48px;
                                             border-radius: 24px;
                                             background: root.is-running ?
-                                                M3Theme.primary.with-alpha(0.18) :
-                                                M3Theme.surface-container-highest;
+                                                Theme.primary.with-alpha(0.2) :
+                                                Theme.surface-container-highest;
+                                            border-width: 0px;
                                             y: (parent.height - self.height) / 2;
 
-                                            Text {
+                                            M3Icon {
+                                                name: "memory";
+                                                icon-size: 24px;
+                                                icon-color: root.is-running ? Theme.primary : Theme.on-surface-variant;
                                                 x: (parent.width - self.width) / 2;
                                                 y: (parent.height - self.height) / 2;
-                                                text: "🧠";
-                                                font-size: 22px;
                                             }
                                         }
 
@@ -345,10 +363,10 @@ export component AppWindow inherits Window {
                                             spacing: 3px;
 
                                             Text {
-                                                text: "Búfer de Repetición en Memoria RAM";
-                                                font-size: M3Theme.font-label-medium;
+                                                text: "Búfer de repetición en memoria RAM";
+                                                font-size: Theme.font-label-medium;
                                                 font-weight: 600;
-                                                color: M3Theme.on-surface-variant;
+                                                color: Theme.on-surface-variant;
                                             }
 
                                             HorizontalLayout {
@@ -359,30 +377,31 @@ export component AppWindow inherits Window {
                                                     text: root.is-running ?
                                                         (root.replay-duration + "s / " + root.replay-duration + "s") :
                                                         ("0s / " + root.replay-duration + "s");
-                                                    font-size: 22px;
-                                                    font-weight: 800;
-                                                    color: root.is-running ? M3Theme.primary : M3Theme.on-surface;
+                                                    font-size: 24px;
+                                                    font-weight: 700;
+                                                    color: root.is-running ? Theme.primary : Theme.on-surface;
                                                 }
 
                                                 Rectangle {
                                                     height: 22px;
-                                                    border-radius: 11px;
+                                                    border-radius: Theme.radius-full;
+                                                    border-width: 0px;
                                                     background: root.is-running ?
-                                                        M3Theme.secondary-container :
-                                                        M3Theme.surface-container-highest;
+                                                        Theme.secondary-container :
+                                                        Theme.surface-container-highest;
                                                     y: (parent.height - self.height) / 2;
 
                                                     HorizontalLayout {
-                                                        padding-left: 8px;
-                                                        padding-right: 8px;
+                                                        padding-left: 10px;
+                                                        padding-right: 10px;
                                                         Text {
                                                             text: root.is-running ? (root.ram-usage + " / " + root.max-memory-mb + " MB") : (root.max-memory-mb + " MB máx");
-                                                            font-size: M3Theme.font-label-small;
+                                                            font-size: Theme.font-label-small;
                                                             font-weight: 700;
                                                             vertical-alignment: center;
                                                             color: root.is-running ?
-                                                                M3Theme.on-secondary-container :
-                                                                M3Theme.on-surface-variant;
+                                                                Theme.on-secondary-container :
+                                                                Theme.on-surface-variant;
                                                         }
                                                     }
                                                 }
@@ -392,15 +411,15 @@ export component AppWindow inherits Window {
 
                                     // Switch de activación del daemon
                                     HorizontalLayout {
-                                        spacing: 10px;
+                                        spacing: 12px;
                                         alignment: end;
 
                                         Text {
-                                            text: "Daemon Replay";
-                                            font-size: M3Theme.font-label-large;
+                                            text: "Daemon replay";
+                                            font-size: Theme.font-label-large;
                                             font-weight: 600;
                                             vertical-alignment: center;
-                                            color: root.is-running ? M3Theme.primary : M3Theme.on-surface-variant;
+                                            color: root.is-running ? Theme.primary : Theme.on-surface-variant;
                                         }
 
                                         M3Switch {
@@ -414,11 +433,12 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                // Barra de progreso visual del búfer
+                                // Barra de progreso visual del búfer (radius-full)
                                 Rectangle {
                                     height: 8px;
-                                    border-radius: 4px;
-                                    background: M3Theme.surface-container-highest;
+                                    border-radius: Theme.radius-full;
+                                    background: Theme.surface-container-highest;
+                                    border-width: 0px;
                                     clip: true;
 
                                     Rectangle {
@@ -426,21 +446,21 @@ export component AppWindow inherits Window {
                                         y: 0px;
                                         height: parent.height;
                                         width: root.is-running ? parent.width : 0px;
-                                        border-radius: 4px;
-                                        background: M3Theme.primary;
+                                        border-radius: Theme.radius-full;
+                                        background: Theme.primary;
 
                                         animate width { duration: 400ms; easing: ease-out; }
                                     }
                                 }
 
-                                // Botones grandes de acción rápida responsivos
+                                // Botones grandes de acción rápida responsivos (sin emojis)
                                 if root.width >= 720px: HorizontalLayout {
                                     spacing: 14px;
 
                                     M3Button {
                                         horizontal-stretch: 1;
-                                        text: "Guardar Replay (" + root.shortcut-save + ")";
-                                        icon-text: "💾";
+                                        text: "Guardar replay (" + root.shortcut-save + ")";
+                                        icon-name: "save";
                                         variant: "filled";
                                         btn-height: 48px;
                                         enabled: root.is-running;
@@ -451,8 +471,8 @@ export component AppWindow inherits Window {
 
                                     M3Button {
                                         horizontal-stretch: 1;
-                                        text: root.is-recording ? ("Detener REC " + root.recording-time + " (" + root.shortcut-record + ")") : ("Grabación Continua (" + root.shortcut-record + ")");
-                                        icon-text: root.is-recording ? "⏹" : "⏺";
+                                        text: root.is-recording ? ("Detener REC " + root.recording-time + " (" + root.shortcut-record + ")") : ("Grabación continua (" + root.shortcut-record + ")");
+                                        icon-name: root.is-recording ? "stop" : "record";
                                         variant: root.is-recording ? "filled" : "tonal";
                                         btn-height: 48px;
                                         clicked => {
@@ -466,8 +486,8 @@ export component AppWindow inherits Window {
                                     spacing: 10px;
 
                                     M3Button {
-                                        text: "Guardar Replay (" + root.shortcut-save + ")";
-                                        icon-text: "💾";
+                                        text: "Guardar replay (" + root.shortcut-save + ")";
+                                        icon-name: "save";
                                         variant: "filled";
                                         btn-height: 44px;
                                         enabled: root.is-running;
@@ -477,8 +497,8 @@ export component AppWindow inherits Window {
                                     }
 
                                     M3Button {
-                                        text: root.is-recording ? ("Detener REC " + root.recording-time + " (" + root.shortcut-record + ")") : ("Grabación Continua (" + root.shortcut-record + ")");
-                                        icon-text: root.is-recording ? "⏹" : "⏺";
+                                        text: root.is-recording ? ("Detener REC " + root.recording-time + " (" + root.shortcut-record + ")") : ("Grabación continua (" + root.shortcut-record + ")");
+                                        icon-name: root.is-recording ? "stop" : "record";
                                         variant: root.is-recording ? "filled" : "tonal";
                                         btn-height: 44px;
                                         clicked => {
@@ -490,31 +510,31 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Métricas del Sistema: 1 fila de 4 cuando ancho >= 820px, 2x2 cuando vertical / estrecho (< 820px)
+                        // Métricas del Sistema: Cero Bordes y Tonal Elevation
                         if root.width >= 820px: HorizontalLayout {
                             spacing: 12px;
                             height: 104px;
 
                             M3MetricTile {
                                 horizontal-stretch: 1;
-                                icon-text: "⚡";
+                                icon-name: "bolt";
                                 value: root.selected-fps + " FPS";
-                                label: "Tasa de Refresco";
+                                label: "Tasa de refresco";
                                 badge-text: "Fluido";
                                 highlight: true;
                             }
 
                             M3MetricTile {
                                 horizontal-stretch: 1;
-                                icon-text: "📺";
+                                icon-name: "desktop";
                                 value: root.selected-resolution;
-                                label: "Resolución Activa";
+                                label: "Resolución activa";
                                 badge-text: root.selected-screen;
                             }
 
                             M3MetricTile {
                                 horizontal-stretch: 1;
-                                icon-text: "⏱️";
+                                icon-name: "record";
                                 value: root.replay-duration + "s";
                                 label: "Búfer en RAM";
                                 badge-text: "Instantáneo";
@@ -522,9 +542,9 @@ export component AppWindow inherits Window {
 
                             M3MetricTile {
                                 horizontal-stretch: 1;
-                                icon-text: "🧠";
+                                icon-name: "memory";
                                 value: root.ram-usage;
-                                label: "Consumo RAM (Máx: " + root.max-memory-mb + " MB)";
+                                label: "Consumo RAM (máx: " + root.max-memory-mb + " MB)";
                                 badge-text: "dmabuf";
                             }
                         }
@@ -538,18 +558,18 @@ export component AppWindow inherits Window {
 
                                 M3MetricTile {
                                     horizontal-stretch: 1;
-                                    icon-text: "⚡";
+                                    icon-name: "bolt";
                                     value: root.selected-fps + " FPS";
-                                    label: "Tasa de Refresco";
+                                    label: "Tasa de refresco";
                                     badge-text: "Fluido";
                                     highlight: true;
                                 }
 
                                 M3MetricTile {
                                     horizontal-stretch: 1;
-                                    icon-text: "📺";
+                                    icon-name: "desktop";
                                     value: root.selected-resolution;
-                                    label: "Resolución Activa";
+                                    label: "Resolución activa";
                                     badge-text: root.selected-screen;
                                 }
                             }
@@ -560,7 +580,7 @@ export component AppWindow inherits Window {
 
                                 M3MetricTile {
                                     horizontal-stretch: 1;
-                                    icon-text: "⏱️";
+                                    icon-name: "record";
                                     value: root.replay-duration + "s";
                                     label: "Búfer en RAM";
                                     badge-text: "Instantáneo";
@@ -568,40 +588,43 @@ export component AppWindow inherits Window {
 
                                 M3MetricTile {
                                     horizontal-stretch: 1;
-                                    icon-text: "🧠";
+                                    icon-name: "memory";
                                     value: root.ram-usage;
-                                    label: "Consumo RAM (Máx: " + root.max-memory-mb + " MB)";
+                                    label: "Consumo RAM (máx: " + root.max-memory-mb + " MB)";
                                     badge-text: "dmabuf";
                                 }
                             }
                         }
 
-                        // Tarjeta con detalles de la Fuente Activa
+                        // Tarjeta con detalles de la Fuente Activa (Cero bordes)
                         M3Card {
-                            content-padding: 14px;
-                            card-background: M3Theme.surface-container;
-                            card-radius: M3Theme.corner-medium;
+                            content-padding: 16px;
+                            card-background: Theme.surface-container;
+                            card-radius: Theme.radius-lg;
+                            card-border-width: 0px;
 
                             HorizontalLayout {
                                 spacing: 14px;
                                 alignment: space-between;
 
                                 HorizontalLayout {
-                                    spacing: 12px;
+                                    spacing: 14px;
                                     alignment: start;
 
                                     Rectangle {
-                                        width: 36px;
-                                        height: 36px;
-                                        border-radius: 18px;
-                                        background: M3Theme.surface-container-high;
+                                        width: 40px;
+                                        height: 40px;
+                                        border-radius: 20px;
+                                        background: Theme.surface-container-high;
+                                        border-width: 0px;
                                         y: (parent.height - self.height) / 2;
 
-                                        Text {
+                                        M3Icon {
+                                            name: "desktop";
+                                            icon-size: 20px;
+                                            icon-color: Theme.primary;
                                             x: (parent.width - self.width) / 2;
                                             y: (parent.height - self.height) / 2;
-                                            text: "🖥️";
-                                            font-size: 16px;
                                         }
                                     }
 
@@ -610,24 +633,25 @@ export component AppWindow inherits Window {
                                         spacing: 2px;
 
                                         Text {
-                                            text: "Fuente Activa: " + root.selected-screen + " • " + root.selected-fps + " FPS • " + (root.active-profile == "sane-safe" ? "Sane Safe (CPU)" : "Hardware VA-API");
-                                            font-size: M3Theme.font-title-small;
+                                            text: "Fuente activa: " + root.selected-screen + " • " + root.selected-fps + " FPS • " + (root.active-profile == "sane-safe" ? "Sane Safe (CPU)" : "Hardware VA-API");
+                                            font-size: Theme.font-title-small;
                                             font-weight: 700;
-                                            color: M3Theme.on-surface;
+                                            color: Theme.on-surface;
                                         }
 
                                         Text {
                                             text: "Captura directa Wayland vía dmabuf/PipeWire sin sobrecarga de GPU Polaris.";
-                                            font-size: M3Theme.font-body-small;
-                                            color: M3Theme.on-surface-variant;
+                                            font-size: Theme.font-body-small;
+                                            color: Theme.on-surface-variant;
                                         }
                                     }
                                 }
 
                                 M3Button {
-                                    text: "Cambiar Fuente";
+                                    text: "Cambiar fuente";
                                     variant: "outlined";
                                     btn-height: 36px;
+                                    btn-padding-h: 16px;
                                     clicked => {
                                         root.active-view = 1;
                                     }
@@ -635,32 +659,33 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Sección de Clips Recientes en el Dashboard
+                        // Sección de Clips Recientes en el Dashboard (Sentence case, cero bordes)
                         M3Card {
-                            content-padding: 16px;
-                            card-background: M3Theme.surface-container;
-                            card-radius: M3Theme.corner-medium;
+                            content-padding: 18px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
-                                spacing: 12px;
+                                spacing: 14px;
 
                                 HorizontalLayout {
                                     alignment: space-between;
 
                                     Text {
-                                        text: "CLIPS RECIENTES (" + root.gallery-clips.length + ")";
-                                        font-size: M3Theme.font-label-large;
-                                        font-weight: 700;
-                                        color: M3Theme.primary;
+                                        text: "Clips recientes (" + root.gallery-clips.length + ")";
+                                        font-size: 15px;
+                                        font-weight: 600;
+                                        color: Theme.primary;
                                         vertical-alignment: center;
                                     }
 
                                     if root.gallery-clips.length > 0: M3Button {
-                                        text: "Ver todos en Galería";
-                                        icon-text: "📂";
+                                        text: "Ver todos en galería";
+                                        icon-name: "folder";
                                         variant: "tonal";
-                                        btn-height: 32px;
-                                        btn-padding-h: 12px;
+                                        btn-height: 34px;
+                                        btn-padding-h: 14px;
                                         clicked => {
                                             root.active-view = 4;
                                         }
@@ -668,21 +693,23 @@ export component AppWindow inherits Window {
                                 }
 
                                 if root.gallery-clips.length == 0: HorizontalLayout {
-                                    spacing: 12px;
+                                    spacing: 14px;
                                     alignment: start;
 
                                     Rectangle {
-                                        width: 36px;
-                                        height: 36px;
-                                        border-radius: 18px;
-                                        background: M3Theme.surface-container-high;
+                                        width: 40px;
+                                        height: 40px;
+                                        border-radius: 20px;
+                                        background: Theme.surface-container-high;
+                                        border-width: 0px;
                                         y: (parent.height - self.height) / 2;
 
-                                        Text {
+                                        M3Icon {
+                                            name: "folder";
+                                            icon-size: 20px;
+                                            icon-color: Theme.on-surface-variant;
                                             x: (parent.width - self.width) / 2;
                                             y: (parent.height - self.height) / 2;
-                                            text: "📂";
-                                            font-size: 16px;
                                         }
                                     }
 
@@ -692,15 +719,15 @@ export component AppWindow inherits Window {
 
                                         Text {
                                             text: "Sin clips guardados en esta sesión";
-                                            font-size: M3Theme.font-title-small;
+                                            font-size: Theme.font-title-small;
                                             font-weight: 700;
-                                            color: M3Theme.on-surface-variant;
+                                            color: Theme.on-surface-variant;
                                         }
 
                                         Text {
                                             text: "Presiona " + root.shortcut-save + " o el botón superior para capturar los últimos " + root.replay-duration + " segundos.";
-                                            font-size: M3Theme.font-body-small;
-                                            color: M3Theme.on-surface-variant;
+                                            font-size: Theme.font-body-small;
+                                            color: Theme.on-surface-variant;
                                         }
                                     }
                                 }
@@ -711,6 +738,7 @@ export component AppWindow inherits Window {
                                     date-text: clip.date-text;
                                     duration-text: clip.duration-text;
                                     filepath: clip.filepath;
+                                    is-discord: clip.is-discord;
 
                                     play-clicked(path) => {
                                         root.play-clip(path);
@@ -719,13 +747,17 @@ export component AppWindow inherits Window {
                                     folder-clicked(path) => {
                                         root.open-clip-folder(path);
                                     }
+
+                                    compress-clicked(path) => {
+                                        root.compress-clip-for-discord(path);
+                                    }
                                 }
                             }
                         }
                     }
 
                     // ---------------------------------------------------------
-                    // VISTA 1: FUENTES DE VIDEO
+                    // VISTA 1: FUENTES DE VIDEO (Sentence case)
                     // ---------------------------------------------------------
                     if root.active-view == 1: VerticalLayout {
                         spacing: 20px;
@@ -734,61 +766,65 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             spacing: 2px;
                             Text {
-                                text: "FUENTES DE VIDEO";
-                                font-size: M3Theme.font-title-large;
-                                font-weight: 800;
-                                color: M3Theme.on-surface;
+                                text: "Fuentes de video";
+                                font-size: 28px;
+                                font-weight: 600;
+                                color: Theme.on-surface;
                             }
                             Text {
                                 text: "Selecciona el origen de captura para el búfer y grabaciones";
-                                font-size: M3Theme.font-body-small;
-                                color: M3Theme.on-surface-variant;
+                                font-size: 13px;
+                                color: Theme.on-surface-variant;
                             }
                         }
 
-                        // Selector de Modo de Captura (Píldoras M3)
+                        // Selector de Modo de Captura (Segmented Buttons M3, Cero Bordes)
                         M3Card {
                             content-padding: 16px;
-                            card-background: M3Theme.surface-container;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
                                 spacing: 12px;
 
                                 Text {
-                                    text: "TIPO DE CAPTURA";
-                                    font-size: M3Theme.font-label-large;
-                                    font-weight: 700;
-                                    color: M3Theme.primary;
+                                    text: "Tipo de captura";
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    color: Theme.primary;
                                 }
 
                                 Rectangle {
-                                    height: 42px;
-                                    border-radius: M3Theme.corner-small;
-                                    background: M3Theme.surface-container-high;
-                                    border-width: 1px;
-                                    border-color: M3Theme.outline-variant.with-alpha(0.5);
+                                    height: 44px;
+                                    border-radius: Theme.radius-full;
+                                    background: Theme.surface-container-high;
+                                    border-width: 0px;
 
                                     HorizontalLayout {
-                                        padding: 3px;
+                                        padding: 4px;
                                         spacing: 4px;
 
                                         M3SegmentItem {
                                             horizontal-stretch: 1;
-                                            text: "🖥️ Monitor Completo";
+                                            icon-name: "desktop";
+                                            text: "Monitor completo";
                                             is-selected: root.capture-mode == 0;
                                             clicked => { root.capture-mode = 0; }
                                         }
 
                                         M3SegmentItem {
                                             horizontal-stretch: 1;
-                                            text: "🪟 Ventana / Juego";
+                                            icon-name: "window";
+                                            text: "Ventana / juego";
                                             is-selected: root.capture-mode == 1;
                                             clicked => { root.capture-mode = 1; }
                                         }
 
                                         M3SegmentItem {
                                             horizontal-stretch: 1;
-                                            text: "🎯 Área (Slurp)";
+                                            icon-name: "slurp";
+                                            text: "Área (slurp)";
                                             is-selected: root.capture-mode == 2;
                                             clicked => { root.capture-mode = 2; }
                                         }
@@ -802,10 +838,10 @@ export component AppWindow inherits Window {
                             spacing: 12px;
 
                             Text {
-                                text: "MONITORES DETECTADOS (WAYLAND)";
-                                font-size: M3Theme.font-label-large;
-                                font-weight: 700;
-                                color: M3Theme.primary;
+                                text: "Monitores detectados (Wayland)";
+                                font-size: 15px;
+                                font-weight: 600;
+                                color: Theme.primary;
                             }
 
                             for item in root.available-screens: M3OptionItem {
@@ -827,19 +863,19 @@ export component AppWindow inherits Window {
                                 alignment: space-between;
 
                                 Text {
-                                    text: "VENTANAS ACTIVAS DETECTADAS";
-                                    font-size: M3Theme.font-label-large;
-                                    font-weight: 700;
-                                    color: M3Theme.primary;
+                                    text: "Ventanas activas detectadas";
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    color: Theme.primary;
                                     vertical-alignment: center;
                                 }
 
                                 M3Button {
                                     text: "Refrescar";
-                                    icon-text: "🔄";
+                                    icon-name: "refresh";
                                     variant: "tonal";
                                     btn-height: 34px;
-                                    btn-padding-h: 12px;
+                                    btn-padding-h: 14px;
                                     clicked => {
                                         root.refresh-windows();
                                     }
@@ -859,47 +895,53 @@ export component AppWindow inherits Window {
                         }
 
                         if root.capture-mode == 2: M3Card {
-                            content-padding: 20px;
-                            card-background: M3Theme.surface-container;
+                            content-padding: 24px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
                                 spacing: 14px;
                                 alignment: center;
 
                                 Rectangle {
-                                    width: 52px;
-                                    height: 52px;
-                                    border-radius: 26px;
-                                    background: M3Theme.primary-container;
-                                    Text {
+                                    width: 56px;
+                                    height: 56px;
+                                    border-radius: 28px;
+                                    background: Theme.primary-container;
+                                    border-width: 0px;
+
+                                    M3Icon {
+                                        name: "slurp";
+                                        icon-size: 26px;
+                                        icon-color: Theme.on-primary-container;
                                         x: (parent.width - self.width) / 2;
                                         y: (parent.height - self.height) / 2;
-                                        text: "🎯";
-                                        font-size: 24px;
                                     }
                                 }
 
                                 Text {
-                                    text: "Selección Interactiva con Slurp";
-                                    font-size: M3Theme.font-title-medium;
+                                    text: "Selección interactiva con Slurp";
+                                    font-size: Theme.font-title-medium;
                                     font-weight: 700;
-                                    color: M3Theme.on-surface;
+                                    color: Theme.on-surface;
                                     horizontal-alignment: center;
                                 }
 
                                 Text {
                                     text: "Haz clic en el botón para activar la herramienta slurp en Wayland. Podrás trazar un rectángulo en pantalla con el ratón o hacer clic sobre una ventana para capturar solo esa región exacta.";
-                                    font-size: M3Theme.font-body-small;
-                                    color: M3Theme.on-surface-variant;
+                                    font-size: Theme.font-body-small;
+                                    color: Theme.on-surface-variant;
                                     horizontal-alignment: center;
                                     wrap: word-wrap;
                                 }
 
                                 M3Button {
-                                    text: "Seleccionar ventana o área con Slurp";
-                                    icon-text: "🎯";
+                                    text: "Seleccionar ventana o área con slurp";
+                                    icon-name: "slurp";
                                     variant: "filled";
                                     btn-height: 44px;
+                                    btn-padding-h: 24px;
                                     clicked => {
                                         root.select-area-slurp();
                                     }
@@ -907,41 +949,42 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Parámetros de FPS y Resolución
+                        // Parámetros de FPS y Resolución (Cero bordes)
                         M3Card {
-                            content-padding: 16px;
-                            card-background: M3Theme.surface-container;
+                            content-padding: 18px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
-                                spacing: 16px;
+                                spacing: 18px;
 
                                 Text {
-                                    text: "PARÁMETROS DE VIDEO";
-                                    font-size: M3Theme.font-label-large;
-                                    font-weight: 700;
-                                    color: M3Theme.primary;
+                                    text: "Parámetros de video";
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    color: Theme.primary;
                                 }
 
                                 // Tasa de FPS
                                 VerticalLayout {
                                     spacing: 8px;
                                     Text {
-                                        text: "Tasa de Refresco (FPS)";
-                                        font-size: M3Theme.font-body-medium;
+                                        text: "Tasa de refresco (FPS)";
+                                        font-size: Theme.font-body-medium;
                                         font-weight: 600;
-                                        color: M3Theme.on-surface;
+                                        color: Theme.on-surface;
                                     }
 
                                     Rectangle {
-                                        height: 38px;
-                                        border-radius: M3Theme.corner-small;
-                                        background: M3Theme.surface-container-high;
-                                        border-width: 1px;
-                                        border-color: M3Theme.outline-variant.with-alpha(0.5);
+                                        height: 42px;
+                                        border-radius: Theme.radius-full;
+                                        background: Theme.surface-container-high;
+                                        border-width: 0px;
 
                                         HorizontalLayout {
-                                            padding: 3px;
-                                            spacing: 3px;
+                                            padding: 4px;
+                                            spacing: 4px;
 
                                             M3SegmentItem {
                                                 horizontal-stretch: 1;
@@ -968,33 +1011,32 @@ export component AppWindow inherits Window {
                                         alignment: space-between;
 
                                         Text {
-                                            text: "Resolución de Captura";
-                                            font-size: M3Theme.font-body-medium;
+                                            text: "Resolución de captura";
+                                            font-size: Theme.font-body-medium;
                                             font-weight: 600;
-                                            color: M3Theme.on-surface;
+                                            color: Theme.on-surface;
                                         }
 
                                         Text {
                                             text: "Activa: " + root.selected-resolution;
-                                            font-size: M3Theme.font-label-small;
+                                            font-size: Theme.font-label-small;
                                             font-weight: 700;
-                                            color: M3Theme.primary;
+                                            color: Theme.primary;
                                         }
                                     }
 
                                     VerticalLayout {
-                                        spacing: 6px;
+                                        spacing: 8px;
 
                                         // Fila 1: Nativa y 1080p FHD
                                         Rectangle {
-                                            height: 38px;
-                                            border-radius: M3Theme.corner-small;
-                                            background: M3Theme.surface-container-high;
-                                            border-width: 1px;
-                                            border-color: M3Theme.outline-variant.with-alpha(0.5);
+                                            height: 42px;
+                                            border-radius: Theme.radius-full;
+                                            background: Theme.surface-container-high;
+                                            border-width: 0px;
 
                                             HorizontalLayout {
-                                                padding: 3px;
+                                                padding: 4px;
                                                 spacing: 4px;
 
                                                 M3SegmentItem {
@@ -1021,14 +1063,13 @@ export component AppWindow inherits Window {
 
                                         // Fila 2: 720p HD y 1440p 2K
                                         Rectangle {
-                                            height: 38px;
-                                            border-radius: M3Theme.corner-small;
-                                            background: M3Theme.surface-container-high;
-                                            border-width: 1px;
-                                            border-color: M3Theme.outline-variant.with-alpha(0.5);
+                                            height: 42px;
+                                            border-radius: Theme.radius-full;
+                                            background: Theme.surface-container-high;
+                                            border-width: 0px;
 
                                             HorizontalLayout {
-                                                padding: 3px;
+                                                padding: 4px;
                                                 spacing: 4px;
 
                                                 M3SegmentItem {
@@ -1055,14 +1096,13 @@ export component AppWindow inherits Window {
 
                                         // Fila 3: 4K UHD y 540p SD
                                         Rectangle {
-                                            height: 38px;
-                                            border-radius: M3Theme.corner-small;
-                                            background: M3Theme.surface-container-high;
-                                            border-width: 1px;
-                                            border-color: M3Theme.outline-variant.with-alpha(0.5);
+                                            height: 42px;
+                                            border-radius: Theme.radius-full;
+                                            background: Theme.surface-container-high;
+                                            border-width: 0px;
 
                                             HorizontalLayout {
-                                                padding: 3px;
+                                                padding: 4px;
                                                 spacing: 4px;
 
                                                 M3SegmentItem {
@@ -1093,7 +1133,7 @@ export component AppWindow inherits Window {
                     }
 
                     // ---------------------------------------------------------
-                    // VISTA 2: MEZCLADOR DE AUDIO
+                    // VISTA 2: MEZCLADOR DE AUDIO (Sentence case, sliders M3)
                     // ---------------------------------------------------------
                     if root.active-view == 2: VerticalLayout {
                         spacing: 20px;
@@ -1102,23 +1142,23 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             spacing: 2px;
                             Text {
-                                text: "MEZCLADOR DE AUDIO";
-                                font-size: M3Theme.font-title-large;
-                                font-weight: 800;
-                                color: M3Theme.on-surface;
+                                text: "Mezclador de audio";
+                                font-size: 28px;
+                                font-weight: 600;
+                                color: Theme.on-surface;
                             }
                             Text {
                                 text: "Configuración de canales de audio del sistema y micrófonos en PipeWire";
-                                font-size: M3Theme.font-body-small;
-                                color: M3Theme.on-surface-variant;
+                                font-size: 13px;
+                                color: Theme.on-surface-variant;
                             }
                         }
 
                         // Dispositivo de Audio del Sistema (Sink)
                         M3DropdownCard {
-                            title: "Dispositivo de Audio del Sistema / Juego";
+                            title: "Dispositivo de audio del sistema / juego";
                             description: "Captura el audio estéreo reproducido por tus juegos y aplicaciones";
-                            icon-text: "🔊";
+                            icon-name: "speaker";
                             current-value: root.audio-sink;
                             is-open: root.sink-dropdown-open;
                             toggled => {
@@ -1139,9 +1179,9 @@ export component AppWindow inherits Window {
 
                         // Dispositivo de Micrófono (Source)
                         M3DropdownCard {
-                            title: "Entrada de Micrófono";
+                            title: "Entrada de micrófono";
                             description: "Captura tu voz con cancelación de eco en tiempo real";
-                            icon-text: "🎙️";
+                            icon-name: "mic";
                             current-value: root.audio-mic-source;
                             is-open: root.mic-dropdown-open;
                             toggled => {
@@ -1161,19 +1201,21 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Selector de Modo de Pistas de Audio
+                        // Selector de Modo de Pistas de Audio (Cero bordes, tonal selection)
                         M3Card {
-                            content-padding: 16px;
-                            card-background: M3Theme.surface-container;
+                            content-padding: 18px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
                                 spacing: 14px;
 
                                 Text {
-                                    text: "MODO DE PISTAS EN EL ARCHIVO";
-                                    font-size: M3Theme.font-label-large;
-                                    font-weight: 700;
-                                    color: M3Theme.primary;
+                                    text: "Modo de pistas en el archivo";
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    color: Theme.primary;
                                 }
 
                                 HorizontalLayout {
@@ -1182,45 +1224,43 @@ export component AppWindow inherits Window {
                                     // Opción A: Pista combinada
                                     Rectangle {
                                         horizontal-stretch: 1;
-                                        border-radius: M3Theme.corner-medium;
+                                        border-radius: Theme.radius-lg;
+                                        border-width: 0px;
                                         background: root.audio-track-mode == 0 ?
-                                            M3Theme.primary-container :
-                                            M3Theme.surface-container-high;
-                                        border-width: root.audio-track-mode == 0 ? 1.5px : 1px;
-                                        border-color: root.audio-track-mode == 0 ?
-                                            M3Theme.primary :
-                                            M3Theme.outline-variant.with-alpha(0.4);
+                                            Theme.secondary-container :
+                                            Theme.surface-container-high;
 
                                         TouchArea {
                                             mouse-cursor: pointer;
                                             clicked => { root.audio-track-mode = 0; }
 
                                             VerticalLayout {
-                                                padding: 14px;
+                                                padding: 16px;
                                                 spacing: 6px;
 
                                                 HorizontalLayout {
                                                     alignment: space-between;
                                                     Text {
                                                         text: "Pista única combinada";
-                                                        font-size: M3Theme.font-title-small;
+                                                        font-size: Theme.font-title-small;
                                                         font-weight: 700;
                                                         color: root.audio-track-mode == 0 ?
-                                                            M3Theme.on-primary-container :
-                                                            M3Theme.on-surface;
+                                                            Theme.on-secondary-container :
+                                                            Theme.on-surface;
                                                     }
                                                     Rectangle {
                                                         height: 20px;
-                                                        border-radius: 10px;
-                                                        background: root.audio-track-mode == 0 ? M3Theme.primary : M3Theme.secondary-container;
+                                                        border-radius: Theme.radius-full;
+                                                        border-width: 0px;
+                                                        background: root.audio-track-mode == 0 ? Theme.primary : Theme.surface-container-highest;
                                                         HorizontalLayout {
-                                                            padding-left: 6px;
-                                                            padding-right: 6px;
+                                                            padding-left: 8px;
+                                                            padding-right: 8px;
                                                             Text {
                                                                 text: "Discord";
                                                                 font-size: 10px;
                                                                 font-weight: 700;
-                                                                color: root.audio-track-mode == 0 ? M3Theme.on-primary : M3Theme.on-secondary-container;
+                                                                color: root.audio-track-mode == 0 ? Theme.on-primary : Theme.on-surface-variant;
                                                                 vertical-alignment: center;
                                                             }
                                                         }
@@ -1229,10 +1269,10 @@ export component AppWindow inherits Window {
 
                                                 Text {
                                                     text: "Juego y micrófono mezclados en un solo canal estéreo. Ideal para compartir directamente en Discord o redes sin configuración extra.";
-                                                    font-size: M3Theme.font-body-small;
+                                                    font-size: Theme.font-body-small;
                                                     color: root.audio-track-mode == 0 ?
-                                                        M3Theme.on-primary-container.with-alpha(0.8) :
-                                                        M3Theme.on-surface-variant;
+                                                        Theme.on-secondary-container.with-alpha(0.85) :
+                                                        Theme.on-surface-variant;
                                                     wrap: word-wrap;
                                                 }
                                             }
@@ -1242,45 +1282,43 @@ export component AppWindow inherits Window {
                                     // Opción B: Pistas separadas
                                     Rectangle {
                                         horizontal-stretch: 1;
-                                        border-radius: M3Theme.corner-medium;
+                                        border-radius: Theme.radius-lg;
+                                        border-width: 0px;
                                         background: root.audio-track-mode == 1 ?
-                                            M3Theme.primary-container :
-                                            M3Theme.surface-container-high;
-                                        border-width: root.audio-track-mode == 1 ? 1.5px : 1px;
-                                        border-color: root.audio-track-mode == 1 ?
-                                            M3Theme.primary :
-                                            M3Theme.outline-variant.with-alpha(0.4);
+                                            Theme.secondary-container :
+                                            Theme.surface-container-high;
 
                                         TouchArea {
                                             mouse-cursor: pointer;
                                             clicked => { root.audio-track-mode = 1; }
 
                                             VerticalLayout {
-                                                padding: 14px;
+                                                padding: 16px;
                                                 spacing: 6px;
 
                                                 HorizontalLayout {
                                                     alignment: space-between;
                                                     Text {
                                                         text: "Pistas separadas";
-                                                        font-size: M3Theme.font-title-small;
+                                                        font-size: Theme.font-title-small;
                                                         font-weight: 700;
                                                         color: root.audio-track-mode == 1 ?
-                                                            M3Theme.on-primary-container :
-                                                            M3Theme.on-surface;
+                                                            Theme.on-secondary-container :
+                                                            Theme.on-surface;
                                                     }
                                                     Rectangle {
                                                         height: 20px;
-                                                        border-radius: 10px;
-                                                        background: root.audio-track-mode == 1 ? M3Theme.primary : M3Theme.secondary-container;
+                                                        border-radius: Theme.radius-full;
+                                                        border-width: 0px;
+                                                        background: root.audio-track-mode == 1 ? Theme.primary : Theme.surface-container-highest;
                                                         HorizontalLayout {
-                                                            padding-left: 6px;
-                                                            padding-right: 6px;
+                                                            padding-left: 8px;
+                                                            padding-right: 8px;
                                                             Text {
                                                                 text: "Edición";
                                                                 font-size: 10px;
                                                                 font-weight: 700;
-                                                                color: root.audio-track-mode == 1 ? M3Theme.on-primary : M3Theme.on-secondary-container;
+                                                                color: root.audio-track-mode == 1 ? Theme.on-primary : Theme.on-surface-variant;
                                                                 vertical-alignment: center;
                                                             }
                                                         }
@@ -1289,10 +1327,10 @@ export component AppWindow inherits Window {
 
                                                 Text {
                                                     text: "Pista 1: Audio del juego • Pista 2: Micrófono independiente. Permite ajustar o silenciar tu voz luego en Kdenlive o DaVinci.";
-                                                    font-size: M3Theme.font-body-small;
+                                                    font-size: Theme.font-body-small;
                                                     color: root.audio-track-mode == 1 ?
-                                                        M3Theme.on-primary-container.with-alpha(0.8) :
-                                                        M3Theme.on-surface-variant;
+                                                        Theme.on-secondary-container.with-alpha(0.85) :
+                                                        Theme.on-surface-variant;
                                                     wrap: word-wrap;
                                                 }
                                             }
@@ -1302,19 +1340,21 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Controles de Volumen y Silencio
+                        // Controles de Volumen y Silencio (M3Slider + M3VuMeter)
                         M3Card {
-                            content-padding: 16px;
-                            card-background: M3Theme.surface-container;
+                            content-padding: 18px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
-                                spacing: 18px;
+                                spacing: 20px;
 
                                 Text {
-                                    text: "NIVELES DE VOLUMEN Y SILENCIO";
-                                    font-size: M3Theme.font-label-large;
-                                    font-weight: 700;
-                                    color: M3Theme.primary;
+                                    text: "Niveles de volumen y silencio";
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    color: Theme.primary;
                                 }
 
                                 // Canal Sistema
@@ -1325,17 +1365,18 @@ export component AppWindow inherits Window {
                                         alignment: space-between;
 
                                         HorizontalLayout {
-                                            spacing: 8px;
-                                            Text {
-                                                text: "🔊";
-                                                font-size: 16px;
-                                                vertical-alignment: center;
+                                            spacing: 10px;
+                                            M3Icon {
+                                                name: "speaker";
+                                                icon-size: 18px;
+                                                icon-color: Theme.on-surface;
+                                                y: (parent.height - self.height) / 2;
                                             }
                                             Text {
-                                                text: "Volumen del Sistema / Juego: " + Math.round(root.volume-system * 100) + "%";
-                                                font-size: M3Theme.font-body-medium;
+                                                text: "Volumen del sistema / juego: " + Math.round(root.volume-system * 100) + "%";
+                                                font-size: Theme.font-body-medium;
                                                 font-weight: 600;
-                                                color: M3Theme.on-surface;
+                                                color: Theme.on-surface;
                                                 vertical-alignment: center;
                                             }
                                         }
@@ -1344,8 +1385,8 @@ export component AppWindow inherits Window {
                                             spacing: 8px;
                                             Text {
                                                 text: root.audio-system ? "Activo" : "Silenciado";
-                                                font-size: M3Theme.font-label-small;
-                                                color: root.audio-system ? M3Theme.primary : M3Theme.on-surface-variant;
+                                                font-size: Theme.font-label-small;
+                                                color: root.audio-system ? Theme.primary : Theme.on-surface-variant;
                                                 vertical-alignment: center;
                                             }
                                             M3Switch {
@@ -1359,16 +1400,15 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    Slider {
+                                    M3Slider {
                                         minimum: 0.0;
                                         maximum: 1.5;
                                         value <=> root.volume-system;
-                                        changed => {
-                                            root.set-volume-system(self.value);
+                                        changed(val) => {
+                                            root.set-volume-system(val);
                                         }
                                     }
 
-                                    // Medidor VU en vivo para calibrar nivel de audio del sistema
                                     M3VuMeter {
                                         peak-level: root.system-volume-peak;
                                         active: root.audio-system;
@@ -1384,17 +1424,18 @@ export component AppWindow inherits Window {
                                         alignment: space-between;
 
                                         HorizontalLayout {
-                                            spacing: 8px;
-                                            Text {
-                                                text: "🎙️";
-                                                font-size: 16px;
-                                                vertical-alignment: center;
+                                            spacing: 10px;
+                                            M3Icon {
+                                                name: "mic";
+                                                icon-size: 18px;
+                                                icon-color: Theme.on-surface;
+                                                y: (parent.height - self.height) / 2;
                                             }
                                             Text {
-                                                text: "Volumen del Micrófono: " + Math.round(root.volume-mic * 100) + "%";
-                                                font-size: M3Theme.font-body-medium;
+                                                text: "Volumen del micrófono: " + Math.round(root.volume-mic * 100) + "%";
+                                                font-size: Theme.font-body-medium;
                                                 font-weight: 600;
-                                                color: M3Theme.on-surface;
+                                                color: Theme.on-surface;
                                                 vertical-alignment: center;
                                             }
                                         }
@@ -1403,8 +1444,8 @@ export component AppWindow inherits Window {
                                             spacing: 8px;
                                             Text {
                                                 text: root.audio-mic ? "Activo" : "Silenciado";
-                                                font-size: M3Theme.font-label-small;
-                                                color: root.audio-mic ? M3Theme.primary : M3Theme.on-surface-variant;
+                                                font-size: Theme.font-label-small;
+                                                color: root.audio-mic ? Theme.primary : Theme.on-surface-variant;
                                                 vertical-alignment: center;
                                             }
                                             M3Switch {
@@ -1418,16 +1459,15 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    Slider {
+                                    M3Slider {
                                         minimum: 0.0;
                                         maximum: 1.5;
                                         value <=> root.volume-mic;
-                                        changed => {
-                                            root.set-volume-mic(self.value);
+                                        changed(val) => {
+                                            root.set-volume-mic(val);
                                         }
                                     }
 
-                                    // Medidor VU en vivo para calibrar nivel del micrófono
                                     M3VuMeter {
                                         peak-level: root.mic-volume-peak;
                                         active: root.audio-mic && root.audio-mic-source != "Desactivado";
@@ -1439,7 +1479,7 @@ export component AppWindow inherits Window {
                     }
 
                     // ---------------------------------------------------------
-                    // VISTA 3: AJUSTES Y PRESETS
+                    // VISTA 3: AJUSTES Y PRESETS (Sentence case, Android Settings list items)
                     // ---------------------------------------------------------
                     if root.active-view == 3: VerticalLayout {
                         spacing: 20px;
@@ -1448,27 +1488,27 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             spacing: 2px;
                             Text {
-                                text: "AJUSTES Y PRESETS";
-                                font-size: M3Theme.font-title-large;
-                                font-weight: 800;
-                                color: M3Theme.on-surface;
+                                text: "Ajustes y presets";
+                                font-size: 28px;
+                                font-weight: 600;
+                                color: Theme.on-surface;
                             }
                             Text {
                                 text: "Perfiles de codificador, buffers y directorios de almacenamiento";
-                                font-size: M3Theme.font-body-small;
-                                color: M3Theme.on-surface-variant;
+                                font-size: 13px;
+                                color: Theme.on-surface-variant;
                             }
                         }
 
-                        // Perfiles de Hardware
+                        // Perfiles de Hardware (M3ProfileTile alineado como Android Settings)
                         VerticalLayout {
                             spacing: 12px;
 
                             Text {
-                                text: "PERFIL DE CODIFICACIÓN (ESTABILIDAD / HARDWARE)";
-                                font-size: M3Theme.font-label-large;
-                                font-weight: 700;
-                                color: M3Theme.primary;
+                                text: "Perfil de codificación (estabilidad / hardware)";
+                                font-size: 15px;
+                                font-weight: 600;
+                                color: Theme.primary;
                             }
 
                             // 1. Sane Safe (CPU x264)
@@ -1476,7 +1516,7 @@ export component AppWindow inherits Window {
                                 title: "Sane Safe (CPU x264)";
                                 subtitle: "Codificación por CPU sin riesgo de GPU freeze • Ideal Polaris / Linux";
                                 badge-text: "Recomendado / Estable";
-                                icon-text: "🛡️";
+                                icon-name: "shield";
                                 is-selected: root.active-profile == "sane-safe";
                                 clicked => {
                                     root.active-profile = "sane-safe";
@@ -1490,7 +1530,7 @@ export component AppWindow inherits Window {
                                 subtitle: "Aceleración por GPU Radeon • Consumo ultra bajo de CPU";
                                 badge-text: "Experimental";
                                 warning-text: "Incompatible con AMD Polaris (RX 570)";
-                                icon-text: "⚡";
+                                icon-name: "bolt";
                                 is-selected: root.active-profile == "amd-vaapi";
                                 clicked => {
                                     root.active-profile = "amd-vaapi";
@@ -1503,7 +1543,7 @@ export component AppWindow inherits Window {
                                 title: "NVIDIA Hardware (NVENC)";
                                 subtitle: "Aceleración por hardware NVIDIA en GPU GeForce";
                                 badge-text: "Experimental";
-                                icon-text: "🟢";
+                                icon-name: "bolt";
                                 is-selected: root.active-profile == "nvidia-nvenc";
                                 clicked => {
                                     root.active-profile = "nvidia-nvenc";
@@ -1516,7 +1556,7 @@ export component AppWindow inherits Window {
                                 title: "Intel Hardware (QuickSync)";
                                 subtitle: "Aceleración por GPU Intel QuickSync Video (iGPU / Arc)";
                                 badge-text: "Experimental";
-                                icon-text: "🔷";
+                                icon-name: "bolt";
                                 is-selected: root.active-profile == "intel-qsv";
                                 clicked => {
                                     root.active-profile = "intel-qsv";
@@ -1529,7 +1569,7 @@ export component AppWindow inherits Window {
                                 title: "Personalizado";
                                 subtitle: "Ajustes interactivos de códec, velocidad CPU, CRF y límite de RAM";
                                 badge-text: "Avanzado";
-                                icon-text: "⚙️";
+                                icon-name: "tune";
                                 is-selected: root.active-profile == "custom";
                                 clicked => {
                                     root.active-profile = "custom";
@@ -1538,35 +1578,37 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Parámetros interactivos del Modo Personalizado
+                        // Parámetros interactivos del Modo Personalizado (Cero bordes)
                         if root.active-profile == "custom": M3Card {
-                            content-padding: 16px;
-                            card-background: M3Theme.surface-container-high;
+                            content-padding: 18px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
-                                spacing: 14px;
+                                spacing: 16px;
 
                                 Text {
-                                    text: "PARÁMETROS DEL PERFIL PERSONALIZADO";
-                                    font-size: M3Theme.font-label-large;
-                                    font-weight: 700;
-                                    color: M3Theme.primary;
+                                    text: "Parámetros del perfil personalizado";
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    color: Theme.primary;
                                 }
 
                                 Text {
                                     text: "Configura el codificador, compresión y límites de memoria en vivo sin editar archivos.";
-                                    font-size: M3Theme.font-body-small;
-                                    color: M3Theme.on-surface-variant;
+                                    font-size: Theme.font-body-small;
+                                    color: Theme.on-surface-variant;
                                 }
 
                                 // 1. Códec de Video
                                 VerticalLayout {
-                                    spacing: 6px;
+                                    spacing: 8px;
                                     Text {
-                                        text: "Códec de Video:";
-                                        font-size: M3Theme.font-label-medium;
+                                        text: "Códec de video:";
+                                        font-size: Theme.font-label-medium;
                                         font-weight: 700;
-                                        color: M3Theme.on-surface;
+                                        color: Theme.on-surface;
                                     }
                                     HorizontalLayout {
                                         spacing: 8px;
@@ -1607,12 +1649,12 @@ export component AppWindow inherits Window {
 
                                 // 2. Preset CPU (Velocidad vs CPU)
                                 VerticalLayout {
-                                    spacing: 6px;
+                                    spacing: 8px;
                                     Text {
-                                        text: "Preset de Velocidad CPU:";
-                                        font-size: M3Theme.font-label-medium;
+                                        text: "Preset de velocidad CPU:";
+                                        font-size: Theme.font-label-medium;
                                         font-weight: 700;
-                                        color: M3Theme.on-surface;
+                                        color: Theme.on-surface;
                                     }
                                     HorizontalLayout {
                                         spacing: 8px;
@@ -1653,12 +1695,12 @@ export component AppWindow inherits Window {
 
                                 // 3. Calidad CRF
                                 VerticalLayout {
-                                    spacing: 6px;
+                                    spacing: 8px;
                                     Text {
-                                        text: "Calidad CRF (" + root.custom-crf + " - Menor es mayor calidad):";
-                                        font-size: M3Theme.font-label-medium;
+                                        text: "Calidad CRF (" + root.custom-crf + " - menor es mayor calidad):";
+                                        font-size: Theme.font-label-medium;
                                         font-weight: 700;
-                                        color: M3Theme.on-surface;
+                                        color: Theme.on-surface;
                                     }
                                     HorizontalLayout {
                                         spacing: 8px;
@@ -1699,12 +1741,12 @@ export component AppWindow inherits Window {
 
                                 // 4. Límite de Búfer RAM
                                 VerticalLayout {
-                                    spacing: 6px;
+                                    spacing: 8px;
                                     Text {
-                                        text: "Límite Máximo de Búfer RAM (" + root.max-memory-mb + " MB):";
-                                        font-size: M3Theme.font-label-medium;
+                                        text: "Límite máximo de búfer RAM (" + root.max-memory-mb + " MB):";
+                                        font-size: Theme.font-label-medium;
                                         font-weight: 700;
-                                        color: M3Theme.on-surface;
+                                        color: Theme.on-surface;
                                     }
                                     HorizontalLayout {
                                         spacing: 8px;
@@ -1753,10 +1795,12 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Gestor de Perfiles de Hardware de Equipos (~/.config/sane-rec/profiles/)
+                        // Gestor de Perfiles de Hardware de Equipos
                         M3Card {
-                            content-padding: 16px;
-                            card-background: M3Theme.surface-container;
+                            content-padding: 18px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
                                 spacing: 14px;
@@ -1767,15 +1811,15 @@ export component AppWindow inherits Window {
                                     VerticalLayout {
                                         spacing: 2px;
                                         Text {
-                                            text: "GESTOR DE PERFILES DE EQUIPO";
-                                            font-size: M3Theme.font-label-large;
-                                            font-weight: 700;
-                                            color: M3Theme.primary;
+                                            text: "Gestor de perfiles de equipo";
+                                            font-size: 15px;
+                                            font-weight: 600;
+                                            color: Theme.primary;
                                         }
                                         Text {
                                             text: "Guarda, exporta y carga perfiles optimizados para PCs o laptops específicos (~/.config/sane-rec/profiles/).";
-                                            font-size: M3Theme.font-body-small;
-                                            color: M3Theme.on-surface-variant;
+                                            font-size: Theme.font-body-small;
+                                            color: Theme.on-surface-variant;
                                         }
                                     }
 
@@ -1784,13 +1828,15 @@ export component AppWindow inherits Window {
                                         M3Button {
                                             text: "Importar (.toml)";
                                             variant: "tonal";
-                                            btn-height: 32px;
+                                            btn-height: 34px;
+                                            btn-padding-h: 14px;
                                             clicked => { root.import-hardware-profile(); }
                                         }
                                         M3Button {
-                                            text: "Guardar Actual";
+                                            text: "Guardar actual";
                                             variant: "tonal";
-                                            btn-height: 32px;
+                                            btn-height: 34px;
+                                            btn-padding-h: 14px;
                                             clicked => { root.save-hardware-profile(root.selected-profile-name); }
                                         }
                                     }
@@ -1800,10 +1846,10 @@ export component AppWindow inherits Window {
                                 VerticalLayout {
                                     spacing: 8px;
                                     Text {
-                                        text: "Perfiles Guardados en el Sistema:";
-                                        font-size: M3Theme.font-label-medium;
+                                        text: "Perfiles guardados en el sistema:";
+                                        font-size: Theme.font-label-medium;
                                         font-weight: 700;
-                                        color: M3Theme.on-surface;
+                                        color: Theme.on-surface;
                                     }
 
                                     HorizontalLayout {
@@ -1819,15 +1865,16 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                // Acciones sobre el perfil seleccionado
+                                // Acciones sobre el perfil seleccionado (Outlined button con borde sutil Theme.outline-variant)
                                 HorizontalLayout {
-                                    spacing: 10px;
+                                    spacing: 12px;
                                     alignment: start;
 
                                     M3Button {
                                         text: "Cargar '" + root.selected-profile-name + "'";
                                         variant: "filled";
-                                        btn-height: 34px;
+                                        btn-height: 36px;
+                                        btn-padding-h: 16px;
                                         clicked => {
                                             root.load-hardware-profile(root.selected-profile-name);
                                         }
@@ -1836,7 +1883,8 @@ export component AppWindow inherits Window {
                                     M3Button {
                                         text: "Exportar para compartir...";
                                         variant: "outlined";
-                                        btn-height: 34px;
+                                        btn-height: 36px;
+                                        btn-padding-h: 16px;
                                         clicked => {
                                             root.export-hardware-profile(root.selected-profile-name);
                                         }
@@ -1845,10 +1893,12 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Duración del Buffer de Repetición
+                        // Duración del Búfer de Repetición (Slider M3)
                         M3Card {
-                            content-padding: 16px;
-                            card-background: M3Theme.surface-container;
+                            content-padding: 18px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
                                 spacing: 14px;
@@ -1857,25 +1907,26 @@ export component AppWindow inherits Window {
                                     alignment: space-between;
 
                                     Text {
-                                        text: "DURACIÓN DEL BÚFER DE REPETICIÓN";
-                                        font-size: M3Theme.font-label-large;
-                                        font-weight: 700;
-                                        color: M3Theme.primary;
+                                        text: "Duración del búfer de repetición";
+                                        font-size: 15px;
+                                        font-weight: 600;
+                                        color: Theme.primary;
                                     }
 
                                     Rectangle {
-                                        height: 24px;
-                                        border-radius: 12px;
-                                        background: M3Theme.primary-container;
+                                        height: 26px;
+                                        border-radius: Theme.radius-full;
+                                        border-width: 0px;
+                                        background: Theme.primary-container;
 
                                         HorizontalLayout {
-                                            padding-left: 10px;
-                                            padding-right: 10px;
+                                            padding-left: 12px;
+                                            padding-right: 12px;
                                             Text {
                                                 text: root.replay-duration + " segundos";
-                                                font-size: M3Theme.font-label-medium;
+                                                font-size: Theme.font-label-medium;
                                                 font-weight: 700;
-                                                color: M3Theme.on-primary-container;
+                                                color: Theme.on-primary-container;
                                                 vertical-alignment: center;
                                             }
                                         }
@@ -1941,12 +1992,12 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                Slider {
+                                M3Slider {
                                     minimum: 15.0;
                                     maximum: 120.0;
                                     value: root.replay-duration;
-                                    changed => {
-                                        root.replay-duration = Math.round(self.value);
+                                    changed(val) => {
+                                        root.replay-duration = Math.round(val);
                                         root.select-replay-duration(root.replay-duration);
                                     }
                                 }
@@ -1955,56 +2006,58 @@ export component AppWindow inherits Window {
 
                         // Almacenamiento y Formato
                         M3Card {
-                            content-padding: 16px;
-                            card-background: M3Theme.surface-container;
+                            content-padding: 18px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
-                                spacing: 16px;
+                                spacing: 18px;
 
                                 Text {
-                                    text: "ALMACENAMIENTO Y FORMATO";
-                                    font-size: M3Theme.font-label-large;
-                                    font-weight: 700;
-                                    color: M3Theme.primary;
+                                    text: "Almacenamiento y formato";
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    color: Theme.primary;
                                 }
 
                                 // Carpeta
                                 VerticalLayout {
                                     spacing: 8px;
                                     Text {
-                                        text: "Carpeta de Guardado de Replays";
-                                        font-size: M3Theme.font-body-medium;
+                                        text: "Carpeta de guardado de replays";
+                                        font-size: Theme.font-body-medium;
                                         font-weight: 600;
-                                        color: M3Theme.on-surface;
+                                        color: Theme.on-surface;
                                     }
 
                                     HorizontalLayout {
-                                        spacing: 10px;
+                                        spacing: 12px;
 
                                         Rectangle {
                                             horizontal-stretch: 1;
-                                            height: 40px;
-                                            border-radius: M3Theme.corner-small;
-                                            background: M3Theme.surface-container-high;
-                                            border-width: 1px;
-                                            border-color: M3Theme.outline-variant.with-alpha(0.5);
+                                            height: 42px;
+                                            border-radius: Theme.radius-sm;
+                                            background: Theme.surface-container-high;
+                                            border-width: 0px;
 
                                             HorizontalLayout {
-                                                padding-left: 12px;
-                                                padding-right: 12px;
-                                                spacing: 8px;
+                                                padding-left: 14px;
+                                                padding-right: 14px;
+                                                spacing: 10px;
                                                 alignment: start;
 
-                                                Text {
-                                                    text: "📁";
-                                                    font-size: 14px;
-                                                    vertical-alignment: center;
+                                                M3Icon {
+                                                    name: "folder";
+                                                    icon-size: 18px;
+                                                    icon-color: Theme.primary;
+                                                    y: (parent.height - self.height) / 2;
                                                 }
 
                                                 Text {
                                                     text: root.output-path;
-                                                    font-size: M3Theme.font-body-medium;
-                                                    color: M3Theme.on-surface;
+                                                    font-size: Theme.font-body-medium;
+                                                    color: Theme.on-surface;
                                                     vertical-alignment: center;
                                                     overflow: elide;
                                                 }
@@ -2014,7 +2067,8 @@ export component AppWindow inherits Window {
                                         M3Button {
                                             text: "Examinar...";
                                             variant: "tonal";
-                                            btn-height: 40px;
+                                            btn-height: 42px;
+                                            btn-padding-h: 18px;
                                             clicked => {
                                                 root.select-output-dir();
                                             }
@@ -2026,23 +2080,22 @@ export component AppWindow inherits Window {
                                 VerticalLayout {
                                     spacing: 8px;
                                     Text {
-                                        text: "Formato de Contenedor";
-                                        font-size: M3Theme.font-body-medium;
+                                        text: "Formato de contenedor";
+                                        font-size: Theme.font-body-medium;
                                         font-weight: 600;
-                                        color: M3Theme.on-surface;
+                                        color: Theme.on-surface;
                                     }
 
                                     Rectangle {
-                                        height: 40px;
-                                        width: 280px;
-                                        border-radius: M3Theme.corner-small;
-                                        background: M3Theme.surface-container-high;
-                                        border-width: 1px;
-                                        border-color: M3Theme.outline-variant.with-alpha(0.5);
+                                        height: 42px;
+                                        width: 290px;
+                                        border-radius: Theme.radius-full;
+                                        background: Theme.surface-container-high;
+                                        border-width: 0px;
 
                                         HorizontalLayout {
-                                            padding: 3px;
-                                            spacing: 3px;
+                                            padding: 4px;
+                                            spacing: 4px;
 
                                             M3SegmentItem {
                                                 horizontal-stretch: 1;
@@ -2060,28 +2113,137 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
+
+                                // Modo Doble Clip (Discord)
+                                VerticalLayout {
+                                    spacing: 12px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        VerticalLayout {
+                                            spacing: 4px;
+                                            horizontal-stretch: 1;
+
+                                            Text {
+                                                text: "Modo doble clip (copia ligera para Discord)";
+                                                font-size: Theme.font-body-medium;
+                                                font-weight: 700;
+                                                color: Theme.on-surface;
+                                            }
+
+                                            Text {
+                                                text: "Genera automáticamente en segundo plano una segunda versión optimizada para compartir en Discord sin exceder el límite de peso.";
+                                                font-size: Theme.font-body-small;
+                                                color: Theme.on-surface-variant;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+
+                                        M3Switch {
+                                            y: (parent.height - self.height) / 2;
+                                            checked: root.dual-clip;
+                                            toggled(state) => {
+                                                root.dual-clip = state;
+                                                root.toggle-dual-clip(state);
+                                            }
+                                        }
+                                    }
+
+                                    if root.dual-clip: VerticalLayout {
+                                        spacing: 8px;
+
+                                        Text {
+                                            text: "Límite máximo de tamaño para Discord:";
+                                            font-size: Theme.font-label-medium;
+                                            font-weight: 600;
+                                            color: Theme.primary;
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 8px;
+
+                                            M3PresetChip {
+                                                text: "10 MB (Discord Free)";
+                                                is-active: root.discord-target-mb <= 10;
+                                                clicked => {
+                                                    root.discord-target-mb = 10;
+                                                    root.set-discord-target-mb(10);
+                                                }
+                                            }
+
+                                            M3PresetChip {
+                                                text: "15 MB (Equilibrado)";
+                                                is-active: root.discord-target-mb > 10 && root.discord-target-mb <= 15;
+                                                clicked => {
+                                                    root.discord-target-mb = 15;
+                                                    root.set-discord-target-mb(15);
+                                                }
+                                            }
+
+                                            M3PresetChip {
+                                                text: "25 MB (Discord Nitro)";
+                                                is-active: root.discord-target-mb > 15;
+                                                clicked => {
+                                                    root.discord-target-mb = 25;
+                                                    root.set-discord-target-mb(25);
+                                                }
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            height: 36px;
+                                            border-radius: Theme.radius-sm;
+                                            background: Theme.surface-container-highest;
+                                            border-width: 0px;
+
+                                            HorizontalLayout {
+                                                padding-left: 12px;
+                                                padding-right: 12px;
+                                                spacing: 8px;
+
+                                                M3Icon {
+                                                    name: "lightbulb";
+                                                    icon-size: 16px;
+                                                    icon-color: Theme.primary;
+                                                    y: (parent.height - self.height) / 2;
+                                                }
+
+                                                Text {
+                                                    text: "Se guardarán el archivo original (" + root.selected-format + ") y la copia ligera (<nombre>_discord." + root.selected-format + ")";
+                                                    font-size: 12px;
+                                                    color: Theme.on-surface-variant;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 
-                        // Selector interactivo de Atajos de Teclado
+                        // Selector interactivo de Atajos de Teclado (Sentence case, cero bordes)
                         M3Card {
-                            content-padding: 16px;
-                            card-background: M3Theme.surface-container;
+                            content-padding: 18px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
-                                spacing: 14px;
+                                spacing: 16px;
 
                                 Text {
-                                    text: "ATAJOS DE TECLADO GLOBALES (NIRI / WAYLAND)";
-                                    font-size: M3Theme.font-label-large;
-                                    font-weight: 700;
-                                    color: M3Theme.primary;
+                                    text: "Atajos de teclado globales (niri / Wayland)";
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    color: Theme.primary;
                                 }
 
                                 Text {
                                     text: "Selecciona el atajo que te resulte más cómodo. Se actualiza automáticamente en niri sin reiniciar la sesión.";
-                                    font-size: M3Theme.font-body-small;
-                                    color: M3Theme.on-surface-variant;
+                                    font-size: Theme.font-body-small;
+                                    color: Theme.on-surface-variant;
                                 }
 
                                 // Atajo Guardar Replay
@@ -2091,24 +2253,25 @@ export component AppWindow inherits Window {
                                     HorizontalLayout {
                                         alignment: space-between;
                                         Text {
-                                            text: "Guardar Replay Instantáneo";
-                                            font-size: M3Theme.font-body-medium;
+                                            text: "Guardar replay instantáneo";
+                                            font-size: Theme.font-body-medium;
                                             font-weight: 600;
-                                            color: M3Theme.on-surface;
+                                            color: Theme.on-surface;
                                             vertical-alignment: center;
                                         }
                                         Rectangle {
                                             height: 24px;
-                                            border-radius: 6px;
-                                            background: M3Theme.primary-container;
+                                            border-radius: Theme.radius-full;
+                                            border-width: 0px;
+                                            background: Theme.primary-container;
                                             HorizontalLayout {
-                                                padding-left: 8px;
-                                                padding-right: 8px;
+                                                padding-left: 10px;
+                                                padding-right: 10px;
                                                 Text {
                                                     text: root.shortcut-save;
-                                                    font-size: M3Theme.font-label-small;
+                                                    font-size: Theme.font-label-small;
                                                     font-weight: 800;
-                                                    color: M3Theme.on-primary-container;
+                                                    color: Theme.on-primary-container;
                                                     vertical-alignment: center;
                                                 }
                                             }
@@ -2160,7 +2323,7 @@ export component AppWindow inherits Window {
                                         spacing: 10px;
                                         M3InputField {
                                             horizontal-stretch: 1;
-                                            icon-text: "⌨️";
+                                            icon-name: "keyboard";
                                             text <=> root.custom-save-text;
                                             placeholder: "Personalizado (ej. Ctrl+Shift+S, F8, Mod+Print)";
                                             accepted(val) => {
@@ -2171,9 +2334,10 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                         M3Button {
-                                            text: "Aplicar Atajo";
+                                            text: "Aplicar atajo";
                                             variant: "filled";
-                                            btn-height: 38px;
+                                            btn-height: 42px;
+                                            btn-padding-h: 18px;
                                             clicked => {
                                                 if root.custom-save-text != "" {
                                                     root.shortcut-save = root.custom-save-text;
@@ -2191,24 +2355,25 @@ export component AppWindow inherits Window {
                                     HorizontalLayout {
                                         alignment: space-between;
                                         Text {
-                                            text: "Alternar Grabación Continua";
-                                            font-size: M3Theme.font-body-medium;
+                                            text: "Alternar grabación continua";
+                                            font-size: Theme.font-body-medium;
                                             font-weight: 600;
-                                            color: M3Theme.on-surface;
+                                            color: Theme.on-surface;
                                             vertical-alignment: center;
                                         }
                                         Rectangle {
                                             height: 24px;
-                                            border-radius: 6px;
-                                            background: M3Theme.secondary-container;
+                                            border-radius: Theme.radius-full;
+                                            border-width: 0px;
+                                            background: Theme.secondary-container;
                                             HorizontalLayout {
-                                                padding-left: 8px;
-                                                padding-right: 8px;
+                                                padding-left: 10px;
+                                                padding-right: 10px;
                                                 Text {
                                                     text: root.shortcut-record;
-                                                    font-size: M3Theme.font-label-small;
+                                                    font-size: Theme.font-label-small;
                                                     font-weight: 800;
-                                                    color: M3Theme.on-secondary-container;
+                                                    color: Theme.on-secondary-container;
                                                     vertical-alignment: center;
                                                 }
                                             }
@@ -2260,7 +2425,7 @@ export component AppWindow inherits Window {
                                         spacing: 10px;
                                         M3InputField {
                                             horizontal-stretch: 1;
-                                            icon-text: "⌨️";
+                                            icon-name: "keyboard";
                                             text <=> root.custom-record-text;
                                             placeholder: "Personalizado (ej. Ctrl+Shift+R, F9, Mod+Shift+Record)";
                                             accepted(val) => {
@@ -2271,9 +2436,10 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                         M3Button {
-                                            text: "Aplicar Atajo";
+                                            text: "Aplicar atajo";
                                             variant: "filled";
-                                            btn-height: 38px;
+                                            btn-height: 42px;
+                                            btn-padding-h: 18px;
                                             clicked => {
                                                 if root.custom-record-text != "" {
                                                     root.shortcut-record = root.custom-record-text;
@@ -2288,7 +2454,7 @@ export component AppWindow inherits Window {
                     }
 
                     // ---------------------------------------------------------
-                    // VISTA 4: GALERÍA DE GRABACIONES
+                    // VISTA 4: GALERÍA DE REPLAYS (Sentence case, cero bordes)
                     // ---------------------------------------------------------
                     if root.active-view == 4: VerticalLayout {
                         spacing: 20px;
@@ -2300,15 +2466,15 @@ export component AppWindow inherits Window {
                             VerticalLayout {
                                 spacing: 2px;
                                 Text {
-                                    text: "GALERÍA DE REPLAYS";
-                                    font-size: M3Theme.font-title-large;
-                                    font-weight: 800;
-                                    color: M3Theme.on-surface;
+                                    text: "Galería de replays";
+                                    font-size: 28px;
+                                    font-weight: 600;
+                                    color: Theme.on-surface;
                                 }
                                 Text {
                                     text: "Clips y repeticiones almacenados en " + root.output-path;
-                                    font-size: M3Theme.font-body-small;
-                                    color: M3Theme.on-surface-variant;
+                                    font-size: 13px;
+                                    color: Theme.on-surface-variant;
                                 }
                             }
 
@@ -2316,10 +2482,11 @@ export component AppWindow inherits Window {
                                 spacing: 10px;
 
                                 M3Button {
-                                    text: "Abrir Carpeta";
-                                    icon-text: "📂";
+                                    text: "Abrir carpeta";
+                                    icon-name: "folder";
                                     variant: "tonal";
                                     btn-height: 38px;
+                                    btn-padding-h: 16px;
                                     clicked => {
                                         root.open-output-folder();
                                     }
@@ -2327,9 +2494,10 @@ export component AppWindow inherits Window {
 
                                 M3Button {
                                     text: "Refrescar";
-                                    icon-text: "🔄";
+                                    icon-name: "refresh";
                                     variant: "filled";
                                     btn-height: 38px;
+                                    btn-padding-h: 16px;
                                     clicked => {
                                         root.refresh-gallery();
                                     }
@@ -2339,27 +2507,28 @@ export component AppWindow inherits Window {
 
                         // Estado Vacío o Lista de Clips de la Galería
                         if root.gallery-clips.length == 0: M3Card {
-                            content-padding: 32px;
-                            card-background: M3Theme.surface-container;
-                            card-radius: M3Theme.corner-large;
+                            content-padding: 36px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
 
                             VerticalLayout {
-                                spacing: 14px;
+                                spacing: 16px;
                                 alignment: center;
 
                                 Rectangle {
-                                    width: 56px;
-                                    height: 56px;
-                                    border-radius: 28px;
-                                    background: M3Theme.surface-container-high;
+                                    width: 60px;
+                                    height: 60px;
+                                    border-radius: 30px;
+                                    background: Theme.surface-container-high;
+                                    border-width: 0px;
 
-                                    Text {
+                                    M3Icon {
+                                        name: "folder";
+                                        icon-size: 28px;
+                                        icon-color: Theme.primary;
                                         x: (parent.width - self.width) / 2;
                                         y: (parent.height - self.height) / 2;
-                                        text: "🎬";
-                                        font-size: 26px;
-                                        vertical-alignment: center;
-                                        horizontal-alignment: center;
                                     }
                                 }
 
@@ -2369,16 +2538,16 @@ export component AppWindow inherits Window {
 
                                     Text {
                                         text: "No hay clips guardados aún";
-                                        font-size: M3Theme.font-title-medium;
+                                        font-size: Theme.font-title-medium;
                                         font-weight: 700;
-                                        color: M3Theme.on-surface;
+                                        color: Theme.on-surface;
                                         horizontal-alignment: center;
                                     }
 
                                     Text {
                                         text: "No hay clips guardados aún en " + root.output-path;
-                                        font-size: M3Theme.font-body-small;
-                                        color: M3Theme.on-surface-variant;
+                                        font-size: Theme.font-body-small;
+                                        color: Theme.on-surface-variant;
                                         horizontal-alignment: center;
                                         wrap: word-wrap;
                                     }
@@ -2386,10 +2555,10 @@ export component AppWindow inherits Window {
 
                                 M3Button {
                                     text: "Refrescar";
-                                    icon-text: "🔄";
+                                    icon-name: "refresh";
                                     variant: "tonal";
                                     btn-height: 38px;
-                                    btn-padding-h: 20px;
+                                    btn-padding-h: 22px;
                                     clicked => {
                                         root.refresh-gallery();
                                     }
@@ -2406,6 +2575,7 @@ export component AppWindow inherits Window {
                                 date-text: clip.date-text;
                                 duration-text: clip.duration-text;
                                 filepath: clip.filepath;
+                                is-discord: clip.is-discord;
 
                                 play-clicked(path) => {
                                     root.play-clip(path);
@@ -2414,29 +2584,35 @@ export component AppWindow inherits Window {
                                 folder-clicked(path) => {
                                     root.open-clip-folder(path);
                                 }
+
+                                compress-clicked(path) => {
+                                    root.compress-clip-for-discord(path);
+                                }
                             }
                         }
 
-                        // Mensaje de estado informativo
+                        // Mensaje de estado informativo (Cero bordes)
                         M3Card {
-                            content-padding: 14px;
-                            card-background: M3Theme.surface-container;
-                            card-radius: M3Theme.corner-medium;
+                            content-padding: 16px;
+                            card-background: Theme.surface-container;
+                            card-radius: Theme.radius-lg;
+                            card-border-width: 0px;
 
                             HorizontalLayout {
-                                spacing: 12px;
+                                spacing: 14px;
                                 alignment: start;
 
-                                Text {
-                                    text: "ℹ️";
-                                    font-size: 16px;
-                                    vertical-alignment: center;
+                                M3Icon {
+                                    name: "info";
+                                    icon-size: 20px;
+                                    icon-color: Theme.primary;
+                                    y: (parent.height - self.height) / 2;
                                 }
 
                                 Text {
                                     text: "Puedes abrir cualquier clip directamente en mpv o tu reproductor preferido, o copiar el archivo desde tu gestor de archivos para compartirlo en Discord.";
-                                    font-size: M3Theme.font-body-small;
-                                    color: M3Theme.on-surface-variant;
+                                    font-size: Theme.font-body-small;
+                                    color: Theme.on-surface-variant;
                                     vertical-alignment: center;
                                 }
                             }
@@ -2446,12 +2622,12 @@ export component AppWindow inherits Window {
             }
         }
 
-        // Banner / Toast flotante de notificación in-app M3
+        // Banner / Toast flotante de notificación in-app M3 (Cero bordes)
         M3Toast {
             x: (parent.width - self.width) / 2;
             width: Math.min(parent.width - 40px, 460px);
             message: root.toast-message;
-            icon-text: root.toast-icon;
+            icon-name: root.toast-icon != "" ? root.toast-icon : "info";
             is-visible: root.toast-visible;
         }
     }
