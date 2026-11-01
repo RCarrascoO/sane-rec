@@ -12,6 +12,10 @@ pub struct OutputInfo {
     pub height: u32,
     pub refresh_rate: f32,
     pub is_current: bool,
+    #[serde(default)]
+    pub x: i32,
+    #[serde(default)]
+    pub y: i32,
 }
 
 /// Representa la información de una ventana abierta en el compositor Wayland.
@@ -214,14 +218,18 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
                 )
             };
 
-            let (width, height, refresh_rate) = if settings_res != 0 {
-                (
-                    devmode.dmPelsWidth,
-                    devmode.dmPelsHeight,
-                    devmode.dmDisplayFrequency as f32,
-                )
+            let (width, height, refresh_rate, x, y) = if settings_res != 0 {
+                unsafe {
+                    (
+                        devmode.dmPelsWidth,
+                        devmode.dmPelsHeight,
+                        devmode.dmDisplayFrequency as f32,
+                        devmode.Anonymous1.Anonymous2.dmPosition.x,
+                        devmode.Anonymous1.Anonymous2.dmPosition.y,
+                    )
+                }
             } else {
-                (1920, 1080, 60.0)
+                (1920, 1080, 60.0, 0, 0)
             };
 
             let is_current = (display_device.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0;
@@ -243,6 +251,8 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
                 height,
                 refresh_rate,
                 is_current,
+                x,
+                y,
             });
         }
 
@@ -257,6 +267,8 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
             height: 1080,
             refresh_rate: 60.0,
             is_current: true,
+            x: 0,
+            y: 0,
         });
     }
 
@@ -358,6 +370,15 @@ pub fn parse_niri_outputs_with_focus(json_str: &str, focused_name: Option<&str>)
             display_name.to_string()
         };
 
+        let (pos_x, pos_y) = if let Some(logical) = val.get("logical") {
+            (
+                logical.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                logical.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            )
+        } else {
+            (0, 0)
+        };
+
         let is_current = if let Some(explicit) = val
             .get("is_current")
             .or_else(|| val.get("is_focused"))
@@ -377,6 +398,8 @@ pub fn parse_niri_outputs_with_focus(json_str: &str, focused_name: Option<&str>)
             height,
             refresh_rate,
             is_current,
+            x: pos_x,
+            y: pos_y,
         });
     }
 
@@ -412,6 +435,8 @@ pub fn parse_wf_recorder_outputs(output_str: &str) -> Vec<OutputInfo> {
                     height: 0,
                     refresh_rate: 0.0,
                     is_current: idx == 0,
+                    x: 0,
+                    y: 0,
                 });
             }
         }
@@ -1067,6 +1092,8 @@ mod tests {
             height: 1080,
             refresh_rate: 60.0,
             is_current: true,
+            x: 0,
+            y: 0,
         };
         let s = serde_json::to_string(&out).unwrap();
         let de: OutputInfo = serde_json::from_str(&s).unwrap();

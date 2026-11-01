@@ -782,7 +782,11 @@ impl ReplayEngine {
             {
                 config.profile.active_profile = "sane-safe".to_string();
                 config.video.codec = "libx264".to_string();
-                config.video.target = "desktop".to_string();
+                if config.video.target.starts_with("window:")
+                    || config.video.target.starts_with("title=")
+                {
+                    config.video.target = "desktop".to_string();
+                }
                 let _ = config.save();
                 *self.config.lock().unwrap() = config.clone();
 
@@ -1129,7 +1133,11 @@ impl ReplayEngine {
             {
                 config.profile.active_profile = "sane-safe".to_string();
                 config.video.codec = "libx264".to_string();
-                config.video.target = "desktop".to_string();
+                if config.video.target.starts_with("window:")
+                    || config.video.target.starts_with("title=")
+                {
+                    config.video.target = "desktop".to_string();
+                }
                 let _ = config.save();
                 *self.config.lock().unwrap() = config.clone();
 
@@ -2053,6 +2061,50 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
     let fps_str = config.video.fps.to_string();
     let target = config.video.target.trim();
 
+    let apply_desktop_capture = |cmd: &mut Command, target_name: &str| {
+        let outputs = crate::discovery::get_connected_outputs();
+        let matched_output = outputs
+            .iter()
+            .find(|o| o.name.eq_ignore_ascii_case(target_name))
+            .or_else(|| outputs.iter().find(|o| o.is_current))
+            .or_else(|| outputs.first());
+
+        if let Some(o) = matched_output {
+            if o.width > 0 && o.height > 0 {
+                let w = (o.width & !1).max(2);
+                let h = (o.height & !1).max(2);
+                cmd.args([
+                    "-f",
+                    "gdigrab",
+                    "-framerate",
+                    &fps_str,
+                    "-offset_x",
+                    &o.x.to_string(),
+                    "-offset_y",
+                    &o.y.to_string(),
+                    "-video_size",
+                    &format!("{}x{}", w, h),
+                    "-draw_mouse",
+                    "1",
+                    "-i",
+                    "desktop",
+                ]);
+                return;
+            }
+        }
+
+        cmd.args([
+            "-f",
+            "gdigrab",
+            "-framerate",
+            &fps_str,
+            "-draw_mouse",
+            "1",
+            "-i",
+            "desktop",
+        ]);
+    };
+
     // Input 0: Video
     cmd.args(["-thread_queue_size", "512"]);
     if target.starts_with("title=") || target.starts_with("window:") {
@@ -2069,16 +2121,7 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
             || lower_title.contains("minecraft")
             || lower_title.contains("javaw")
         {
-            cmd.args([
-                "-f",
-                "gdigrab",
-                "-framerate",
-                &fps_str,
-                "-draw_mouse",
-                "1",
-                "-i",
-                "desktop",
-            ]);
+            apply_desktop_capture(cmd, target);
         } else {
             cmd.args([
                 "-f",
@@ -2092,16 +2135,7 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
             ]);
         }
     } else {
-        cmd.args([
-            "-f",
-            "gdigrab",
-            "-framerate",
-            &fps_str,
-            "-draw_mouse",
-            "1",
-            "-i",
-            "desktop",
-        ]);
+        apply_desktop_capture(cmd, target);
     }
 
     // Input 1: Audio PCM crudo continuo s16le a 48000 Hz estéreo vía TCP local
@@ -2202,9 +2236,14 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     "fast" | "p4" => "p4",
                     _ => "p3",
                 };
+                let win_codec = if codec.contains("hevc") || codec.contains("265") {
+                    "hevc_nvenc"
+                } else {
+                    "h264_nvenc"
+                };
                 cmd.args([
                     "-c:v",
-                    "h264_nvenc",
+                    win_codec,
                     "-preset",
                     nv_preset,
                     "-rc",
@@ -2223,11 +2262,14 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     "fast" | "quality" => "quality",
                     _ => "speed",
                 };
+                let win_codec = if codec.contains("hevc") || codec.contains("265") {
+                    "hevc_amf"
+                } else {
+                    "h264_amf"
+                };
                 cmd.args([
                     "-c:v",
-                    "h264_amf",
-                    "-usage",
-                    "ultralowlatency",
+                    win_codec,
                     "-quality",
                     amf_quality,
                     "-rc",
@@ -2236,8 +2278,6 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     &crf_str,
                     "-qp_p",
                     &crf_str,
-                    "-bf",
-                    "0",
                     "-pix_fmt",
                     "yuv420p",
                 ]);
@@ -2249,15 +2289,18 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     "fast" | "medium" => "medium",
                     _ => "veryfast",
                 };
+                let win_codec = if codec.contains("hevc") || codec.contains("265") {
+                    "hevc_qsv"
+                } else {
+                    "h264_qsv"
+                };
                 cmd.args([
                     "-c:v",
-                    "h264_qsv",
+                    win_codec,
                     "-preset",
                     qsv_preset,
                     "-global_quality",
                     &crf_str,
-                    "-bf",
-                    "0",
                     "-pix_fmt",
                     "yuv420p",
                 ]);
@@ -2280,6 +2323,24 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     &crf_str,
                     "-b:v",
                     "0",
+                    "-pix_fmt",
+                    "yuv420p",
+                ]);
+            } else if codec == "libx265" || codec.contains("265") || codec.contains("hevc") {
+                let preset = if config.video.preset.is_empty() {
+                    "ultrafast"
+                } else {
+                    config.video.preset.as_str()
+                };
+                cmd.args([
+                    "-c:v",
+                    "libx265",
+                    "-preset",
+                    preset,
+                    "-crf",
+                    &crf_str,
+                    "-tune",
+                    "zerolatency",
                     "-pix_fmt",
                     "yuv420p",
                 ]);
@@ -2386,8 +2447,13 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
             let crf_str = config.video.crf.to_string();
 
             if codec.contains("vaapi") || codec.contains("amf") || codec.contains("qsv") {
+                let linux_codec = if codec.contains("hevc") || codec.contains("265") {
+                    "hevc_vaapi"
+                } else {
+                    "h264_vaapi"
+                };
                 let qp_arg = format!("qp={}", crf_str);
-                cmd.args(["-c", "h264_vaapi", "-b", "0", "-p", &qp_arg]);
+                cmd.args(["-c", linux_codec, "-b", "0", "-p", &qp_arg]);
             } else if codec.contains("nvenc") {
                 let nv_preset = match config.video.preset.as_str() {
                     "ultrafast" | "p1" => "p1",
@@ -2396,9 +2462,14 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
                     "fast" | "p4" => "p4",
                     _ => "p3",
                 };
+                let linux_codec = if codec.contains("hevc") || codec.contains("265") {
+                    "hevc_nvenc"
+                } else {
+                    "h264_nvenc"
+                };
                 let preset_arg = format!("preset={}", nv_preset);
                 let cq_arg = format!("cq={}", crf_str);
-                cmd.args(["-c", "h264_nvenc", "-b", "0", "-p", &preset_arg, "-p", &cq_arg]);
+                cmd.args(["-c", linux_codec, "-b", "0", "-p", &preset_arg, "-p", &cq_arg]);
             } else if codec.contains("vp9") {
                 let cpu_used = match config.video.preset.as_str() {
                     "ultrafast" => "8",
@@ -2781,5 +2852,43 @@ mod tests {
         for &s in q.iter().skip(4) {
             assert!((s - 0.5).abs() < 0.05);
         }
+    }
+
+    #[test]
+    fn test_apply_profile_args_hevc_vaapi() {
+        let mut config = Config::default();
+        config.profile.active_profile = "custom".to_string();
+        config.video.codec = "hevc_vaapi".to_string();
+        config.video.crf = 24;
+
+        let mut cmd = Command::new("wf-recorder");
+        apply_profile_args(&mut cmd, &config);
+
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect();
+        let c_idx = args.iter().position(|a| a == "-c").expect("should have -c flag");
+        assert_eq!(args[c_idx + 1], "hevc_vaapi");
+        assert!(args.contains(&"qp=24".to_string()));
+    }
+
+    #[test]
+    fn test_apply_profile_args_hevc_nvenc() {
+        let mut config = Config::default();
+        config.profile.active_profile = "custom".to_string();
+        config.video.codec = "hevc_nvenc".to_string();
+        config.video.crf = 20;
+
+        let mut cmd = Command::new("wf-recorder");
+        apply_profile_args(&mut cmd, &config);
+
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect();
+        let c_idx = args.iter().position(|a| a == "-c").expect("should have -c flag");
+        assert_eq!(args[c_idx + 1], "hevc_nvenc");
+        assert!(args.contains(&"cq=20".to_string()));
     }
 }

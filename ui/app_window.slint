@@ -573,7 +573,7 @@ export component AppWindow inherits Window {
                                 icon-name: "memory";
                                 value: root.ram-usage;
                                 label: "Consumo RAM (máx: " + root.max-memory-mb + " MB)";
-                                badge-text: "dmabuf";
+                                badge-text: root.backend-title == "Windows DXGI" ? "RAM Ring" : "dmabuf";
                             }
                         }
 
@@ -619,7 +619,7 @@ export component AppWindow inherits Window {
                                     icon-name: "memory";
                                     value: root.ram-usage;
                                     label: "Consumo RAM (máx: " + root.max-memory-mb + " MB)";
-                                    badge-text: "dmabuf";
+                                    badge-text: root.backend-title == "Windows DXGI" ? "RAM Ring" : "dmabuf";
                                 }
                             }
                         }
@@ -663,7 +663,7 @@ export component AppWindow inherits Window {
                                         spacing: 2px;
 
                                         Text {
-                                            text: "Fuente activa: " + root.selected-screen + " • " + root.selected-fps + " FPS • " + (root.active-profile == "sane-safe" ? "Sane Safe (CPU)" : "Hardware VA-API");
+                                            text: "Fuente activa: " + root.selected-screen + " • " + root.selected-fps + " FPS • " + (root.active-profile == "sane-safe" ? "Sane Safe (CPU)" : (root.backend-title == "Windows DXGI" ? "Hardware GPU (AMF/NVENC)" : "Hardware VA-API"));
                                             font-size: Theme.font-title-small;
                                             font-weight: 700;
                                             color: Theme.on-surface;
@@ -875,7 +875,7 @@ export component AppWindow inherits Window {
                             spacing: 12px;
 
                             Text {
-                                text: "Monitores detectados (Wayland)";
+                                text: root.backend-title == "Windows DXGI" ? "Monitores detectados (Windows Display)" : "Monitores detectados (Wayland)";
                                 font-size: 15px;
                                 font-weight: 600;
                                 color: Theme.primary;
@@ -1662,7 +1662,7 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                         M3PresetChip {
-                                            text: "libx265 (HEVC)";
+                                            text: "libx265 (HEVC • CPU)";
                                             is-active: root.custom-codec == "libx265";
                                             clicked => {
                                                 root.custom-codec = "libx265";
@@ -1688,7 +1688,7 @@ export component AppWindow inherits Window {
                                         HorizontalLayout {
                                             spacing: 8px;
                                             M3PresetChip {
-                                                text: "h264_vaapi (Linux VA-API • Zero B-Frames)";
+                                                 text: "h264_vaapi (Linux VA-API • Zero B-Frames)";
                                                 is-active: root.custom-codec == "h264_vaapi";
                                                 clicked => {
                                                     root.custom-codec = "h264_vaapi";
@@ -1723,11 +1723,30 @@ export component AppWindow inherits Window {
                                                 }
                                             }
                                         }
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            M3PresetChip {
+                                                text: "hevc_amf / vaapi (HEVC GPU AMD)";
+                                                is-active: root.custom-codec == "hevc_amf" || root.custom-codec == "hevc_vaapi";
+                                                clicked => {
+                                                    root.custom-codec = root.backend-title == "Windows DXGI" ? "hevc_amf" : "hevc_vaapi";
+                                                    root.set-custom-codec(root.custom-codec);
+                                                }
+                                            }
+                                            M3PresetChip {
+                                                text: "hevc_nvenc (HEVC GPU NVIDIA)";
+                                                is-active: root.custom-codec == "hevc_nvenc";
+                                                clicked => {
+                                                    root.custom-codec = "hevc_nvenc";
+                                                    root.set-custom-codec("hevc_nvenc");
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 
                                 // 2. Preset CPU / GPU / VP9 según el códec activo
-                                if root.custom-codec == "h264_vaapi": VerticalLayout {
+                                if root.custom-codec == "h264_vaapi" || root.custom-codec == "hevc_vaapi": VerticalLayout {
                                     spacing: 8px;
                                     Text {
                                         text: "Velocidad de codificación (Motor físico VCE / VA-API):";
@@ -1752,7 +1771,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                if root.custom-codec == "h264_nvenc": VerticalLayout {
+                                if root.custom-codec == "h264_nvenc" || root.custom-codec == "hevc_nvenc": VerticalLayout {
                                     spacing: 8px;
                                     Text {
                                         text: "Preset de hardware NVIDIA NVENC:";
@@ -1797,7 +1816,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                if root.custom-codec == "h264_amf": VerticalLayout {
+                                if root.custom-codec == "h264_amf" || root.custom-codec == "hevc_amf": VerticalLayout {
                                     spacing: 8px;
                                     Text {
                                         text: "Perfil de hardware AMD AMF:";
@@ -1834,7 +1853,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                if root.custom-codec == "h264_qsv": VerticalLayout {
+                                if root.custom-codec == "h264_qsv" || root.custom-codec == "hevc_qsv": VerticalLayout {
                                     spacing: 8px;
                                     Text {
                                         text: "Preset Intel QuickSync (TU):";
@@ -1924,7 +1943,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                if root.custom-codec != "h264_vaapi" && root.custom-codec != "h264_nvenc" && root.custom-codec != "h264_amf" && root.custom-codec != "h264_qsv" && root.custom-codec != "libvpx-vp9": VerticalLayout {
+                                if root.custom-codec != "h264_vaapi" && root.custom-codec != "hevc_vaapi" && root.custom-codec != "h264_nvenc" && root.custom-codec != "hevc_nvenc" && root.custom-codec != "h264_amf" && root.custom-codec != "hevc_amf" && root.custom-codec != "h264_qsv" && root.custom-codec != "hevc_qsv" && root.custom-codec != "libvpx-vp9": VerticalLayout {
                                     spacing: 8px;
                                     Text {
                                         text: "Preset de velocidad CPU:";
@@ -1973,7 +1992,7 @@ export component AppWindow inherits Window {
                                 VerticalLayout {
                                     spacing: 8px;
                                     Text {
-                                        text: (root.custom-codec == "h264_vaapi" || root.custom-codec == "h264_nvenc" || root.custom-codec == "h264_amf" || root.custom-codec == "h264_qsv") ? ("Calidad QP en GPU (" + root.custom-crf + " - menor es mayor calidad):") : ("Calidad CRF (" + root.custom-crf + " - menor es mayor calidad):");
+                                        text: (root.custom-codec == "h264_vaapi" || root.custom-codec == "hevc_vaapi" || root.custom-codec == "h264_nvenc" || root.custom-codec == "hevc_nvenc" || root.custom-codec == "h264_amf" || root.custom-codec == "hevc_amf" || root.custom-codec == "h264_qsv" || root.custom-codec == "hevc_qsv") ? ("Calidad QP en GPU (" + root.custom-crf + " - menor es mayor calidad):") : ("Calidad CRF (" + root.custom-crf + " - menor es mayor calidad):");
                                         font-size: Theme.font-label-medium;
                                         font-weight: 700;
                                         color: Theme.on-surface;
@@ -3516,7 +3535,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            // v0.5.2
+                            // v0.5.3
                             M3Card {
                                 content-padding: 18px;
                                 card-background: Theme.surface-container-low;
@@ -3532,7 +3551,7 @@ export component AppWindow inherits Window {
                                         Text {
                                             horizontal-stretch: 1;
                                             min-width: 0px;
-                                            text: "v0.5.2 — Codificación Hardware Polaris VA-API Zero B-Frames y Presets Adaptativos";
+                                            text: "v0.5.3 — Hotfix Multi-Monitor Windows & HEVC/AMF GPU";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.primary;
@@ -3555,6 +3574,42 @@ export component AppWindow inherits Window {
                                                     vertical-alignment: center;
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "• Captura Individual Multi-Monitor en Windows (gdigrab): selección exacta del monitor elegido (\\\\.\\DISPLAY1, \\\\.\\DISPLAY2, etc.) leyendo coordenadas de pantalla dmPosition.x/y y dimensiones de resolución dmPelsWidth/Height para evitar grabar ambas pantallas combinadas.\n• Fix de Aceleración GPU AMD AMF (h264_amf / hevc_amf) en Windows: eliminación de flags incompatibles (-bf 0 y -usage ultralowlatency) en el perfil personalizado que causaban fallo silencioso al iniciar y caída a CPU (libx264).\n• Soporte de Códecs HEVC por GPU: soporte nativo multiplataforma para hevc_amf, hevc_vaapi y hevc_nvenc (H.265 acelerado por hardware).\n• Preservación de Monitor en Fallback: el mecanismo de seguridad conserva el monitor elegido por el usuario sin reiniciar a escritorio completo.\n• Etiquetas Nativas según Sistema Operativo: adaptación de la interfaz a Windows Display, RAM Ring y Hardware GPU (AMF/NVENC).";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.5.2
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            min-width: 0px;
+                                            text: "v0.5.2 — Codificación Hardware Polaris VA-API Zero B-Frames y Presets Adaptativos";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.primary;
+                                            vertical-alignment: center;
+                                            wrap: word-wrap;
                                         }
                                     }
 

@@ -2,7 +2,7 @@
 ; Instalador nativo de 64 bits para Windows (Windows 10, Windows 11, IoT Enterprise LTSC 2021)
 
 #define MyAppName "sane-rec"
-#define MyAppVersion "0.5.2"
+#define MyAppVersion "0.5.3"
 #define MyAppPublisher "RCarrascoO"
 #define MyAppURL "https://github.com/RCarrascoO/sane-rec"
 #define MyAppExeName "sane-rec.exe"

@@ -1,6 +1,6 @@
 [package]
 name = "sane-rec"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
 authors = ["RCarrascoO"]
 description = "Lightweight Material Design 3 Instant Replay & Screen Recorder for Linux and Windows with CPU-first architecture"

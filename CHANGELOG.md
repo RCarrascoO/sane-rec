@@ -1,5 +1,10 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.5.3 - 2026-11-01
+- **Captura Individual Multi-Monitor en Windows (`gdigrab` offset & geometry)**: Selección exacta del monitor elegido (`\\.\DISPLAY1`, `\\.\DISPLAY2`, etc.) leyendo coordenadas `dmPosition.x/y` y resolución `dmPelsWidth/Height` vía Win32 `EnumDisplaySettingsExW`, evitando grabar ambas pantallas combinadas.
+- **Fix de Aceleración GPU AMD AMF (`h264_amf` / `hevc_amf`) en Windows y Soporte HEVC GPU**: Eliminados los flags incompatibles `-bf 0` y `-usage ultralowlatency` en el perfil personalizado de Windows que causaban que `h264_amf` fallara al iniciar y cayera silenciosamente a CPU (`libx264`). Añadido soporte nativo para `hevc_amf`, `hevc_vaapi` y `hevc_nvenc` (H.265 acelerado por GPU).
+- **Preservación de Monitor y Etiquetas Nativas Windows**: El fallback de seguridad conserva el monitor elegido y la interfaz adapta las etiquetas (`Windows Display`, `RAM Ring`, `Hardware GPU`) según el sistema operativo.
+
 ## v0.5.2
 - **Aceleración por Hardware AMD Polaris VA-API Zero B-Frames (`-b 0`)**: Grabación fluida por GPU (`h264_vaapi`) a 60 FPS con solo ~3% de uso de CPU y 0 cuelgues del kernel (`ring vce0 timeout`) en tarjetas AMD Radeon RX 470/480/570/580 (Polaris 10/20 / VCE 3.4) y RDNA en Linux Wayland.
 - **Perfil Predefinido `Polaris-VAAPI-ZeroBFrames`**: Nuevo perfil optimizado listo para usar en el gestor de perfiles de equipo.
