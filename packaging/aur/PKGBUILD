@@ -22,7 +22,7 @@ optdepends=(
 provides=('sane-rec')
 conflicts=('sane-rec')
 source=("https://github.com/RCarrascoO/sane-rec/releases/download/v${pkgver}/sane-rec-v${pkgver}-linux-x86_64.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('0846a23900fc8a0e4bdbdec0f19c2cabf29ebc460a1419f264b70562aa998752')
 
 package() {
     cd "${srcdir}/sane-rec-v${pkgver}-linux-x86_64"

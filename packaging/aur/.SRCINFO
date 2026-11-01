@@ -17,6 +17,6 @@ pkgbase = sane-rec-bin
 	provides = sane-rec
 	conflicts = sane-rec
 	source = https://github.com/RCarrascoO/sane-rec/releases/download/v0.4.1/sane-rec-v0.4.1-linux-x86_64.tar.gz
-	sha256sums = SKIP
+	sha256sums = 0846a23900fc8a0e4bdbdec0f19c2cabf29ebc460a1419f264b70562aa998752
 
 pkgname = sane-rec-bin
