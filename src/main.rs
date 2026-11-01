@@ -49,6 +49,8 @@ pub enum RecordAction {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Instalar manejador global de pánicos y fallos críticos
     sane_rec::crash_handler::install_panic_hook();
+    // Limpiar binario antiguo (.exe.old) si venimos de una auto-actualización en Windows
+    sane_rec::cleanup_old_executable();
 
     let cli = Cli::parse();
 
@@ -426,6 +428,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_custom_codec(config.video.codec.clone().into());
     ui.set_custom_preset(config.video.preset.clone().into());
     ui.set_custom_crf(config.video.crf as i32);
+    ui.set_changelog_text(
+        sane_rec::clean_changelog_markdown(sane_rec::get_embedded_changelog()).into(),
+    );
 
     // Configuración adaptativa de textos de Backend y Driver en la UI
     #[cfg(target_os = "windows")]
@@ -453,6 +458,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     update_audio_devices_model(&ui);
     update_gallery_model(&ui, &config.storage.output_dir);
 
+    // Candado atómico para evitar que múltiples clics abran diálogos superpuestos o bloqueen la UI
+    let dialog_open_guard = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     // Verificar si el daemon ya se encuentra activo
     let daemon_running = ipc::send_command_sync("status").is_ok();
 
@@ -460,8 +468,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let engine = Arc::new(ReplayEngine::new(config.clone()).map_err(|e| e.to_string())?);
 
         // Si el daemon no está corriendo, iniciamos el listener IPC en segundo plano
-        // para que atajos globales de Niri (`sane-rec save`) funcionen con la GUI abierta
+        // para que atajos globales de Niri o Windows (`sane-rec save` / `record_toggle`) funcionen con la GUI abierta
         let engine_for_ipc = engine.clone();
+        let ui_weak_ipc = ui.as_weak();
         std::thread::spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -478,7 +487,39 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 });
 
                 while let Some(cmd) = rx.recv().await {
+                    let action = cmd.action.clone();
+                    let was_running = engine_for_ipc.is_running();
                     dispatch_ipc_command(&engine_for_ipc, cmd).await;
+
+                    // Sincronizar estado visual e informar en la GUI cuando se usa un atajo global
+                    let status = engine_for_ipc.get_status();
+                    let out_dir = engine_for_ipc.config().storage.output_dir;
+                    let ui_weak_clone = ui_weak_ipc.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak_clone.upgrade() {
+                            ui.set_is_running(status.is_running);
+                            ui.set_is_recording(status.is_recording);
+                            if action == "save" {
+                                if was_running {
+                                    update_gallery_model(&ui, &out_dir);
+                                    show_toast(&ui, "save", "Replay guardado mediante atajo global");
+                                } else {
+                                    show_toast(
+                                        &ui,
+                                        "warning",
+                                        "Activa el 'Daemon replay' primero para guardar clips",
+                                    );
+                                }
+                            } else if action == "record" || action == "record_toggle" {
+                                if status.is_recording {
+                                    show_toast(&ui, "record", "Grabación continua iniciada");
+                                } else {
+                                    update_gallery_model(&ui, &out_dir);
+                                    show_toast(&ui, "stop", "Grabación continua guardada");
+                                }
+                            }
+                        }
+                    });
                 }
             });
         });
@@ -507,20 +548,21 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 Err(ipc::IpcError::Custom("No engine available".into()))
             };
 
-            if let Ok(path) = res {
-                if let Some(ui) = ui_weak.upgrade() {
-                    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                        ui.set_last_saved_clip(filename.into());
-                        show_toast(&ui, "🎬", &format!("Replay guardado: {}", filename));
+            match res {
+                Ok(path) => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                            ui.set_last_saved_clip(filename.into());
+                            show_toast(&ui, "save", &format!("Replay guardado: {}", filename));
+                        }
+                        let out_dir = resolve_active_output_dir(&engine_clone, &output_dir);
+                        update_gallery_model(&ui, &out_dir);
                     }
-                    let out_dir = if let Some(ref eng) = engine_clone {
-                        eng.config().storage.output_dir
-                    } else {
-                        path.parent()
-                            .map(|p| p.to_path_buf())
-                            .unwrap_or_else(|| output_dir.clone())
-                    };
-                    update_gallery_model(&ui, &out_dir);
+                }
+                Err(e) => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        show_toast(&ui, "warning", &format!("No se pudo guardar clip: {}", e));
+                    }
                 }
             }
         });
@@ -554,7 +596,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 show_toast(
                     &ui,
-                    "🧠",
+                    "memory",
                     if is_running {
                         "Búfer de repetición en RAM activado"
                     } else {
@@ -573,84 +615,122 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             if daemon_running {
                 let _ = ipc::send_command_sync(&format!("set_profile:{}", prof));
             } else if let Some(ref eng) = engine_clone {
+                let was_running = eng.is_running();
                 let mut cfg = eng.config();
                 cfg.profile.active_profile = prof.to_string();
                 let _ = cfg.save();
                 eng.update_config(cfg);
+                if was_running {
+                    let _ = eng.stop_replay();
+                    let _ = eng.start_replay();
+                }
             }
         });
     }
 
-    // Callback select-output-dir
+    // Callback select-output-dir (Asíncrono en hilo separado + TopMost en Windows para no bloquear ni abrirse detrás)
     {
         let ui_weak = ui.as_weak();
         let engine_clone = local_engine.clone();
+        let guard = dialog_open_guard.clone();
         ui.on_select_output_dir(move || {
-            #[cfg(target_os = "windows")]
-            let selected_path: Option<PathBuf> = {
-                use std::os::windows::process::CommandExt;
-                let ps_script = r#"
-                Add-Type -AssemblyName System.Windows.Forms
-                $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-                $dlg.Description = 'Seleccionar carpeta de Replays'
-                $dlg.ShowNewFolderButton = $true
-                if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-                    Write-Output $dlg.SelectedPath
-                }
-                "#;
-                let output = std::process::Command::new("powershell")
-                    .args(["-NoProfile", "-Sta", "-WindowStyle", "Hidden", "-Command", ps_script])
-                    .creation_flags(0x08000000)
-                    .output();
-                match output {
-                    Ok(out) if out.status.success() => {
-                        let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                        if !path_str.is_empty() {
-                            Some(PathBuf::from(path_str))
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
-            };
-
-            #[cfg(not(target_os = "windows"))]
-            let selected_path: Option<PathBuf> = {
-                let output = std::process::Command::new("zenity")
-                    .arg("--file-selection")
-                    .arg("--directory")
-                    .arg("--title=Seleccionar carpeta de Replays")
-                    .output();
-                match output {
-                    Ok(out) if out.status.success() => {
-                        let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                        if !path_str.is_empty() {
-                            Some(PathBuf::from(path_str))
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
-            };
-
-            if let Some(dir) = selected_path {
-                if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_output_path(dir.to_string_lossy().to_string().into());
-                    update_gallery_model(&ui, &dir);
-                    show_toast(&ui, "📁", &format!("Carpeta seleccionada: {}", dir.display()));
-                }
-                if let Some(ref eng) = engine_clone {
-                    let mut cfg = eng.config();
-                    cfg.storage.output_dir = dir.clone();
-                    let _ = cfg.save();
-                    eng.update_config(cfg);
-                } else if let Ok(mut cfg) = Config::load() {
-                    cfg.storage.output_dir = dir.clone();
-                    let _ = cfg.save();
-                }
+            if guard
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .is_err()
+            {
+                return;
             }
+
+            let ui_weak_bg = ui_weak.clone();
+            let engine_bg = engine_clone.clone();
+            let guard_bg = guard.clone();
+
+            std::thread::spawn(move || {
+                #[cfg(target_os = "windows")]
+                let selected_path: Option<PathBuf> = {
+                    use std::os::windows::process::CommandExt;
+                    let ps_script = r#"
+                    Add-Type -AssemblyName System.Windows.Forms
+                    $owner = New-Object System.Windows.Forms.Form
+                    $owner.TopMost = $true
+                    $owner.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+                    $owner.Width = 0
+                    $owner.Height = 0
+                    $owner.ShowInTaskbar = $false
+                    $owner.Opacity = 0
+                    $owner.Show()
+                    $owner.Activate()
+                    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+                    $dlg.Description = 'Seleccionar carpeta de Replays'
+                    $dlg.ShowNewFolderButton = $true
+                    if ($dlg.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+                        Write-Output $dlg.SelectedPath
+                    }
+                    $owner.Close()
+                    "#;
+                    let output = std::process::Command::new("powershell")
+                        .args(["-NoProfile", "-Sta", "-WindowStyle", "Hidden", "-Command", ps_script])
+                        .creation_flags(0x08000000)
+                        .output();
+                    match output {
+                        Ok(out) if out.status.success() => {
+                            let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                            if !path_str.is_empty() {
+                                Some(PathBuf::from(path_str))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                };
+
+                #[cfg(not(target_os = "windows"))]
+                let selected_path: Option<PathBuf> = {
+                    let output = std::process::Command::new("zenity")
+                        .arg("--file-selection")
+                        .arg("--directory")
+                        .arg("--title=Seleccionar carpeta de Replays")
+                        .output();
+                    match output {
+                        Ok(out) if out.status.success() => {
+                            let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                            if !path_str.is_empty() {
+                                Some(PathBuf::from(path_str))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                };
+
+                guard_bg.store(false, std::sync::atomic::Ordering::SeqCst);
+
+                if let Some(dir) = selected_path {
+                    if let Some(ref eng) = engine_bg {
+                        let mut cfg = eng.config();
+                        cfg.storage.output_dir = dir.clone();
+                        let _ = cfg.save();
+                        eng.update_config(cfg);
+                    } else if let Ok(mut cfg) = Config::load() {
+                        cfg.storage.output_dir = dir.clone();
+                        let _ = cfg.save();
+                    }
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak_bg.upgrade() {
+                            ui.set_output_path(dir.to_string_lossy().to_string().into());
+                            update_gallery_model(&ui, &dir);
+                            show_toast(&ui, "folder", &format!("Carpeta seleccionada: {}", dir.display()));
+                        }
+                    });
+                }
+            });
         });
     }
 
@@ -676,7 +756,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_output_path(dir.to_string_lossy().to_string().into());
                 update_gallery_model(&ui, &dir);
-                show_toast(&ui, "📁", &format!("Carpeta de salida: {}", dir.display()));
+                show_toast(&ui, "folder", &format!("Carpeta de salida: {}", dir.display()));
             }
         });
     }
@@ -701,25 +781,28 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_is_recording(is_recording);
+                let out_dir = resolve_active_output_dir(&engine_clone, &output_dir_rec);
                 if is_recording {
-                    show_toast(&ui, "🔴", &format!("Grabación continua iniciada ({})", ui.get_shortcut_record()));
+                    show_toast(&ui, "record", &format!("Grabación continua iniciada ({})", ui.get_shortcut_record()));
                 } else {
-                    show_toast(&ui, "⏹️", "Grabación continua finalizada y guardada");
-                    update_gallery_model(&ui, &output_dir_rec);
+                    show_toast(&ui, "stop", "Grabación continua finalizada y guardada");
+                    update_gallery_model(&ui, &out_dir);
                 }
             }
         });
     }
 
-    // Callbacks para la Galería y Reproducción
+    // Callbacks para la Galería, Reproducción y Eliminación de Clips
     {
         let output_dir = config.storage.output_dir.clone();
+        let engine_clone = local_engine.clone();
         ui.on_play_clip(move |path_str| {
+            let current_dir = resolve_active_output_dir(&engine_clone, &output_dir);
             let p = PathBuf::from(path_str.as_str());
             let target = if p.is_absolute() && p.exists() {
                 p
             } else {
-                output_dir.join(path_str.as_str())
+                current_dir.join(path_str.as_str())
             };
 
             #[cfg(target_os = "windows")]
@@ -743,28 +826,42 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let output_dir = config.storage.output_dir.clone();
+        let engine_clone = local_engine.clone();
         ui.on_open_clip_folder(move |path_str| {
+            let current_dir = resolve_active_output_dir(&engine_clone, &output_dir);
             let p = PathBuf::from(path_str.as_str());
-            let target = if p.is_absolute() && p.parent().is_some() {
-                p.parent().unwrap().to_path_buf()
+            let target_file = if p.is_absolute() && p.exists() {
+                p.clone()
             } else {
-                output_dir.clone()
+                current_dir.join(path_str.as_str())
             };
+            let target_dir = target_file
+                .parent()
+                .map(|parent| parent.to_path_buf())
+                .unwrap_or(current_dir);
 
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
-                let path_arg = target.to_string_lossy().to_string();
-                let _ = std::process::Command::new("explorer.exe")
-                    .args(["/select,", &path_arg])
-                    .creation_flags(0x08000000)
-                    .spawn();
+                if target_file.exists() {
+                    let path_arg = target_file.to_string_lossy().to_string();
+                    let _ = std::process::Command::new("explorer.exe")
+                        .args(["/select,", &path_arg])
+                        .creation_flags(0x08000000)
+                        .spawn();
+                } else {
+                    let dir_arg = target_dir.to_string_lossy().to_string();
+                    let _ = std::process::Command::new("explorer.exe")
+                        .arg(&dir_arg)
+                        .creation_flags(0x08000000)
+                        .spawn();
+                }
             }
 
             #[cfg(not(target_os = "windows"))]
             {
-                if std::process::Command::new("cosmic-files").arg(&target).spawn().is_err() {
-                    let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+                if std::process::Command::new("cosmic-files").arg(&target_dir).spawn().is_err() {
+                    let _ = std::process::Command::new("xdg-open").arg(target_dir).spawn();
                 }
             }
         });
@@ -772,11 +869,13 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let output_dir = config.storage.output_dir.clone();
+        let engine_clone = local_engine.clone();
         ui.on_open_output_folder(move || {
+            let current_dir = resolve_active_output_dir(&engine_clone, &output_dir);
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
-                let path_arg = output_dir.to_string_lossy().to_string();
+                let path_arg = current_dir.to_string_lossy().to_string();
                 let _ = std::process::Command::new("explorer.exe")
                     .arg(&path_arg)
                     .creation_flags(0x08000000)
@@ -785,8 +884,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
             #[cfg(not(target_os = "windows"))]
             {
-                if std::process::Command::new("cosmic-files").arg(&output_dir).spawn().is_err() {
-                    let _ = std::process::Command::new("xdg-open").arg(&output_dir).spawn();
+                if std::process::Command::new("cosmic-files").arg(&current_dir).spawn().is_err() {
+                    let _ = std::process::Command::new("xdg-open").arg(&current_dir).spawn();
                 }
             }
         });
@@ -795,9 +894,40 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ui_weak = ui.as_weak();
         let output_dir = config.storage.output_dir.clone();
+        let engine_clone = local_engine.clone();
         ui.on_refresh_gallery(move || {
             if let Some(ui) = ui_weak.upgrade() {
-                update_gallery_model(&ui, &output_dir);
+                let current_dir = resolve_active_output_dir(&engine_clone, &output_dir);
+                update_gallery_model(&ui, &current_dir);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let output_dir = config.storage.output_dir.clone();
+        let engine_clone = local_engine.clone();
+        ui.on_delete_clip(move |path_str| {
+            let current_dir = resolve_active_output_dir(&engine_clone, &output_dir);
+            let p = PathBuf::from(path_str.as_str());
+            let target = if p.is_absolute() && p.exists() {
+                p
+            } else {
+                current_dir.join(path_str.as_str())
+            };
+
+            match sane_rec::delete_clip(&target) {
+                Ok(()) => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        update_gallery_model(&ui, &current_dir);
+                        show_toast(&ui, "delete", "Clip eliminado correctamente");
+                    }
+                }
+                Err(e) => {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        show_toast(&ui, "warning", &format!("No se pudo eliminar: {}", e));
+                    }
+                }
             }
         });
     }
@@ -814,10 +944,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_capture_mode(2);
                 }
                 if let Some(ref eng) = engine_clone {
+                    let was_running = eng.is_running();
                     let mut cfg = eng.config();
                     cfg.video.target = format!("area:{}", geo);
                     let _ = cfg.save();
                     eng.update_config(cfg);
+                    if was_running {
+                        let _ = eng.stop_replay();
+                        let _ = eng.start_replay();
+                    }
                 } else if let Ok(mut cfg) = Config::load() {
                     cfg.video.target = format!("area:{}", geo);
                     let _ = cfg.save();
@@ -845,11 +980,16 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let screen = screen_name.as_str();
             let resolution = res.as_str();
             if let Some(ref eng) = engine_clone {
+                let was_running = eng.is_running();
                 let mut cfg = eng.config();
                 cfg.video.target = screen.to_string();
                 cfg.video.scale = resolution.to_string();
                 let _ = cfg.save();
                 eng.update_config(cfg);
+                if was_running {
+                    let _ = eng.stop_replay();
+                    let _ = eng.start_replay();
+                }
             } else if let Ok(mut cfg) = Config::load() {
                 cfg.video.target = screen.to_string();
                 cfg.video.scale = resolution.to_string();
@@ -860,13 +1000,30 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let engine_clone = local_engine.clone();
-        ui.on_select_window(move |_title, app_id| {
-            let target = format!("window:{}", app_id.as_str());
+        ui.on_select_window(move |title, app_id| {
+            #[cfg(target_os = "windows")]
+            let chosen = if !title.is_empty() {
+                title.as_str()
+            } else {
+                app_id.as_str()
+            };
+            #[cfg(not(target_os = "windows"))]
+            let chosen = if !app_id.is_empty() {
+                app_id.as_str()
+            } else {
+                title.as_str()
+            };
+            let target = format!("window:{}", chosen);
             if let Some(ref eng) = engine_clone {
+                let was_running = eng.is_running();
                 let mut cfg = eng.config();
                 cfg.video.target = target;
                 let _ = cfg.save();
                 eng.update_config(cfg);
+                if was_running {
+                    let _ = eng.stop_replay();
+                    let _ = eng.start_replay();
+                }
             } else if let Ok(mut cfg) = Config::load() {
                 cfg.video.target = target;
                 let _ = cfg.save();
@@ -990,7 +1147,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             if let Some(ui) = ui_weak.upgrade() {
-                show_toast(&ui, "⏱️", &format!("Búfer de repetición fijado a {}s", d));
+                show_toast(&ui, "memory", &format!("Búfer de repetición fijado a {}s", d));
             }
         });
     }
@@ -1000,8 +1157,19 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let ui_weak = ui.as_weak();
         let engine_clone = local_engine.clone();
         ui.on_update_shortcuts(move |save_key, rec_key| {
-            let save_str = save_key.as_str();
-            let rec_str = rec_key.as_str();
+            let save_str = save_key.as_str().trim();
+            let rec_str = rec_key.as_str().trim();
+
+            if !save_str.is_empty() && save_str.eq_ignore_ascii_case(rec_str) {
+                if let Some(ui) = ui_weak.upgrade() {
+                    show_toast(
+                        &ui,
+                        "warning",
+                        "El atajo de Guardar Replay y Grabar no pueden ser la misma tecla",
+                    );
+                }
+                return;
+            }
 
             let _ = sane_rec::update_niri_shortcuts(save_str, rec_str);
 
@@ -1030,7 +1198,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 ui.set_shortcut_record(rec_str.into());
                 ui.set_custom_save_text(save_str.into());
                 ui.set_custom_record_text(rec_str.into());
-                show_toast(&ui, "⌨️", &toast_msg);
+                show_toast(&ui, "keyboard", &toast_msg);
             }
         });
     }
@@ -1051,7 +1219,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = cfg.save();
             }
             if let Some(ui) = ui_weak.upgrade() {
-                show_toast(&ui, "⚙️", &format!("Códec personalizado: {}", c));
+                show_toast(&ui, "settings", &format!("Códec personalizado: {}", c));
             }
         });
     }
@@ -1072,7 +1240,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = cfg.save();
             }
             if let Some(ui) = ui_weak.upgrade() {
-                show_toast(&ui, "⚡", &format!("Preset CPU: {}", p));
+                show_toast(&ui, "bolt", &format!("Preset CPU: {}", p));
             }
         });
     }
@@ -1093,7 +1261,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = cfg.save();
             }
             if let Some(ui) = ui_weak.upgrade() {
-                show_toast(&ui, "🎚️", &format!("Calidad CRF: {}", c));
+                show_toast(&ui, "tune", &format!("Calidad CRF: {}", c));
             }
         });
     }
@@ -1113,7 +1281,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = cfg.save();
             }
             if let Some(ui) = ui_weak.upgrade() {
-                show_toast(&ui, "🧠", &format!("Límite búfer RAM: {} MB", ram));
+                show_toast(&ui, "memory", &format!("Límite búfer RAM: {} MB", ram));
             }
         });
     }
@@ -1138,6 +1306,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_active_profile("custom".into());
 
                     if let Some(ref eng) = engine_clone {
+                        let was_running = eng.is_running();
                         let mut cfg = eng.config();
                         cfg.video.codec = profile.codec;
                         cfg.video.preset = profile.preset;
@@ -1148,6 +1317,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         cfg.profile.active_profile = "custom".to_string();
                         let _ = cfg.save();
                         eng.update_config(cfg);
+                        if was_running {
+                            let _ = eng.stop_replay();
+                            let _ = eng.start_replay();
+                        }
                     } else if let Ok(mut cfg) = Config::load() {
                         cfg.video.codec = profile.codec;
                         cfg.video.preset = profile.preset;
@@ -1158,10 +1331,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         cfg.profile.active_profile = "custom".to_string();
                         let _ = cfg.save();
                     }
-                    show_toast(&ui, "⚙️", &format!("Perfil '{}' cargado correctamente", profile.name));
+                    show_toast(&ui, "settings", &format!("Perfil '{}' cargado correctamente", profile.name));
                 }
                 Err(e) => {
-                    show_toast(&ui, "❌", &format!("Error al cargar perfil: {}", e));
+                    show_toast(&ui, "warning", &format!("Error al cargar perfil: {}", e));
                 }
             }
         });
@@ -1184,6 +1357,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_active_profile("custom".into());
 
                     if let Some(ref eng) = engine_clone {
+                        let was_running = eng.is_running();
                         let mut cfg = eng.config();
                         cfg.video.codec = profile.codec;
                         cfg.video.preset = profile.preset;
@@ -1194,6 +1368,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         cfg.profile.active_profile = "custom".to_string();
                         let _ = cfg.save();
                         eng.update_config(cfg);
+                        if was_running {
+                            let _ = eng.stop_replay();
+                            let _ = eng.start_replay();
+                        }
                     } else if let Ok(mut cfg) = Config::load() {
                         cfg.video.codec = profile.codec;
                         cfg.video.preset = profile.preset;
@@ -1204,10 +1382,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         cfg.profile.active_profile = "custom".to_string();
                         let _ = cfg.save();
                     }
-                    show_toast(&ui, "⚙️", &format!("Perfil '{}' cargado correctamente", profile.name));
+                    show_toast(&ui, "settings", &format!("Perfil '{}' cargado correctamente", profile.name));
                 }
                 Err(e) => {
-                    show_toast(&ui, "❌", &format!("Error al cargar perfil: {}", e));
+                    show_toast(&ui, "warning", &format!("Error al cargar perfil: {}", e));
                 }
             }
         });
@@ -1238,10 +1416,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             match sane_rec::profiles_manager::save_profile(&profile) {
                 Ok(_) => {
                     update_profiles_model(&ui);
-                    show_toast(&ui, "💾", &format!("Perfil '{}' guardado", profile_name));
+                    show_toast(&ui, "save", &format!("Perfil '{}' guardado", profile_name));
                 }
                 Err(e) => {
-                    show_toast(&ui, "❌", &format!("Error al guardar perfil: {}", e));
+                    show_toast(&ui, "warning", &format!("Error al guardar perfil: {}", e));
                 }
             }
         });
@@ -1249,8 +1427,23 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let ui_weak = ui.as_weak();
+        let guard = dialog_open_guard.clone();
         ui.on_export_hardware_profile(move |name| {
-            let Some(ui) = ui_weak.upgrade() else { return; };
+            if guard
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .is_err()
+            {
+                return;
+            }
+            let Some(ui) = ui_weak.upgrade() else {
+                guard.store(false, std::sync::atomic::Ordering::SeqCst);
+                return;
+            };
             let profile_res = sane_rec::profiles_manager::load_profile(name.as_str());
             let profile = match profile_res {
                 Ok(p) => p,
@@ -1269,134 +1462,185 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let default_filename = format!("{}.toml", name.trim().replace(' ', "_"));
-            #[cfg(target_os = "windows")]
-            let output_path: Option<std::path::PathBuf> = {
-                use std::os::windows::process::CommandExt;
-                let ps_script = format!(
-                    r#"
-                    Add-Type -AssemblyName System.Windows.Forms
-                    $dlg = New-Object System.Windows.Forms.SaveFileDialog
-                    $dlg.Title = 'Exportar Perfil de Hardware'
-                    $dlg.Filter = 'Archivos TOML (*.toml)|*.toml'
-                    $dlg.FileName = '{}'
-                    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
-                        Write-Output $dlg.FileName
-                    }}
-                    "#,
-                    default_filename
-                );
-                let output = std::process::Command::new("powershell")
-                    .args(["-NoProfile", "-Sta", "-WindowStyle", "Hidden", "-Command", &ps_script])
-                    .creation_flags(0x08000000)
-                    .output();
-                match output {
-                    Ok(o) if o.status.success() => {
-                        let path_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                        if !path_str.is_empty() {
-                            Some(std::path::PathBuf::from(path_str))
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
-            };
+            let ui_weak_bg = ui_weak.clone();
+            let guard_bg = guard.clone();
 
-            #[cfg(not(target_os = "windows"))]
-            let output_path: Option<std::path::PathBuf> = {
-                let output = std::process::Command::new("zenity")
-                    .args([
-                        "--file-selection",
-                        "--save",
-                        "--confirm-overwrite",
-                        "--title=Exportar Perfil de Hardware",
-                        &format!("--filename={}", default_filename),
-                    ])
-                    .output();
-                match output {
-                    Ok(o) if o.status.success() => {
-                        let path_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                        if !path_str.is_empty() {
-                            Some(std::path::PathBuf::from(path_str))
-                        } else {
-                            None
+            std::thread::spawn(move || {
+                #[cfg(target_os = "windows")]
+                let output_path: Option<std::path::PathBuf> = {
+                    use std::os::windows::process::CommandExt;
+                    let ps_script = format!(
+                        r#"
+                        Add-Type -AssemblyName System.Windows.Forms
+                        $owner = New-Object System.Windows.Forms.Form
+                        $owner.TopMost = $true
+                        $owner.Width = 0
+                        $owner.Height = 0
+                        $owner.ShowInTaskbar = $false
+                        $owner.Opacity = 0
+                        $owner.Show()
+                        $owner.Activate()
+                        $dlg = New-Object System.Windows.Forms.SaveFileDialog
+                        $dlg.Title = 'Exportar Perfil de Hardware'
+                        $dlg.Filter = 'Archivos TOML (*.toml)|*.toml'
+                        $dlg.FileName = '{}'
+                        if ($dlg.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {{
+                            Write-Output $dlg.FileName
+                        }}
+                        $owner.Close()
+                        "#,
+                        default_filename
+                    );
+                    let output = std::process::Command::new("powershell")
+                        .args(["-NoProfile", "-Sta", "-WindowStyle", "Hidden", "-Command", &ps_script])
+                        .creation_flags(0x08000000)
+                        .output();
+                    match output {
+                        Ok(o) if o.status.success() => {
+                            let path_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                            if !path_str.is_empty() {
+                                Some(std::path::PathBuf::from(path_str))
+                            } else {
+                                None
+                            }
                         }
+                        _ => None,
                     }
-                    _ => None,
-                }
-            };
+                };
 
-            if let Some(path) = output_path {
-                match sane_rec::profiles_manager::export_profile(&profile, &path) {
-                    Ok(_) => {
-                        show_toast(&ui, "📤", &format!("Perfil exportado a {}", path.display()));
+                #[cfg(not(target_os = "windows"))]
+                let output_path: Option<std::path::PathBuf> = {
+                    let output = std::process::Command::new("zenity")
+                        .args([
+                            "--file-selection",
+                            "--save",
+                            "--confirm-overwrite",
+                            "--title=Exportar Perfil de Hardware",
+                            &format!("--filename={}", default_filename),
+                        ])
+                        .output();
+                    match output {
+                        Ok(o) if o.status.success() => {
+                            let path_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                            if !path_str.is_empty() {
+                                Some(std::path::PathBuf::from(path_str))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
                     }
-                    Err(e) => {
-                        show_toast(&ui, "❌", &format!("Error al exportar: {}", e));
-                    }
+                };
+
+                guard_bg.store(false, std::sync::atomic::Ordering::SeqCst);
+
+                if let Some(path) = output_path {
+                    let res = sane_rec::profiles_manager::export_profile(&profile, &path);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak_bg.upgrade() {
+                            match res {
+                                Ok(_) => {
+                                    show_toast(&ui, "save", &format!("Perfil exportado a {}", path.display()));
+                                }
+                                Err(e) => {
+                                    show_toast(&ui, "warning", &format!("Error al exportar: {}", e));
+                                }
+                            }
+                        }
+                    });
                 }
-            }
+            });
         });
     }
 
     {
         let ui_weak = ui.as_weak();
         let engine_clone = local_engine.clone();
+        let guard = dialog_open_guard.clone();
         ui.on_import_hardware_profile(move || {
-            let Some(ui) = ui_weak.upgrade() else { return; };
-            #[cfg(target_os = "windows")]
-            let input_path: Option<std::path::PathBuf> = {
-                use std::os::windows::process::CommandExt;
-                let ps_script = r#"
-                Add-Type -AssemblyName System.Windows.Forms
-                $dlg = New-Object System.Windows.Forms.OpenFileDialog
-                $dlg.Title = 'Seleccionar Perfil de Hardware (.toml)'
-                $dlg.Filter = 'Archivos TOML (*.toml)|*.toml'
-                if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-                    Write-Output $dlg.FileName
-                }
-                "#;
-                let output = std::process::Command::new("powershell")
-                    .args(["-NoProfile", "-Sta", "-WindowStyle", "Hidden", "-Command", ps_script])
-                    .creation_flags(0x08000000)
-                    .output();
-                match output {
-                    Ok(o) if o.status.success() => {
-                        let path_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                        if !path_str.is_empty() {
-                            Some(std::path::PathBuf::from(path_str))
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
-            };
+            if guard
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .is_err()
+            {
+                return;
+            }
+            let ui_weak_bg = ui_weak.clone();
+            let engine_bg = engine_clone.clone();
+            let guard_bg = guard.clone();
 
-            #[cfg(not(target_os = "windows"))]
-            let input_path: Option<std::path::PathBuf> = {
-                let output = std::process::Command::new("zenity")
-                    .args([
-                        "--file-selection",
-                        "--title=Seleccionar Perfil de Hardware (.toml)",
-                        "--file-filter=Archivos TOML (*.toml) | *.toml",
-                    ])
-                    .output();
-                match output {
-                    Ok(o) if o.status.success() => {
-                        let path_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                        if !path_str.is_empty() {
-                            Some(std::path::PathBuf::from(path_str))
-                        } else {
-                            None
-                        }
+            std::thread::spawn(move || {
+                #[cfg(target_os = "windows")]
+                let input_path: Option<std::path::PathBuf> = {
+                    use std::os::windows::process::CommandExt;
+                    let ps_script = r#"
+                    Add-Type -AssemblyName System.Windows.Forms
+                    $owner = New-Object System.Windows.Forms.Form
+                    $owner.TopMost = $true
+                    $owner.Width = 0
+                    $owner.Height = 0
+                    $owner.ShowInTaskbar = $false
+                    $owner.Opacity = 0
+                    $owner.Show()
+                    $owner.Activate()
+                    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+                    $dlg.Title = 'Seleccionar Perfil de Hardware (.toml)'
+                    $dlg.Filter = 'Archivos TOML (*.toml)|*.toml'
+                    if ($dlg.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+                        Write-Output $dlg.FileName
                     }
-                    _ => None,
-                }
-            };
+                    $owner.Close()
+                    "#;
+                    let output = std::process::Command::new("powershell")
+                        .args(["-NoProfile", "-Sta", "-WindowStyle", "Hidden", "-Command", ps_script])
+                        .creation_flags(0x08000000)
+                        .output();
+                    match output {
+                        Ok(o) if o.status.success() => {
+                            let path_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                            if !path_str.is_empty() {
+                                Some(std::path::PathBuf::from(path_str))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                };
 
-            if let Some(path) = input_path {
-                match sane_rec::profiles_manager::import_profile(&path) {
+                #[cfg(not(target_os = "windows"))]
+                let input_path: Option<std::path::PathBuf> = {
+                    let output = std::process::Command::new("zenity")
+                        .args([
+                            "--file-selection",
+                            "--title=Seleccionar Perfil de Hardware (.toml)",
+                            "--file-filter=Archivos TOML (*.toml) | *.toml",
+                        ])
+                        .output();
+                    match output {
+                        Ok(o) if o.status.success() => {
+                            let path_str = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                            if !path_str.is_empty() {
+                                Some(std::path::PathBuf::from(path_str))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                };
+
+                guard_bg.store(false, std::sync::atomic::Ordering::SeqCst);
+
+                if let Some(path) = input_path {
+                    let import_res = sane_rec::profiles_manager::import_profile(&path);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let Some(ui) = ui_weak_bg.upgrade() else { return; };
+                        match import_res {
                             Ok(profile) => {
                                 update_profiles_model(&ui);
                                 ui.set_selected_profile_name(profile.name.clone().into());
@@ -1409,7 +1653,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                 ui.set_audio_track_mode(profile.audio_track_mode as i32);
                                 ui.set_active_profile("custom".into());
 
-                                if let Some(ref eng) = engine_clone {
+                                if let Some(ref eng) = engine_bg {
+                                    let was_running = eng.is_running();
                                     let mut cfg = eng.config();
                                     cfg.video.codec = profile.codec;
                                     cfg.video.preset = profile.preset;
@@ -1420,14 +1665,20 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                     cfg.profile.active_profile = "custom".to_string();
                                     let _ = cfg.save();
                                     eng.update_config(cfg);
+                                    if was_running {
+                                        let _ = eng.stop_replay();
+                                        let _ = eng.start_replay();
+                                    }
                                 }
-                                show_toast(&ui, "📥", &format!("Perfil '{}' importado exitosamente", profile.name));
+                                show_toast(&ui, "check", &format!("Perfil '{}' importado exitosamente", profile.name));
                             }
                             Err(e) => {
-                                show_toast(&ui, "❌", &format!("Error al importar perfil: {}", e));
+                                show_toast(&ui, "warning", &format!("Error al importar perfil: {}", e));
                             }
                         }
-                    }
+                    });
+                }
+            });
         });
     }
 
@@ -1436,7 +1687,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_refresh_hardware_profiles(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 update_profiles_model(&ui);
-                show_toast(&ui, "🔄", "Lista de perfiles actualizada");
+                show_toast(&ui, "refresh", "Lista de perfiles actualizada");
             }
         });
     }
@@ -1448,9 +1699,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let ui_weak = ui.as_weak();
         std::thread::spawn(move || {
             if let Some(info) = sane_rec::updater::check_for_updates() {
+                let cleaned_notes = sane_rec::clean_changelog_markdown(&info.body);
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.set_update_version(info.version.into());
+                        ui.set_update_release_notes(cleaned_notes.into());
                         ui.set_has_update(true);
                     }
                 });
@@ -1463,7 +1716,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_trigger_update(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_is_updating(true);
-                show_toast(&ui, "🚀", "Descargando e instalando actualización...");
+                show_toast(&ui, "rocket", "Descargando e instalando actualización...");
             }
             let ui_weak2 = ui_weak.clone();
             std::thread::spawn(move || {
@@ -1474,10 +1727,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         match res {
                             Ok(v) => {
                                 ui.set_has_update(false);
-                                show_toast(&ui, "✨", &format!("¡Actualizado a {}! Reinicia la app para aplicar cambios.", v));
+                                show_toast(&ui, "check", &format!("¡Actualizado a {}! Reinicia la app para aplicar cambios.", v));
                             }
                             Err(e) => {
-                                show_toast(&ui, "❌", &format!("Error al actualizar: {}", e));
+                                show_toast(&ui, "warning", &format!("Error al actualizar: {}", e));
                             }
                         }
                     }
@@ -1510,7 +1763,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     "Modo Doble Clip desactivado"
                 };
-                show_toast(&ui, "💬", msg);
+                show_toast(&ui, "chat", msg);
             }
         });
     }
@@ -1532,7 +1785,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let _ = ipc::send_command_sync("reload_config");
 
             if let Some(ui) = ui_weak.upgrade() {
-                show_toast(&ui, "💬", &format!("Límite para Discord fijado a {} MB", mb));
+                show_toast(&ui, "chat", &format!("Límite para Discord fijado a {} MB", mb));
             }
         });
     }
@@ -1554,15 +1807,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 });
 
             if let Some(ui) = ui_weak.upgrade() {
-                show_toast(&ui, "⏳", "Generando versión optimizada para Discord...");
+                show_toast(&ui, "chat", "Generando versión optimizada para Discord...");
             }
 
             let ui_weak_bg = ui_weak.clone();
-            let target_dir = if let Some(ref eng) = engine_clone {
-                eng.config().storage.output_dir
-            } else {
-                out_dir_clone.clone()
-            };
+            let target_dir = resolve_active_output_dir(&engine_clone, &out_dir_clone);
 
             std::thread::spawn(move || {
                 let out_path = sane_rec::get_discord_clip_path(&path);
@@ -1572,17 +1821,21 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             .metadata()
                             .map(|m| (m.len() as f64) / (1024.0 * 1024.0))
                             .unwrap_or(0.0);
+                        #[allow(unused_variables)]
                         let filename = out
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or("clip_discord.mp4");
 
-                        let _ = notify_rust::Notification::new()
-                            .appname("sane-rec")
-                            .summary("💬 Versión Discord Lista")
-                            .body(&format!("Guardado: {}\nPeso: {:.1} MB", filename, size_mb))
-                            .icon("video-x-generic")
-                            .show();
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            let _ = notify_rust::Notification::new()
+                                .appname("sane-rec")
+                                .summary("Versión Discord Lista")
+                                .body(&format!("Guardado: {}\nPeso: {:.1} MB", filename, size_mb))
+                                .icon("video-x-generic")
+                                .show();
+                        }
 
                         sane_rec::engine::play_feedback_sound("message");
                         copy_file_to_clipboard(&out);
@@ -1590,7 +1843,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_weak_bg.upgrade() {
                                 update_gallery_model(&ui, &target_dir);
-                                show_toast(&ui, "💬", &format!("Clip Discord listo: {:.1} MB (Copiado)", size_mb));
+                                show_toast(&ui, "chat", &format!("Clip Discord listo: {:.1} MB (Copiado)", size_mb));
                             }
                         });
                     }
@@ -1605,13 +1858,17 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     // Inicia monitor de picos de audio en tiempo real para calibración visual (VU meter)
     let audio_monitor = std::sync::Arc::new(sane_rec::AudioPeakMonitor::new(None, None));
 
-    // Temporizador Slint para actualizar métricas en vivo y medidores VU (50ms = 20 FPS)
+    // Temporizador Slint para actualizar métricas en vivo y medidores VU.
+    // Solo redibuja picos de audio cuando el usuario está en la pestaña Audio (active_view == 2)
+    // y el valor cambió > 0.008, evitando que MSI Afterburner / RivaTuner (RTSS) enganche a sane-rec como juego 3D activo.
     let _timer = {
         let ui_weak = ui.as_weak();
         let engine_clone = local_engine.clone();
         let audio_mon_clone = audio_monitor.clone();
         let timer = slint::Timer::default();
         let mut ticks: u32 = 0;
+        let mut last_sys_peak: f32 = -1.0;
+        let mut last_mic_peak: f32 = -1.0;
         timer.start(
             slint::TimerMode::Repeated,
             std::time::Duration::from_millis(50),
@@ -1620,9 +1877,19 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 };
 
-                // Actualiza niveles visuales VU del sistema y micrófono a 20 FPS
-                ui.set_system_volume_peak(audio_mon_clone.system_peak());
-                ui.set_mic_volume_peak(audio_mon_clone.mic_peak());
+                // Solo actualiza niveles visuales VU si la pestaña de Audio (vista 2) está visible
+                if ui.get_active_view() == 2 {
+                    let sys_peak = audio_mon_clone.system_peak();
+                    let mic_peak = audio_mon_clone.mic_peak();
+                    if (sys_peak - last_sys_peak).abs() > 0.008 {
+                        ui.set_system_volume_peak(sys_peak);
+                        last_sys_peak = sys_peak;
+                    }
+                    if (mic_peak - last_mic_peak).abs() > 0.008 {
+                        ui.set_mic_volume_peak(mic_peak);
+                        last_mic_peak = mic_peak;
+                    }
+                }
 
                 ticks += 1;
                 // Cada 500ms consulta el estado del motor y actualiza contadores
@@ -1886,9 +2153,28 @@ fn copy_file_to_clipboard(path: &std::path::Path) {
     }
 }
 
+/// Resuelve el directorio de salida actual desde el motor en memoria, la configuración en disco o el fallback inicial.
+fn resolve_active_output_dir(
+    engine: &Option<Arc<ReplayEngine>>,
+    fallback: &std::path::Path,
+) -> PathBuf {
+    if let Some(ref eng) = engine {
+        eng.config().storage.output_dir
+    } else if let Ok(cfg) = Config::load() {
+        cfg.storage.output_dir
+    } else {
+        fallback.to_path_buf()
+    }
+}
+
 /// Actualiza el modelo de perfiles de hardware disponibles en la interfaz.
 fn update_profiles_model(ui: &AppWindow) {
     let profiles = sane_rec::profiles_manager::list_profiles();
+    if ui.get_selected_profile_name().is_empty() {
+        if let Some(first) = profiles.first() {
+            ui.set_selected_profile_name(first.clone().into());
+        }
+    }
     let slint_profiles: Vec<slint::SharedString> = profiles.into_iter().map(|s| s.into()).collect();
     ui.set_available_profiles_list(std::rc::Rc::new(slint::VecModel::from(slint_profiles)).into());
 }

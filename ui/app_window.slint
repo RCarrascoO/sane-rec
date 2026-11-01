@@ -108,11 +108,16 @@ export component AppWindow inherits Window {
     callback set-discord-target-mb(int);
     callback compress-clip-for-discord(string);
     callback change-output-dir(string);
+    callback delete-clip(string);
 
     // -------------------------------------------------------------------------
     // Propiedades públicas para bindings con Rust
     // -------------------------------------------------------------------------
-    in-out property <int> active-view: 0; // 0: Panel, 1: Fuentes, 2: Audio, 3: Ajustes, 4: Galería
+    in-out property <int> active-view: 0; // 0: Panel, 1: Fuentes, 2: Audio, 3: Ajustes, 4: Galería, 5: Guía
+    in-out property <int> guide-subtab: 0; // 0: Tutorial paso a paso, 1: Changelog / Novedades
+    in-out property <string> changelog-text: "";
+    in-out property <string> update-release-notes: "";
+    property <int> tutorial-step: 0;
 
     in-out property <string> active-profile: "sane-safe";
     in-out property <bool> is-running: false;
@@ -219,17 +224,17 @@ export component AppWindow inherits Window {
         ScrollView {
             width: 100%;
             height: 100%;
-            content-width: self.width;
+            viewport-height: content-col.preferred-height + 96px;
 
             HorizontalLayout {
-                alignment: center;
-                padding-left: root.width < 820px ? 12px : 24px;
+                padding-left: Math.floor((parent.width - content-col.width) / 2px) * 1px;
                 padding-right: root.width < 820px ? 12px : 24px;
                 padding-top: root.height < 800px ? 14px : 20px;
                 padding-bottom: 24px;
 
-                VerticalLayout {
-                    width: Math.min(root.width - rail.width - (root.width < 820px ? 24px : 48px), 1020px);
+                content-col := VerticalLayout {
+                    padding-bottom: 64px;
+                    width: Math.floor(Math.min(root.width - rail.width - (root.width < 820px ? 24px : 48px), 1020px) / 1px) * 1px;
                     spacing: root.height < 800px ? 16px : 20px;
 
                     // Banner flotante de auto-actualización disponible (Tonal, cero bordes)
@@ -250,7 +255,7 @@ export component AppWindow inherits Window {
                                     name: "rocket";
                                     icon-size: 18px;
                                     icon-color: Theme.on-primary-container;
-                                    y: (parent.height - self.height) / 2;
+                                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                 }
                                 Text {
                                     text: "Nueva versión disponible: " + root.update-version;
@@ -263,6 +268,20 @@ export component AppWindow inherits Window {
 
                             HorizontalLayout {
                                 spacing: 8px;
+                                y: Math.floor((parent.height - self.height) / 2px) * 1px;
+
+                                M3Button {
+                                    text: "Ver novedades";
+                                    icon-name: "history";
+                                    variant: "outlined";
+                                    btn-height: 32px;
+                                    btn-padding-h: 12px;
+                                    clicked => {
+                                        root.guide-subtab = 1;
+                                        root.active-view = 5;
+                                    }
+                                }
+
                                 M3Button {
                                     text: root.is-updating ? "Actualizando..." : "Actualizar ahora";
                                     variant: "filled";
@@ -300,13 +319,30 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            M3StatusChip {
-                                y: (parent.height - self.height) / 2;
-                                text: root.is-recording ? ("REC " + root.recording-time) :
-                                      root.is-running ? (root.buffer-status == "Detenido" ? "Búfer Activo" : root.buffer-status) :
-                                      "Detenido";
-                                status: root.is-recording ? "recording" :
-                                        root.is-running ? "active" : "idle";
+                            HorizontalLayout {
+                                spacing: 10px;
+                                alignment: end;
+
+                                M3Button {
+                                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                    text: "Guía y novedades";
+                                    icon-name: "lightbulb";
+                                    variant: "tonal";
+                                    btn-height: 34px;
+                                    btn-padding-h: 14px;
+                                    clicked => {
+                                        root.active-view = 5;
+                                    }
+                                }
+
+                                M3StatusChip {
+                                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                    text: root.is-recording ? ("REC " + root.recording-time) :
+                                          root.is-running ? (root.buffer-status == "Detenido" ? "Búfer Activo" : root.buffer-status) :
+                                          "Detenido";
+                                    status: root.is-recording ? "recording" :
+                                            root.is-running ? "active" : "idle";
+                                }
                             }
                         }
 
@@ -336,14 +372,14 @@ export component AppWindow inherits Window {
                                                 Theme.primary.with-alpha(0.2) :
                                                 Theme.surface-container-highest;
                                             border-width: 0px;
-                                            y: (parent.height - self.height) / 2;
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                                             M3Icon {
                                                 name: "memory";
                                                 icon-size: 24px;
                                                 icon-color: root.is-running ? Theme.primary : Theme.on-surface-variant;
-                                                x: (parent.width - self.width) / 2;
-                                                y: (parent.height - self.height) / 2;
+                                                x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                                                y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                             }
                                         }
 
@@ -378,7 +414,7 @@ export component AppWindow inherits Window {
                                                     background: root.is-running ?
                                                         Theme.secondary-container :
                                                         Theme.surface-container-highest;
-                                                    y: (parent.height - self.height) / 2;
+                                                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                                                     HorizontalLayout {
                                                         padding-left: 10px;
@@ -412,7 +448,7 @@ export component AppWindow inherits Window {
                                         }
 
                                         M3Switch {
-                                            y: (parent.height - self.height) / 2;
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                             checked: root.is-running;
                                             toggled(state) => {
                                                 root.is-running = state;
@@ -597,6 +633,7 @@ export component AppWindow inherits Window {
                                 alignment: space-between;
 
                                 HorizontalLayout {
+                                    horizontal-stretch: 1;
                                     spacing: 14px;
                                     alignment: start;
 
@@ -606,18 +643,19 @@ export component AppWindow inherits Window {
                                         border-radius: 20px;
                                         background: Theme.surface-container-high;
                                         border-width: 0px;
-                                        y: (parent.height - self.height) / 2;
+                                        y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                                         M3Icon {
                                             name: "desktop";
                                             icon-size: 20px;
                                             icon-color: Theme.primary;
-                                            x: (parent.width - self.width) / 2;
-                                            y: (parent.height - self.height) / 2;
+                                            x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                         }
                                     }
 
                                     VerticalLayout {
+                                        horizontal-stretch: 1;
                                         alignment: center;
                                         spacing: 2px;
 
@@ -626,17 +664,20 @@ export component AppWindow inherits Window {
                                             font-size: Theme.font-title-small;
                                             font-weight: 700;
                                             color: Theme.on-surface;
+                                            overflow: elide;
                                         }
 
                                         Text {
                                             text: root.backend-title == "Windows DXGI" ? "Captura acelerada vía Windows Graphics Capture / DXGI Desktop Duplication." : "Captura directa Wayland vía dmabuf/PipeWire sin sobrecarga de GPU.";
                                             font-size: Theme.font-body-small;
                                             color: Theme.on-surface-variant;
+                                            overflow: elide;
                                         }
                                     }
                                 }
 
                                 M3Button {
+                                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                     text: "Cambiar fuente";
                                     variant: "outlined";
                                     btn-height: 36px;
@@ -691,14 +732,14 @@ export component AppWindow inherits Window {
                                         border-radius: 20px;
                                         background: Theme.surface-container-high;
                                         border-width: 0px;
-                                        y: (parent.height - self.height) / 2;
+                                        y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                                         M3Icon {
                                             name: "folder";
                                             icon-size: 20px;
                                             icon-color: Theme.on-surface-variant;
-                                            x: (parent.width - self.width) / 2;
-                                            y: (parent.height - self.height) / 2;
+                                            x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                         }
                                     }
 
@@ -739,6 +780,10 @@ export component AppWindow inherits Window {
 
                                     compress-clicked(path) => {
                                         root.compress-clip-for-discord(path);
+                                    }
+
+                                    delete-clicked(path) => {
+                                        root.delete-clip(path);
                                     }
                                 }
                             }
@@ -904,8 +949,8 @@ export component AppWindow inherits Window {
                                         name: "slurp";
                                         icon-size: 26px;
                                         icon-color: Theme.on-primary-container;
-                                        x: (parent.width - self.width) / 2;
-                                        y: (parent.height - self.height) / 2;
+                                        x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                                        y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                     }
                                 }
 
@@ -1359,7 +1404,7 @@ export component AppWindow inherits Window {
                                                 name: "speaker";
                                                 icon-size: 18px;
                                                 icon-color: Theme.on-surface;
-                                                y: (parent.height - self.height) / 2;
+                                                y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                             }
                                             Text {
                                                 text: "Volumen del sistema / juego: " + Math.round(root.volume-system * 100) + "%";
@@ -1379,7 +1424,7 @@ export component AppWindow inherits Window {
                                                 vertical-alignment: center;
                                             }
                                             M3Switch {
-                                                y: (parent.height - self.height) / 2;
+                                                y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                                 checked: root.audio-system;
                                                 toggled(state) => {
                                                     root.audio-system = state;
@@ -1418,7 +1463,7 @@ export component AppWindow inherits Window {
                                                 name: "mic";
                                                 icon-size: 18px;
                                                 icon-color: Theme.on-surface;
-                                                y: (parent.height - self.height) / 2;
+                                                y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                             }
                                             Text {
                                                 text: "Volumen del micrófono: " + Math.round(root.volume-mic * 100) + "%";
@@ -1438,7 +1483,7 @@ export component AppWindow inherits Window {
                                                 vertical-alignment: center;
                                             }
                                             M3Switch {
-                                                y: (parent.height - self.height) / 2;
+                                                y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                                 checked: root.audio-mic;
                                                 toggled(state) => {
                                                     root.audio-mic = state;
@@ -1899,10 +1944,11 @@ export component AppWindow inherits Window {
                                     alignment: start;
 
                                     M3Button {
-                                        text: "Cargar '" + root.selected-profile-name + "'";
+                                        text: root.selected-profile-name != "" ? ("Cargar '" + root.selected-profile-name + "'") : "Selecciona un perfil";
                                         variant: "filled";
                                         btn-height: 36px;
                                         btn-padding-h: 16px;
+                                        enabled: root.selected-profile-name != "";
                                         clicked => {
                                             root.load-hardware-profile(root.selected-profile-name);
                                         }
@@ -1913,6 +1959,7 @@ export component AppWindow inherits Window {
                                         variant: "outlined";
                                         btn-height: 36px;
                                         btn-padding-h: 16px;
+                                        enabled: root.selected-profile-name != "";
                                         clicked => {
                                             root.export-hardware-profile(root.selected-profile-name);
                                         }
@@ -2082,7 +2129,7 @@ export component AppWindow inherits Window {
                                                     name: "folder";
                                                     icon-size: 18px;
                                                     icon-color: path-input.has-focus ? Theme.primary : Theme.on-surface-variant;
-                                                    y: (parent.height - self.height) / 2;
+                                                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                                 }
 
                                                 path-input := TextInput {
@@ -2180,7 +2227,7 @@ export component AppWindow inherits Window {
                                         }
 
                                         M3Switch {
-                                            y: (parent.height - self.height) / 2;
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                             checked: root.dual-clip;
                                             toggled(state) => {
                                                 root.dual-clip = state;
@@ -2245,7 +2292,7 @@ export component AppWindow inherits Window {
                                                     name: "lightbulb";
                                                     icon-size: 16px;
                                                     icon-color: Theme.primary;
-                                                    y: (parent.height - self.height) / 2;
+                                                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                                 }
 
                                                 Text {
@@ -2367,6 +2414,7 @@ export component AppWindow inherits Window {
                                             accepted(val) => {
                                                 if val != "" {
                                                     root.shortcut-save = val;
+                                                    root.custom-save-text = val;
                                                     root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                                 }
                                             }
@@ -2468,6 +2516,7 @@ export component AppWindow inherits Window {
                                             accepted(val) => {
                                                 if val != "" {
                                                     root.shortcut-record = val;
+                                                    root.custom-record-text = val;
                                                     root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                                 }
                                             }
@@ -2564,8 +2613,8 @@ export component AppWindow inherits Window {
                                         name: "folder";
                                         icon-size: 28px;
                                         icon-color: Theme.primary;
-                                        x: (parent.width - self.width) / 2;
-                                        y: (parent.height - self.height) / 2;
+                                        x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                                        y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                     }
                                 }
 
@@ -2625,6 +2674,10 @@ export component AppWindow inherits Window {
                                 compress-clicked(path) => {
                                     root.compress-clip-for-discord(path);
                                 }
+
+                                delete-clicked(path) => {
+                                    root.delete-clip(path);
+                                }
                             }
                         }
 
@@ -2643,7 +2696,7 @@ export component AppWindow inherits Window {
                                     name: "info";
                                     icon-size: 20px;
                                     icon-color: Theme.primary;
-                                    y: (parent.height - self.height) / 2;
+                                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                                 }
 
                                 Text {
@@ -2655,13 +2708,761 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+
+                    // ---------------------------------------------------------
+                    // VISTA 5: GUÍA DE USO Y NOVEDADES (Sentence case, cero bordes)
+                    // ---------------------------------------------------------
+                    if root.active-view == 5: VerticalLayout {
+                        spacing: 20px;
+
+                        // Header Guía
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text {
+                                text: "Guía de uso y novedades";
+                                font-size: 28px;
+                                font-weight: 600;
+                                color: Theme.on-surface;
+                            }
+                            Text {
+                                text: "Aprende a sacar el máximo provecho a sane-rec y revisa qué incluye esta versión";
+                                font-size: 13px;
+                                color: Theme.on-surface-variant;
+                            }
+                        }
+
+                        // Selector de sub-pestañas (Segmented Pill Buttons)
+                        Rectangle {
+                            height: 44px;
+                            border-radius: Theme.radius-full;
+                            background: Theme.surface-container-high;
+                            border-width: 0px;
+
+                            HorizontalLayout {
+                                padding: 4px;
+                                spacing: 4px;
+
+                                M3SegmentItem {
+                                    horizontal-stretch: 1;
+                                    icon-name: "book";
+                                    text: "Tutorial interactivo";
+                                    is-selected: root.guide-subtab == 0;
+                                    clicked => { root.guide-subtab = 0; }
+                                }
+
+                                M3SegmentItem {
+                                    horizontal-stretch: 1;
+                                    icon-name: "rocket";
+                                    text: "Novedades y changelog";
+                                    is-selected: root.guide-subtab == 1;
+                                    clicked => { root.guide-subtab = 1; }
+                                }
+                            }
+                        }
+
+                        // SUBTAB 0: TUTORIAL INTERACTIVO & ANIMADO
+                        if root.guide-subtab == 0: VerticalLayout {
+                            spacing: 18px;
+
+                            // Recorrido visual interactivo animado (Walkthrough Strip)
+                            M3Card {
+                                content-padding: 20px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 16px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        Text {
+                                            text: "Recorrido interactivo paso a paso";
+                                            font-size: 15px;
+                                            font-weight: 600;
+                                            color: Theme.primary;
+                                            vertical-alignment: center;
+                                        }
+
+                                        Rectangle {
+                                            height: 24px;
+                                            border-radius: Theme.radius-full;
+                                            background: Theme.primary-container;
+                                            border-width: 0px;
+
+                                            HorizontalLayout {
+                                                padding-left: 10px;
+                                                padding-right: 10px;
+                                                Text {
+                                                    text: "Paso " + (root.tutorial-step + 1) + " de 4";
+                                                    font-size: Theme.font-label-small;
+                                                    font-weight: 700;
+                                                    color: Theme.on-primary-container;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Barra de progreso animada entre pasos
+                                    Rectangle {
+                                        height: 8px;
+                                        border-radius: Theme.radius-full;
+                                        background: Theme.surface-container-highest;
+                                        border-width: 0px;
+                                        clip: true;
+
+                                        Rectangle {
+                                            x: 0px;
+                                            y: 0px;
+                                            height: parent.height;
+                                            width: parent.width * ((root.tutorial-step + 1) / 4.0);
+                                            border-radius: Theme.radius-full;
+                                            background: Theme.primary;
+
+                                            animate width { duration: 280ms; easing: ease-out; }
+                                        }
+                                    }
+
+                                    // Indicadores visuales de los 4 pasos
+                                    HorizontalLayout {
+                                        spacing: 8px;
+
+                                        // Indicador 1
+                                        Rectangle {
+                                            horizontal-stretch: 1;
+                                            height: 54px;
+                                            border-radius: Theme.radius-md;
+                                            background: root.tutorial-step == 0 ? Theme.secondary-container : Theme.surface-container-high;
+                                            animate background { duration: 200ms; }
+
+                                            TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.tutorial-step = 0; }
+
+                                                HorizontalLayout {
+                                                    padding-left: 10px;
+                                                    padding-right: 10px;
+                                                    spacing: 8px;
+                                                    alignment: center;
+
+                                                    M3Icon {
+                                                        name: "memory";
+                                                        icon-size: 18px;
+                                                        icon-color: root.tutorial-step == 0 ? Theme.primary : Theme.on-surface-variant;
+                                                        y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                                    }
+
+                                                    Text {
+                                                        text: "1. Activar Daemon RAM";
+                                                        font-size: 11px;
+                                                        font-weight: root.tutorial-step == 0 ? 700 : 500;
+                                                        color: root.tutorial-step == 0 ? Theme.on-secondary-container : Theme.on-surface-variant;
+                                                        vertical-alignment: center;
+                                                        overflow: elide;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Indicador 2
+                                        Rectangle {
+                                            horizontal-stretch: 1;
+                                            height: 54px;
+                                            border-radius: Theme.radius-md;
+                                            background: root.tutorial-step == 1 ? Theme.secondary-container : Theme.surface-container-high;
+                                            animate background { duration: 200ms; }
+
+                                            TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.tutorial-step = 1; }
+
+                                                HorizontalLayout {
+                                                    padding-left: 10px;
+                                                    padding-right: 10px;
+                                                    spacing: 8px;
+                                                    alignment: center;
+
+                                                    M3Icon {
+                                                        name: "bolt";
+                                                        icon-size: 18px;
+                                                        icon-color: root.tutorial-step == 1 ? Theme.primary : Theme.on-surface-variant;
+                                                        y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                                    }
+
+                                                    Text {
+                                                        text: "2. Jugar sin lag";
+                                                        font-size: 11px;
+                                                        font-weight: root.tutorial-step == 1 ? 700 : 500;
+                                                        color: root.tutorial-step == 1 ? Theme.on-secondary-container : Theme.on-surface-variant;
+                                                        vertical-alignment: center;
+                                                        overflow: elide;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Indicador 3
+                                        Rectangle {
+                                            horizontal-stretch: 1;
+                                            height: 54px;
+                                            border-radius: Theme.radius-md;
+                                            background: root.tutorial-step == 2 ? Theme.secondary-container : Theme.surface-container-high;
+                                            animate background { duration: 200ms; }
+
+                                            TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.tutorial-step = 2; }
+
+                                                HorizontalLayout {
+                                                    padding-left: 10px;
+                                                    padding-right: 10px;
+                                                    spacing: 8px;
+                                                    alignment: center;
+
+                                                    M3Icon {
+                                                        name: "keyboard";
+                                                        icon-size: 18px;
+                                                        icon-color: root.tutorial-step == 2 ? Theme.primary : Theme.on-surface-variant;
+                                                        y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                                    }
+
+                                                    Text {
+                                                        text: "3. Presionar atajo (" + root.shortcut-save + ")";
+                                                        font-size: 11px;
+                                                        font-weight: root.tutorial-step == 2 ? 700 : 500;
+                                                        color: root.tutorial-step == 2 ? Theme.on-secondary-container : Theme.on-surface-variant;
+                                                        vertical-alignment: center;
+                                                        overflow: elide;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Indicador 4
+                                        Rectangle {
+                                            horizontal-stretch: 1;
+                                            height: 54px;
+                                            border-radius: Theme.radius-md;
+                                            background: root.tutorial-step == 3 ? Theme.secondary-container : Theme.surface-container-high;
+                                            animate background { duration: 200ms; }
+
+                                            TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.tutorial-step = 3; }
+
+                                                HorizontalLayout {
+                                                    padding-left: 10px;
+                                                    padding-right: 10px;
+                                                    spacing: 8px;
+                                                    alignment: center;
+
+                                                    M3Icon {
+                                                        name: "discord";
+                                                        icon-size: 18px;
+                                                        icon-color: root.tutorial-step == 3 ? Theme.primary : Theme.on-surface-variant;
+                                                        y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                                    }
+
+                                                    Text {
+                                                        text: "4. Clip listo para Discord";
+                                                        font-size: 11px;
+                                                        font-weight: root.tutorial-step == 3 ? 700 : 500;
+                                                        color: root.tutorial-step == 3 ? Theme.on-secondary-container : Theme.on-surface-variant;
+                                                        vertical-alignment: center;
+                                                        overflow: elide;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Detalle dinámico del paso seleccionado en el walkthrough
+                                    Rectangle {
+                                        border-radius: Theme.radius-lg;
+                                        background: Theme.surface-container;
+                                        border-width: 0px;
+
+                                        VerticalLayout {
+                                            padding: 16px;
+                                            spacing: 6px;
+
+                                            Text {
+                                                horizontal-stretch: 1;
+                                                text: root.tutorial-step == 0 ? "1. Activar Daemon RAM: Enciende el switch 'Daemon replay' en el Panel de control." :
+                                                      root.tutorial-step == 1 ? "2. Jugar sin lag: El búfer circular se mantiene en memoria RAM sin escribir en tu SSD ni saturar la GPU." :
+                                                      root.tutorial-step == 2 ? ("3. Presionar atajo (" + root.shortcut-save + "): Cuando ocurra una jugada épica, pulsa tu atajo global en cualquier momento.") :
+                                                      "4. Clip listo para Discord: El video se guarda al instante y puede comprimirse a menos de 10 MB listo para pegar con Ctrl+V.";
+                                                font-size: Theme.font-title-small;
+                                                font-weight: 700;
+                                                color: Theme.on-surface;
+                                                wrap: word-wrap;
+                                            }
+
+                                            Text {
+                                                horizontal-stretch: 1;
+                                                text: root.tutorial-step == 0 ? "Puedes elegir entre 15 y 120 segundos de repetición en Ajustes según la memoria que desees asignar." :
+                                                      root.tutorial-step == 1 ? "Compatible con PipeWire / dmabuf en Wayland y DXGI Desktop Duplication en Windows con impacto casi nulo en FPS." :
+                                                      root.tutorial-step == 2 ? "También puedes iniciar grabaciones largas completas con " + root.shortcut-record + " cuando quieras grabar una partida entera." :
+                                                      "Activa el 'Modo doble clip' en Ajustes o usa el botón 'Discord' en la Galería para copiar el archivo directo al portapapeles.";
+                                                font-size: Theme.font-body-small;
+                                                color: Theme.on-surface-variant;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
+
+                                    // Botones Anterior / Siguiente paso
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        M3Button {
+                                            text: "Anterior";
+                                            variant: "outlined";
+                                            btn-height: 36px;
+                                            btn-padding-h: 16px;
+                                            enabled: root.tutorial-step > 0;
+                                            clicked => {
+                                                if root.tutorial-step > 0 {
+                                                    root.tutorial-step = root.tutorial-step - 1;
+                                                }
+                                            }
+                                        }
+
+                                        M3Button {
+                                            text: root.tutorial-step < 3 ? "Siguiente paso" : "Volver al inicio";
+                                            variant: "filled";
+                                            btn-height: 36px;
+                                            btn-padding-h: 18px;
+                                            clicked => {
+                                                if root.tutorial-step < 3 {
+                                                    root.tutorial-step = root.tutorial-step + 1;
+                                                } else {
+                                                    root.tutorial-step = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Tarjeta 1: Paso 1: Búfer de repetición en RAM (Instant Replay)
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        alignment: start;
+
+                                        Rectangle {
+                                            width: 38px;
+                                            height: 38px;
+                                            border-radius: 19px;
+                                            background: Theme.primary-container;
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
+
+                                            M3Icon {
+                                                name: "memory";
+                                                icon-size: 20px;
+                                                icon-color: Theme.on-primary-container;
+                                                x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                                                y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                            }
+                                        }
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: "Paso 1: Búfer de repetición en RAM (Instant Replay)";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.on-surface;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "Activa el interruptor 'Daemon replay' en el Panel de control para iniciar el búfer circular en memoria RAM. A diferencia de otros grabadores tradicionales, sane-rec mantiene los segmentos de video exclusivamente en memoria volátil sin realizar escrituras constantes en tu disco SSD/NVMe, evitando su desgaste. Cuando ocurra un momento destacado, presiona el atajo global (F10 o Mod+Shift+S) y los últimos 30 a 120 segundos se volcarán al disco instantáneamente.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // Tarjeta 2: Paso 2: Grabación continua y Mezclador de Audio
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        alignment: start;
+
+                                        Rectangle {
+                                            width: 38px;
+                                            height: 38px;
+                                            border-radius: 19px;
+                                            background: Theme.secondary-container;
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
+
+                                            M3Icon {
+                                                name: "mic";
+                                                icon-size: 20px;
+                                                icon-color: Theme.on-secondary-container;
+                                                x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                                                y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                            }
+                                        }
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: "Paso 2: Grabación continua y Mezclador de Audio";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.on-surface;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "Para grabar partidas o sesiones completas sin límite de tiempo, usa el botón 'Grabación continua' o presiona el atajo F9 para iniciar y detener cuando quieras. En la pestaña 'Audio' puedes seleccionar las fuentes de sonido del sistema y tu micrófono, calibrar el volumen individual de cada canal con el medidor VU en tiempo real y elegir entre pista única combinada (lista para compartir) o pistas separadas (ideal para edición en Kdenlive o DaVinci Resolve).";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // Tarjeta 3: Paso 3: Modo Doble Clip y Compresión para Discord
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        alignment: start;
+
+                                        Rectangle {
+                                            width: 38px;
+                                            height: 38px;
+                                            border-radius: 19px;
+                                            background: Theme.primary-container;
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
+
+                                            M3Icon {
+                                                name: "discord";
+                                                icon-size: 20px;
+                                                icon-color: Theme.on-primary-container;
+                                                x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                                                y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                            }
+                                        }
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: "Paso 3: Modo Doble Clip y Compresión para Discord";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.on-surface;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "Puedes activar el 'Modo doble clip' en la pestaña Ajustes o pulsar el botón 'Discord' en cualquier clip de la Galería para generar automáticamente una versión ligera (<clip>_discord.mp4) ajustada a menos de 10 MB (o 25 MB para Nitro). Una vez comprimido, sane-rec copia el archivo directamente a tu portapapeles para que solo tengas que ir a Discord y presionar Ctrl+V.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // Tarjeta 4: Paso 4: Optimización para Juegos (Minecraft Java, MSI Afterburner y Laptops)
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        alignment: start;
+
+                                        Rectangle {
+                                            width: 38px;
+                                            height: 38px;
+                                            border-radius: 19px;
+                                            background: Theme.secondary-container;
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
+
+                                            M3Icon {
+                                                name: "shield";
+                                                icon-size: 20px;
+                                                icon-color: Theme.on-secondary-container;
+                                                x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                                                y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                            }
+                                        }
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: "Paso 4: Optimización para Juegos (Minecraft Java, MSI Afterburner y Laptops)";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.on-surface;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "• Minecraft Java sin pausa automática: Para capturar Minecraft Java sin que se abra el menú de pausa (ESC) al interactuar con otra ventana o superposición, presiona el atajo F3 + P dentro de Minecraft (desactiva la pausa al perder foco) o utiliza el modo de captura de Monitor Completo en sane-rec.\n• Perfiles 'Sane Safe (CPU)' y 'Pavilion Gaming - Celsius': Diseñados para mantener 0% de carga en el codificador de la GPU dedicada, evitando conflictos con overlays como MSI Afterburner / RivaTuner y manteniendo temperaturas óptimas en laptops gaming y gráficas AMD Polaris.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                        }
+
+                        // SUBTAB 1: CHANGELOG / NOVEDADES
+                        if root.guide-subtab == 1: VerticalLayout {
+                            spacing: 16px;
+
+                            // Banner destacado si hay una actualización disponible con notas de versión
+                            if root.has-update && root.update-release-notes != "": M3Card {
+                                content-padding: 20px;
+                                card-background: Theme.surface-container-high;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        alignment: start;
+
+                                        M3Icon {
+                                            name: "rocket";
+                                            icon-size: 20px;
+                                            icon-color: Theme.primary;
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                        }
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: "Novedades de la actualización disponible (" + root.update-version + ")";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.primary;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: root.update-release-notes;
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.5.0
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: "v0.5.0 — Nitidez Pixel-Perfect, Borrado de Clips y Guía Interactiva";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.primary;
+                                            vertical-alignment: center;
+                                        }
+
+                                        Rectangle {
+                                            height: 22px;
+                                            border-radius: Theme.radius-full;
+                                            background: Theme.primary-container;
+                                            HorizontalLayout {
+                                                padding-left: 10px;
+                                                padding-right: 10px;
+                                                Text {
+                                                    text: "Actual";
+                                                    font-size: 11px;
+                                                    font-weight: 700;
+                                                    color: Theme.on-primary-container;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "• Renderizado Pixel-Perfect sin desenfoque subpíxel en modo horizontal y fuentes nativas limpias.\n• Centrado exacto en modo compacto/mini de la barra de navegación lateral y prevención de textos truncados.\n• Nuevo botón 'Borrar' con confirmación en dos pasos en las tarjetas de clips (Panel y Galería).\n• Captura avanzada de atajos de teclado con soporte completo de modificadores (Ctrl, Alt, Shift, Mod) y teclas alfanuméricas.\n• Nueva sección 'Guía' con tutorial interactivo paso a paso, consejos para Minecraft Java (F3+P) y registro de cambios.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.4.1
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 8px;
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "v0.4.1 — Compresión para Discord y Portapapeles Automático";
+                                        font-size: Theme.font-title-medium;
+                                        font-weight: 700;
+                                        color: Theme.on-surface;
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "• Modo Doble Clip y botón 'Discord' en cada clip para comprimir automáticamente a menos de 10 MB / 15 MB / 25 MB.\n• Copia automática del archivo MP4 al portapapeles del sistema (Wayland wl-copy / Windows) listo para pegar con Ctrl+V.\n• Mejoras de estabilidad en el auto-actualizador y notificaciones Toast integradas.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.4.0
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 8px;
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "v0.4.0 — Rediseño Material Design 3 Expressive y Perfiles de Equipo";
+                                        font-size: Theme.font-title-medium;
+                                        font-weight: 700;
+                                        color: Theme.on-surface;
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "• Interfaz renovada con estilo Google Pixel UI (Material You Expressive), elevación tonal y cero bordes exteriores.\n• Gestor de perfiles de hardware importables/exportables (.toml), incluyendo 'Pavilion Gaming - Celsius' y 'Sane Safe'.\n• Soporte multiplataforma mejorado para Linux (Wayland / PipeWire) y Windows (DXGI / WASAPI).";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.3.0
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 8px;
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "v0.3.0 — Mezclador de Audio en Vivo y Grabación Continua";
+                                        font-size: Theme.font-title-medium;
+                                        font-weight: 700;
+                                        color: Theme.on-surface;
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "• Mezclador de audio con medidores VU en tiempo real, control de ganancia hasta 150% y modo de pistas separadas.\n• Grabación continua (F9) independiente del búfer circular de repetición en RAM (F10).\n• Selección interactiva de regiones en Wayland mediante slurp.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // Texto adicional de changelog si Rust lo provee
+                            if root.changelog-text != "": M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 8px;
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: "Registro detallado de la versión";
+                                        font-size: Theme.font-title-small;
+                                        font-weight: 700;
+                                        color: Theme.primary;
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: root.changelog-text;
+                                        font-size: Theme.font-body-small;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
 
         // Banner / Toast flotante de notificación in-app M3 (Cero bordes)
         M3Toast {
-            x: (parent.width - self.width) / 2;
+            x: Math.floor((parent.width - self.width) / 2px) * 1px;
             width: Math.min(parent.width - 40px, 460px);
             message: root.toast-message;
             icon-name: root.toast-icon != "" ? root.toast-icon : "info";

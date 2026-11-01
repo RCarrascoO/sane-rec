@@ -127,6 +127,9 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all release artifacts
         uses: actions/download-artifact@v4
         with:
@@ -139,6 +142,7 @@ jobs:
           files: |
             release-assets/**/*
             release-assets/*
+          body_path: CHANGELOG.md
           draft: false
           prerelease: false
           generate_release_notes: true

@@ -343,7 +343,7 @@ pub const WIN_MOD_WIN: u32 = 0x0008;
 pub const WIN_MOD_NOREPEAT: u32 = 0x4000;
 
 /// Parsea un string de atajos textual a `(modifiers, vk_code)`.
-/// Soporta cadenas como `"F9"`, `"F10"`, `"Mod+F10"`, `"Alt+F9"`, `"Ctrl+Shift+F10"`, `"Ctrl+F9"`, `"F1"`..`"F12"`, `"A"`..`"Z"`, `"0"`..`"9"`.
+/// Soporta cadenas como `"F9"`, `"F10"`, `"Mod+F10"`, `"Alt+F9"`, `"Ctrl+Shift+F10"`, `"Ctrl+F9"`, `"F1"`..`"F24"`, `"Insert"`, `"Delete"`, `"Home"`, `"End"`, `"PageUp"`, `"PageDown"`, `"Num0"`..`"Num9"`, `"A"`..`"Z"`, `"0"`..`"9"`.
 pub fn parse_windows_hotkey(shortcut: &str) -> Option<(u32, u32)> {
     let s = shortcut.trim();
     if s.is_empty() {
@@ -378,6 +378,28 @@ pub fn parse_windows_hotkey(shortcut: &str) -> Option<(u32, u32)> {
                     "f10" => Some(0x79),
                     "f11" => Some(0x7A),
                     "f12" => Some(0x7B),
+                    "f13" => Some(0x7C),
+                    "f14" => Some(0x7D),
+                    "f15" => Some(0x7E),
+                    "f16" => Some(0x7F),
+                    "f17" => Some(0x80),
+                    "f18" => Some(0x81),
+                    "f19" => Some(0x82),
+                    "f20" => Some(0x83),
+                    "f21" => Some(0x84),
+                    "f22" => Some(0x85),
+                    "f23" => Some(0x86),
+                    "f24" => Some(0x87),
+                    "num0" | "numpad0" => Some(0x60),
+                    "num1" | "numpad1" => Some(0x61),
+                    "num2" | "numpad2" => Some(0x62),
+                    "num3" | "numpad3" => Some(0x63),
+                    "num4" | "numpad4" => Some(0x64),
+                    "num5" | "numpad5" => Some(0x65),
+                    "num6" | "numpad6" => Some(0x66),
+                    "num7" | "numpad7" => Some(0x67),
+                    "num8" | "numpad8" => Some(0x68),
+                    "num9" | "numpad9" => Some(0x69),
                     "space" => Some(0x20),
                     "enter" | "return" => Some(0x0D),
                     "esc" | "escape" => Some(0x1B),
@@ -453,7 +475,7 @@ pub fn spawn_global_hotkeys_listener() {
 #[cfg(target_os = "windows")]
 fn run_windows_hotkey_loop() {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+        RegisterHotKey, UnregisterHotKey, MOD_NOREPEAT,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         DispatchMessageW, GetMessageW, PeekMessageW, SetTimer, TranslateMessage, MSG, PM_NOREMOVE,
@@ -478,10 +500,6 @@ fn run_windows_hotkey_loop() {
     const VK_F10: u32 = 0x79;
     const HOTKEY_ID_RECORD: i32 = 1;
     const HOTKEY_ID_SAVE: i32 = 2;
-    const HOTKEY_ID_FALLBACK_RECORD_F9: i32 = 3;
-    const HOTKEY_ID_FALLBACK_SAVE_F10: i32 = 4;
-    const HOTKEY_ID_FALLBACK_RECORD_CTRL_SHIFT: i32 = 5;
-    const HOTKEY_ID_FALLBACK_SAVE_CTRL_SHIFT: i32 = 6;
 
     // Leer atajos iniciales desde Config
     let initial_cfg = crate::config::Config::load().unwrap_or_default();
@@ -500,37 +518,36 @@ fn run_windows_hotkey_loop() {
     }
 
     unsafe {
-        // Registrar atajos configurados
-        if let Some((mods, vk)) = parse_windows_hotkey(&current_record) {
-            RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD, mods, vk);
-        }
-        if let Some((mods, vk)) = parse_windows_hotkey(&current_save) {
-            RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE, mods, vk);
-        }
+        let rec_binding = parse_windows_hotkey(&current_record).unwrap_or((MOD_NOREPEAT, VK_F9));
+        let save_binding = parse_windows_hotkey(&current_save).unwrap_or((MOD_NOREPEAT, VK_F10));
 
-        // Registrar atajos de respaldo por si el config contiene atajos reservados de Linux
-        RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_FALLBACK_RECORD_F9, MOD_NOREPEAT, VK_F9);
-        RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_FALLBACK_SAVE_F10, MOD_NOREPEAT, VK_F10);
         RegisterHotKey(
             std::ptr::null_mut(),
-            HOTKEY_ID_FALLBACK_RECORD_CTRL_SHIFT,
-            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
-            VK_F9,
+            HOTKEY_ID_RECORD,
+            rec_binding.0,
+            rec_binding.1,
         );
-        RegisterHotKey(
-            std::ptr::null_mut(),
-            HOTKEY_ID_FALLBACK_SAVE_CTRL_SHIFT,
-            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
-            VK_F10,
-        );
+        if save_binding != rec_binding {
+            RegisterHotKey(
+                std::ptr::null_mut(),
+                HOTKEY_ID_SAVE,
+                save_binding.0,
+                save_binding.1,
+            );
+        } else {
+            eprintln!(
+                "Aviso: Los atajos de grabar ('{}') y guardar ('{}') colisionan; se omitió el registro duplicado.",
+                current_record, current_save
+            );
+        }
 
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             if msg.message == WM_HOTKEY {
                 match msg.wParam as i32 {
-                    HOTKEY_ID_RECORD | HOTKEY_ID_FALLBACK_RECORD_F9 | HOTKEY_ID_FALLBACK_RECORD_CTRL_SHIFT => {
+                    HOTKEY_ID_RECORD => {
                         let _ = send_command_sync("record_toggle");
                     }
-                    HOTKEY_ID_SAVE | HOTKEY_ID_FALLBACK_SAVE_F10 | HOTKEY_ID_FALLBACK_SAVE_CTRL_SHIFT => {
+                    HOTKEY_ID_SAVE => {
                         let _ = send_command_sync("save");
                     }
                     _ => {}
@@ -540,20 +557,36 @@ fn run_windows_hotkey_loop() {
                     if let Some(mutex) = HOTKEY_CONFIG.get() {
                         if let Ok(lock) = mutex.lock() {
                             let (new_save, new_record) = lock.clone();
-                            if new_save != current_save || new_record != current_record {
-                                UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD);
-                                UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE);
+                            UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD);
+                            UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE);
 
-                                if let Some((mods, vk)) = parse_windows_hotkey(&new_record) {
-                                    RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD, mods, vk);
-                                }
-                                if let Some((mods, vk)) = parse_windows_hotkey(&new_save) {
-                                    RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE, mods, vk);
-                                }
+                            let rec_b = parse_windows_hotkey(&new_record)
+                                .unwrap_or((MOD_NOREPEAT, VK_F9));
+                            let save_b = parse_windows_hotkey(&new_save)
+                                .unwrap_or((MOD_NOREPEAT, VK_F10));
 
-                                current_save = new_save;
-                                current_record = new_record;
+                            RegisterHotKey(
+                                std::ptr::null_mut(),
+                                HOTKEY_ID_RECORD,
+                                rec_b.0,
+                                rec_b.1,
+                            );
+                            if save_b != rec_b {
+                                RegisterHotKey(
+                                    std::ptr::null_mut(),
+                                    HOTKEY_ID_SAVE,
+                                    save_b.0,
+                                    save_b.1,
+                                );
+                            } else {
+                                eprintln!(
+                                    "Aviso: Los atajos de grabar ('{}') y guardar ('{}') colisionan; se omitió el registro duplicado.",
+                                    new_record, new_save
+                                );
                             }
+
+                            current_save = new_save;
+                            current_record = new_record;
                         }
                     }
                 }
@@ -739,11 +772,28 @@ mod tests {
     #[test]
     fn test_parse_windows_hotkey() {
         // Atajos simples de función
+        assert_eq!(parse_windows_hotkey("F4"), Some((WIN_MOD_NOREPEAT, 0x73)));
         assert_eq!(parse_windows_hotkey("F9"), Some((WIN_MOD_NOREPEAT, 0x78)));
         assert_eq!(parse_windows_hotkey("F10"), Some((WIN_MOD_NOREPEAT, 0x79)));
         assert_eq!(parse_windows_hotkey("f12"), Some((WIN_MOD_NOREPEAT, 0x7B)));
+        assert_eq!(parse_windows_hotkey("F13"), Some((WIN_MOD_NOREPEAT, 0x7C)));
+        assert_eq!(parse_windows_hotkey("F24"), Some((WIN_MOD_NOREPEAT, 0x87)));
+
+        // Teclas de navegación y numpad
+        assert_eq!(parse_windows_hotkey("Insert"), Some((WIN_MOD_NOREPEAT, 0x2D)));
+        assert_eq!(parse_windows_hotkey("Delete"), Some((WIN_MOD_NOREPEAT, 0x2E)));
+        assert_eq!(parse_windows_hotkey("Home"), Some((WIN_MOD_NOREPEAT, 0x24)));
+        assert_eq!(parse_windows_hotkey("End"), Some((WIN_MOD_NOREPEAT, 0x23)));
+        assert_eq!(parse_windows_hotkey("PageUp"), Some((WIN_MOD_NOREPEAT, 0x21)));
+        assert_eq!(parse_windows_hotkey("PgDn"), Some((WIN_MOD_NOREPEAT, 0x22)));
+        assert_eq!(parse_windows_hotkey("Num0"), Some((WIN_MOD_NOREPEAT, 0x60)));
+        assert_eq!(parse_windows_hotkey("Num9"), Some((WIN_MOD_NOREPEAT, 0x69)));
 
         // Modificadores combinados
+        assert_eq!(
+            parse_windows_hotkey("Alt+F4"),
+            Some((WIN_MOD_NOREPEAT | WIN_MOD_ALT, 0x73))
+        );
         assert_eq!(
             parse_windows_hotkey("Mod+F10"),
             Some((WIN_MOD_NOREPEAT | WIN_MOD_WIN, 0x79))

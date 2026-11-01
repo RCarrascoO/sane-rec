@@ -714,43 +714,107 @@ impl ReplayEngine {
 
         self.win_ram_buffer.lock().unwrap().clear();
 
-        let config = self.config();
+        let mut config = self.config();
+        let active_profile = config
+            .profile
+            .active_profile
+            .parse::<EncoderProfile>()
+            .unwrap_or(EncoderProfile::SaneSafe);
 
-        let (audio_port, audio_stop) = match start_windows_audio_feeder(&config) {
+        let (mut audio_port, mut audio_stop) = match start_windows_audio_feeder(&config) {
             Ok((port, stop)) => (Some(port), Some(stop)),
             Err(e) => {
                 eprintln!("Aviso: No se pudo iniciar el feeder de audio WASAPI: {}", e);
                 (None, None)
             }
         };
+
+        let build_replay_cmd = |cfg: &Config, port: Option<u16>| -> Command {
+            let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
+            cmd.arg("-y");
+
+            apply_windows_input_args(&mut cmd, cfg, port);
+            apply_windows_profile_args(&mut cmd, cfg, port.is_some());
+
+            let fps = cfg.video.fps.max(15);
+            let fps_str = fps.to_string();
+
+            cmd.args([
+                "-g",
+                &fps_str,
+                "-keyint_min",
+                &fps_str,
+                "-f",
+                "mpegts",
+                "-mpegts_flags",
+                "resend_headers",
+                "pipe:1",
+            ]);
+
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            cmd
+        };
+
+        let mut cmd = build_replay_cmd(&config, audio_port);
+        let mut child = cmd.spawn()?;
+
+        // Verificación de salud inicial (350ms) para detectar fallos de codificador GPU o ventana inválida
+        std::thread::sleep(Duration::from_millis(350));
+        let failed = match child.try_wait() {
+            Ok(Some(_)) => true,
+            Err(_) => true,
+            Ok(None) => false,
+        };
+
+        if failed {
+            let code = child.try_wait().ok().flatten().and_then(|s| s.code());
+            crate::crash_handler::log_engine_failure("Inicio del Búfer de Repetición (Windows)", code);
+
+            if let Some(stop) = audio_stop.take() {
+                stop.store(true, Ordering::SeqCst);
+            }
+
+            if active_profile != EncoderProfile::SaneSafe
+                || config.video.target.starts_with("window:")
+                || config.video.target.starts_with("title=")
+            {
+                config.profile.active_profile = "sane-safe".to_string();
+                config.video.codec = "libx264".to_string();
+                config.video.target = "desktop".to_string();
+                let _ = config.save();
+                *self.config.lock().unwrap() = config.clone();
+
+                let (retry_port, retry_stop) = match start_windows_audio_feeder(&config) {
+                    Ok((port, stop)) => (Some(port), Some(stop)),
+                    Err(_) => (None, None),
+                };
+                audio_port = retry_port;
+                audio_stop = retry_stop;
+
+                let mut fallback_cmd = build_replay_cmd(&config, audio_port);
+                child = fallback_cmd.spawn()?;
+
+                std::thread::sleep(Duration::from_millis(350));
+                if let Ok(Some(status)) = child.try_wait() {
+                    if let Some(stop) = audio_stop.take() {
+                        stop.store(true, Ordering::SeqCst);
+                    }
+                    return Err(EngineError::Custom(format!(
+                        "ffmpeg falló al iniciar el búfer de repetición (código {:?})",
+                        status.code()
+                    )));
+                }
+            } else {
+                return Err(EngineError::Custom(
+                    "ffmpeg falló al iniciar el búfer de repetición en Windows.".into(),
+                ));
+            }
+        }
+
         *self.win_replay_audio_stop.lock().unwrap() = audio_stop;
 
-        let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
-        cmd.arg("-y");
-
-        apply_windows_input_args(&mut cmd, &config, audio_port);
-        apply_windows_profile_args(&mut cmd, &config, audio_port.is_some());
-
-        let fps = config.video.fps.max(15);
-        let fps_str = fps.to_string();
-
-        cmd.args([
-            "-g",
-            &fps_str,
-            "-keyint_min",
-            &fps_str,
-            "-f",
-            "mpegts",
-            "-mpegts_flags",
-            "resend_headers",
-            "pipe:1",
-        ]);
-
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-
-        let mut child = cmd.spawn()?;
         let mut stdout = child
             .stdout
             .take()
@@ -999,7 +1063,7 @@ impl ReplayEngine {
             return Err(EngineError::AlreadyRunning);
         }
 
-        let config = self.config();
+        let mut config = self.config();
         config.ensure_output_dir().map_err(|e| {
             EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
         })?;
@@ -1010,33 +1074,98 @@ impl ReplayEngine {
         let filename = format!("{}.{}", timestamp, config.storage.format);
         let output_path = config.storage.output_dir.join(filename);
 
-        let (audio_port, audio_stop) = match start_windows_audio_feeder(&config) {
+        let active_profile = config
+            .profile
+            .active_profile
+            .parse::<EncoderProfile>()
+            .unwrap_or(EncoderProfile::SaneSafe);
+
+        let (mut audio_port, mut audio_stop) = match start_windows_audio_feeder(&config) {
             Ok((port, stop)) => (Some(port), Some(stop)),
             Err(e) => {
                 eprintln!("Aviso: No se pudo iniciar el feeder de audio WASAPI: {}", e);
                 (None, None)
             }
         };
+
+        let build_cont_cmd = |cfg: &Config, port: Option<u16>, out: &Path| -> Command {
+            let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
+            cmd.arg("-y");
+
+            apply_windows_input_args(&mut cmd, cfg, port);
+            apply_windows_profile_args(&mut cmd, cfg, port.is_some());
+
+            cmd.args(["-movflags", "+faststart"]);
+            cmd.arg(out);
+
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            cmd
+        };
+
+        let mut cmd = build_cont_cmd(&config, audio_port, &output_path);
+        let mut child = cmd.spawn()?;
+
+        // Verificación de salud inicial (350ms) y fallback automático a SaneSafe CPU
+        std::thread::sleep(Duration::from_millis(350));
+        let failed = match child.try_wait() {
+            Ok(Some(_)) => true,
+            Err(_) => true,
+            Ok(None) => false,
+        };
+
+        if failed {
+            let code = child.try_wait().ok().flatten().and_then(|s| s.code());
+            crate::crash_handler::log_engine_failure("Inicio de Grabación Continua (Windows)", code);
+
+            if let Some(stop) = audio_stop.take() {
+                stop.store(true, Ordering::SeqCst);
+            }
+
+            if active_profile != EncoderProfile::SaneSafe
+                || config.video.target.starts_with("window:")
+                || config.video.target.starts_with("title=")
+            {
+                config.profile.active_profile = "sane-safe".to_string();
+                config.video.codec = "libx264".to_string();
+                config.video.target = "desktop".to_string();
+                let _ = config.save();
+                *self.config.lock().unwrap() = config.clone();
+
+                let (retry_port, retry_stop) = match start_windows_audio_feeder(&config) {
+                    Ok((port, stop)) => (Some(port), Some(stop)),
+                    Err(_) => (None, None),
+                };
+                audio_port = retry_port;
+                audio_stop = retry_stop;
+
+                let mut fallback_cmd = build_cont_cmd(&config, audio_port, &output_path);
+                child = fallback_cmd.spawn()?;
+
+                std::thread::sleep(Duration::from_millis(350));
+                if let Ok(Some(status)) = child.try_wait() {
+                    if let Some(stop) = audio_stop.take() {
+                        stop.store(true, Ordering::SeqCst);
+                    }
+                    return Err(EngineError::Custom(format!(
+                        "ffmpeg falló al iniciar la grabación continua (código {:?})",
+                        status.code()
+                    )));
+                }
+            } else {
+                return Err(EngineError::Custom(
+                    "ffmpeg falló al iniciar la grabación continua en Windows.".into(),
+                ));
+            }
+        }
+
         *self.win_continuous_audio_stop.lock().unwrap() = audio_stop;
-
-        let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
-        cmd.arg("-y");
-
-        apply_windows_input_args(&mut cmd, &config, audio_port);
-        apply_windows_profile_args(&mut cmd, &config, audio_port.is_some());
-
-        cmd.args(["-movflags", "+faststart"]);
-        cmd.arg(&output_path);
-
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-
-        let child = cmd.spawn()?;
         *self.continuous_process.lock().unwrap() = Some(child);
         *self.continuous_output.lock().unwrap() = Some(output_path.clone());
         *self.continuous_start_time.lock().unwrap() = Some(Instant::now());
 
+        #[cfg(not(target_os = "windows"))]
         let _ = notify_rust::Notification::new()
             .appname("sane-rec")
             .summary("🔴 Grabación Iniciada")
@@ -1332,6 +1461,7 @@ impl ReplayEngine {
             ));
         }
 
+        #[cfg(not(target_os = "windows"))]
         let _ = notify_rust::Notification::new()
             .appname("sane-rec")
             .summary("🎬 Replay Guardado")
@@ -1929,15 +2059,38 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
         let win_title = target
             .strip_prefix("title=")
             .or_else(|| target.strip_prefix("window:"))
-            .unwrap_or(target);
-        cmd.args([
-            "-f",
-            "gdigrab",
-            "-framerate",
-            &fps_str,
-            "-i",
-            &format!("title={}", win_title),
-        ]);
+            .unwrap_or(target)
+            .trim();
+        let lower_title = win_title.to_lowercase();
+        // Capturar mediante el compositor DWM (`desktop`) si la ventana es `windows-app` (legacy)
+        // o un juego OpenGL/LWJGL como Minecraft Java, evitando frame congelado en el menú ESC.
+        if win_title.is_empty()
+            || win_title == "windows-app"
+            || lower_title.contains("minecraft")
+            || lower_title.contains("javaw")
+        {
+            cmd.args([
+                "-f",
+                "gdigrab",
+                "-framerate",
+                &fps_str,
+                "-draw_mouse",
+                "1",
+                "-i",
+                "desktop",
+            ]);
+        } else {
+            cmd.args([
+                "-f",
+                "gdigrab",
+                "-framerate",
+                &fps_str,
+                "-draw_mouse",
+                "1",
+                "-i",
+                &format!("title={}", win_title),
+            ]);
+        }
     } else {
         cmd.args([
             "-f",

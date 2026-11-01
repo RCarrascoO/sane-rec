@@ -299,6 +299,39 @@ export component M3Icon inherits Rectangle {
         fill: root.icon-color;
         commands: "M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-1.3l-.85-.6A4.996 4.996 0 0 1 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z";
     }
+
+    if root.name == "delete" || root.name == "trash": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M7 21q-.825 0-1.412-.587T5 19V6H4V4h5V3h6v1h5v2h-1v13q0 .825-.587 1.413T17 21H7ZM17 6H7v13h10V6ZM9 17h2V8H9v9Zm4 0h2V8h-2v9ZM7 6v13V6Z";
+    }
+
+    if root.name == "book" || root.name == "help" || root.name == "tutorial": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M12 21.5q-2.35-1.15-4.825-1.575T2 19.5v-14q2.7 0 5.175.425T12 7.5q2.35-1.15 4.825-1.575T22 5.5v14q-2.7 0-5.175.425T12 21.5Zm0-2.3q2.15-.85 4.35-1.225T20.8 17.6V7.7q-2.25.25-4.45.775T12 9.85v9.35Zm-8.8-1.6q2.2-.25 4.4-.625T12 19.2V9.85q-2.15-.9-4.35-1.375T3.2 7.7v9.9Z";
+    }
+
+    if root.name == "history" || root.name == "changelog": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.icon-color;
+        commands: "M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z";
+    }
 }
 
 // =============================================================================
@@ -324,11 +357,11 @@ export component M3Card inherits Rectangle {
 }
 
 // =============================================================================
-// M3Button: Botón M3 Expressive con variantes filled, tonal y outlined
+// M3Button: Botón M3 Expressive con variantes filled, tonal, outlined y danger
 // =============================================================================
 export component M3Button inherits Rectangle {
     in-out property <string> text: "Acción";
-    in-out property <string> variant: "filled"; // "filled" | "tonal" | "outlined"
+    in-out property <string> variant: "filled"; // "filled" | "tonal" | "outlined" | "danger"
     in-out property <bool> enabled: true;
     in-out property <length> btn-height: 44px;
     in-out property <length> btn-padding-h: 22px;
@@ -338,6 +371,7 @@ export component M3Button inherits Rectangle {
     callback clicked();
 
     height: root.btn-height;
+    min-width: btn-layout.preferred-width;
     border-radius: Theme.radius-full;
     clip: true;
 
@@ -347,16 +381,19 @@ export component M3Button inherits Rectangle {
         touch.pressed ?
             (root.variant == "filled" ? Theme.primary.darker(0.18) :
              root.variant == "tonal" ? Theme.secondary-container.darker(0.18) :
+             root.variant == "danger" ? Theme.error-container.darker(0.18) :
              Theme.primary.with-alpha(0.18)) :
         touch.has-hover ?
             (root.variant == "filled" ? Theme.primary.darker(0.08) :
              root.variant == "tonal" ? Theme.secondary-container.darker(0.08) :
+             root.variant == "danger" ? Theme.error-container.darker(0.08) :
              Theme.primary.with-alpha(0.08)) :
         (root.variant == "filled" ? Theme.primary :
          root.variant == "tonal" ? Theme.secondary-container :
+         root.variant == "danger" ? Theme.error-container :
          Colors.transparent);
 
-    // Cero bordes en filled y tonal; 1px solo en outlined
+    // Cero bordes en filled, tonal y danger; 1px solo en outlined
     border-width: root.variant == "outlined" ? 1px : 0px;
     border-color: !root.enabled ? Theme.outline.with-alpha(0.2) :
                   touch.has-hover ? Theme.primary :
@@ -365,10 +402,10 @@ export component M3Button inherits Rectangle {
     animate background { duration: 150ms; easing: ease-out; }
     animate border-color { duration: 150ms; easing: ease-out; }
 
-    HorizontalLayout {
-        padding-left: root.btn-padding-h;
-        padding-right: root.btn-padding-h;
-        spacing: 8px;
+    btn-layout := HorizontalLayout {
+        padding-left: root.text == "" ? 10px : root.btn-padding-h;
+        padding-right: root.text == "" ? 10px : root.btn-padding-h;
+        spacing: root.text != "" && (root.icon-name != "" || root.icon-text != "") ? 8px : 0px;
         alignment: center;
 
         if root.icon-name != "": M3Icon {
@@ -377,8 +414,9 @@ export component M3Button inherits Rectangle {
             icon-color: !root.enabled ? Theme.on-surface.with-alpha(0.38) :
                         root.variant == "filled" ? Theme.on-primary :
                         root.variant == "tonal" ? Theme.on-secondary-container :
+                        root.variant == "danger" ? Theme.on-error-container :
                         Theme.primary;
-            y: (parent.height - self.height) / 2;
+            y: Math.floor((parent.height - self.height) / 2px) * 1px;
         }
 
         if root.icon-name == "" && root.icon-text != "": Text {
@@ -388,10 +426,11 @@ export component M3Button inherits Rectangle {
             color: !root.enabled ? Theme.on-surface.with-alpha(0.38) :
                    root.variant == "filled" ? Theme.on-primary :
                    root.variant == "tonal" ? Theme.on-secondary-container :
+                   root.variant == "danger" ? Theme.on-error-container :
                    Theme.primary;
         }
 
-        Text {
+        if root.text != "": Text {
             text: root.text;
             font-size: Theme.font-label-large;
             font-weight: 600;
@@ -401,6 +440,7 @@ export component M3Button inherits Rectangle {
             color: !root.enabled ? Theme.on-surface.with-alpha(0.38) :
                    root.variant == "filled" ? Theme.on-primary :
                    root.variant == "tonal" ? Theme.on-secondary-container :
+                   root.variant == "danger" ? Theme.on-error-container :
                    Theme.primary;
         }
     }
@@ -448,7 +488,7 @@ export component M3Switch inherits Rectangle {
     animate border-color { duration: 180ms; easing: ease-out; }
 
     thumb := Rectangle {
-        y: (parent.height - self.height) / 2;
+        y: Math.floor((parent.height - self.height) / 2px) * 1px;
         x: root.checked ?
             (parent.width - self.width - 4px) :
             4px;
@@ -504,15 +544,15 @@ export component M3StatusChip inherits Rectangle {
             width: 14px;
             height: 14px;
             border-radius: 7px;
-            y: (parent.height - self.height) / 2;
+            y: Math.floor((parent.height - self.height) / 2px) * 1px;
             background: root.status == "recording" ? Theme.error.with-alpha(0.25) :
                         root.status == "active" ? Theme.primary.with-alpha(0.25) :
                         Colors.transparent;
 
             // Dot central
             Rectangle {
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
+                x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
                 width: 8px;
                 height: 8px;
                 border-radius: 4px;
@@ -580,19 +620,19 @@ export component M3ProfileTile inherits Rectangle {
                 background: root.is-selected ?
                     Theme.primary.with-alpha(0.2) :
                     Theme.surface-container-highest;
-                y: (parent.height - self.height) / 2;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                 if root.icon-name != "": M3Icon {
                     name: root.icon-name;
                     icon-size: 20px;
                     icon-color: root.is-selected ? Theme.primary : Theme.on-surface-variant;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
+                    x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                 }
 
                 if root.icon-name == "" && root.icon-text != "": Text {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
+                    x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                     text: root.icon-text;
                     font-size: 16px;
                     vertical-alignment: center;
@@ -625,7 +665,7 @@ export component M3ProfileTile inherits Rectangle {
                         background: root.badge-text == "Experimental" ?
                             Theme.error-container :
                             (root.is-selected ? Theme.primary : Theme.surface-container-highest);
-                        y: (parent.height - self.height) / 2;
+                        y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                         HorizontalLayout {
                             padding-left: 8px;
@@ -659,7 +699,7 @@ export component M3ProfileTile inherits Rectangle {
                             name: "warning";
                             icon-size: 14px;
                             icon-color: Theme.on-error-container;
-                            y: (parent.height - self.height) / 2;
+                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
                         }
 
                         Text {
@@ -686,14 +726,14 @@ export component M3ProfileTile inherits Rectangle {
                 width: 22px;
                 height: 22px;
                 border-radius: 11px;
-                y: (parent.height - self.height) / 2;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
                 border-width: 2px;
                 border-color: root.is-selected ? Theme.primary : Theme.outline;
                 background: Colors.transparent;
 
                 if root.is-selected: Rectangle {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
+                    x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                     width: 12px;
                     height: 12px;
                     border-radius: 6px;
@@ -739,7 +779,7 @@ export component M3SegmentItem inherits Rectangle {
                 name: root.icon-name;
                 icon-size: 16px;
                 icon-color: root.is-selected ? Theme.on-primary : Theme.on-surface-variant;
-                y: (parent.height - self.height) / 2;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
             }
 
             Text {
@@ -836,7 +876,7 @@ export component M3NavItem inherits Rectangle {
                 name: root.icon-name;
                 icon-size: 20px;
                 icon-color: root.is-selected ? Theme.on-secondary-container : Theme.on-surface-variant;
-                y: (parent.height - self.height) / 2;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
             }
 
             if root.icon-name == "" && root.icon-text != "": Text {
@@ -862,7 +902,7 @@ export component M3NavItem inherits Rectangle {
                 border-radius: Theme.radius-full;
                 border-width: 0px;
                 background: root.is-selected ? Theme.primary : Theme.surface-container-highest;
-                y: (parent.height - self.height) / 2;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                 HorizontalLayout {
                     padding-left: 7px;
@@ -879,16 +919,22 @@ export component M3NavItem inherits Rectangle {
         }
 
         if root.compact: VerticalLayout {
+            width: 100%;
+            height: 100%;
             alignment: center;
             spacing: 3px;
             padding-top: 4px;
             padding-bottom: 4px;
 
-            if root.icon-name != "": M3Icon {
-                name: root.icon-name;
-                icon-size: 22px;
-                icon-color: root.is-selected ? Theme.on-secondary-container : Theme.on-surface-variant;
-                x: (parent.width - self.width) / 2;
+            if root.icon-name != "": HorizontalLayout {
+                alignment: center;
+                width: 100%;
+
+                M3Icon {
+                    name: root.icon-name;
+                    icon-size: 22px;
+                    icon-color: root.is-selected ? Theme.on-secondary-container : Theme.on-surface-variant;
+                }
             }
 
             if root.icon-name == "" && root.icon-text != "": Text {
@@ -952,7 +998,7 @@ export component M3NavigationRail inherits Rectangle {
                 background: Theme.surface-container-high;
                 border-width: 0px;
                 clip: true;
-                y: (parent.height - self.height) / 2;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                 Image {
                     source: @image-url("../assets/sane-rec.png");
@@ -981,20 +1027,24 @@ export component M3NavigationRail inherits Rectangle {
             }
         }
 
-        if root.compact: Rectangle {
-            width: 44px;
-            height: 44px;
-            border-radius: 14px;
-            background: Theme.surface-container-high;
-            border-width: 0px;
-            clip: true;
-            x: (parent.width - self.width) / 2;
+        if root.compact: HorizontalLayout {
+            alignment: center;
+            width: 100%;
 
-            Image {
-                source: @image-url("../assets/sane-rec.png");
-                image-fit: contain;
-                width: 100%;
-                height: 100%;
+            Rectangle {
+                width: 44px;
+                height: 44px;
+                border-radius: 14px;
+                background: Theme.surface-container-high;
+                border-width: 0px;
+                clip: true;
+
+                Image {
+                    source: @image-url("../assets/sane-rec.png");
+                    image-fit: contain;
+                    width: 100%;
+                    height: 100%;
+                }
             }
         }
 
@@ -1056,6 +1106,17 @@ export component M3NavigationRail inherits Rectangle {
                     root.view-selected(4);
                 }
             }
+
+            M3NavItem {
+                compact: root.compact;
+                icon-name: "book";
+                text: "Guía";
+                is-selected: root.active-view == 5;
+                clicked => {
+                    root.active-view = 5;
+                    root.view-selected(5);
+                }
+            }
         }
 
         // Espaciador expansible
@@ -1081,7 +1142,7 @@ export component M3NavigationRail inherits Rectangle {
                     height: 8px;
                     border-radius: 4px;
                     background: Theme.success;
-                    y: (parent.height - self.height) / 2;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                 }
 
                 VerticalLayout {
@@ -1104,21 +1165,25 @@ export component M3NavigationRail inherits Rectangle {
             }
         }
 
-        if root.compact: Rectangle {
-            width: 36px;
-            height: 36px;
-            border-radius: 18px;
-            background: Theme.surface-container-low;
-            border-width: 0px;
-            x: (parent.width - self.width) / 2;
+        if root.compact: HorizontalLayout {
+            alignment: center;
+            width: 100%;
 
             Rectangle {
-                width: 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: Theme.success;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
+                width: 36px;
+                height: 36px;
+                border-radius: 18px;
+                background: Theme.surface-container-low;
+                border-width: 0px;
+
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: Theme.success;
+                    x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                }
             }
         }
     }
@@ -1169,13 +1234,13 @@ export component M3MetricTile inherits Rectangle {
                     name: root.icon-name;
                     icon-size: 16px;
                     icon-color: root.highlight ? Theme.primary : Theme.on-surface-variant;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
+                    x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                 }
 
                 if root.icon-name == "" && root.icon-text != "": Text {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
+                    x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                     text: root.icon-text;
                     font-size: 14px;
                     vertical-alignment: center;
@@ -1188,7 +1253,7 @@ export component M3MetricTile inherits Rectangle {
                 border-radius: Theme.radius-full;
                 border-width: 0px;
                 background: root.highlight ? Theme.secondary-container : Theme.surface-container-highest;
-                y: (parent.height - self.height) / 2;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                 HorizontalLayout {
                     padding-left: 8px;
@@ -1264,7 +1329,7 @@ export component M3OptionItem inherits Rectangle {
                     name: "check";
                     icon-size: 16px;
                     icon-color: root.is-selected ? Theme.primary : Colors.transparent;
-                    y: (parent.height - self.height) / 2;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
                 }
 
                 Text {
@@ -1281,7 +1346,7 @@ export component M3OptionItem inherits Rectangle {
                 border-radius: Theme.radius-full;
                 border-width: 0px;
                 background: root.is-selected ? Theme.primary : Theme.surface-container-highest;
-                y: (parent.height - self.height) / 2;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                 HorizontalLayout {
                     padding-left: 8px;
@@ -1345,19 +1410,19 @@ export component M3DropdownCard inherits Rectangle {
                         border-radius: 20px;
                         background: Theme.surface-container-high;
                         border-width: 0px;
-                        y: (parent.height - self.height) / 2;
+                        y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                         if root.icon-name != "": M3Icon {
                             name: root.icon-name;
                             icon-size: 20px;
                             icon-color: Theme.primary;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
+                            x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
                         }
 
                         if root.icon-name == "" && root.icon-text != "": Text {
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
+                            x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
                             text: root.icon-text;
                             font-size: 16px;
                             vertical-alignment: center;
@@ -1393,7 +1458,7 @@ export component M3DropdownCard inherits Rectangle {
                     border-radius: Theme.radius-full;
                     border-width: 0px;
                     background: root.is-open ? Theme.secondary-container : Theme.surface-container-high;
-                    y: (parent.height - self.height) / 2;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                     HorizontalLayout {
                         padding-left: 14px;
@@ -1414,7 +1479,7 @@ export component M3DropdownCard inherits Rectangle {
                             name: root.is-open ? "arrow_up" : "arrow_down";
                             icon-size: 14px;
                             icon-color: root.is-open ? Theme.on-secondary-container : Theme.on-surface-variant;
-                            y: (parent.height - self.height) / 2;
+                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
                         }
                     }
                 }
@@ -1446,10 +1511,12 @@ export component M3ClipCard inherits Rectangle {
     in-out property <string> duration-text: "00:30";
     in-out property <string> filepath: "";
     in-out property <bool> is-discord: false;
+    property <bool> confirm-delete: false;
 
     callback play-clicked(string);
     callback folder-clicked(string);
     callback compress-clicked(string);
+    callback delete-clicked(string);
 
     border-radius: Theme.radius-lg;
     border-width: 0px;
@@ -1467,14 +1534,14 @@ export component M3ClipCard inherits Rectangle {
             border-radius: Theme.radius-md;
             border-width: 0px;
             background: root.is-discord ? #5865F2.with-alpha(0.2) : Theme.secondary-container;
-            y: (parent.height - self.height) / 2;
+            y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
             M3Icon {
                 name: root.is-discord ? "chat" : "play";
                 icon-size: 22px;
                 icon-color: root.is-discord ? #D0BCFF : Theme.on-secondary-container;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
+                x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
             }
         }
 
@@ -1502,7 +1569,7 @@ export component M3ClipCard inherits Rectangle {
                     border-radius: Theme.radius-full;
                     border-width: 0px;
                     background: Theme.surface-container-high;
-                    y: (parent.height - self.height) / 2;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                     HorizontalLayout {
                         padding-left: 8px;
@@ -1522,7 +1589,7 @@ export component M3ClipCard inherits Rectangle {
                     border-radius: Theme.radius-full;
                     border-width: 0px;
                     background: #5865F2.with-alpha(0.25);
-                    y: (parent.height - self.height) / 2;
+                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                     HorizontalLayout {
                         padding-left: 8px;
@@ -1550,7 +1617,7 @@ export component M3ClipCard inherits Rectangle {
         HorizontalLayout {
             spacing: 8px;
             alignment: end;
-            y: (parent.height - self.height) / 2;
+            y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
             if !root.is-discord: M3Button {
                 text: "Discord";
@@ -1581,6 +1648,39 @@ export component M3ClipCard inherits Rectangle {
                 btn-padding-h: 14px;
                 clicked => {
                     root.folder-clicked(root.filepath != "" ? root.filepath : root.filename);
+                }
+            }
+
+            if !root.confirm-delete: M3Button {
+                text: "Borrar";
+                icon-name: "delete";
+                variant: "outlined";
+                btn-height: 36px;
+                btn-padding-h: 12px;
+                clicked => {
+                    root.confirm-delete = true;
+                }
+            }
+
+            if root.confirm-delete: M3Button {
+                text: "¿Borrar?";
+                icon-name: "delete";
+                variant: "danger";
+                btn-height: 36px;
+                btn-padding-h: 12px;
+                clicked => {
+                    root.confirm-delete = false;
+                    root.delete-clicked(root.filepath != "" ? root.filepath : root.filename);
+                }
+            }
+
+            if root.confirm-delete: M3Button {
+                text: "";
+                icon-name: "close";
+                variant: "tonal";
+                btn-height: 36px;
+                clicked => {
+                    root.confirm-delete = false;
                 }
             }
         }
@@ -1615,7 +1715,7 @@ export component M3VuMeter inherits Rectangle {
         bar-bg := Rectangle {
             horizontal-stretch: 1;
             height: 10px;
-            y: (parent.height - self.height) / 2;
+            y: Math.floor((parent.height - self.height) / 2px) * 1px;
             border-radius: Theme.radius-full;
             background: Theme.surface-container-highest;
             border-width: 0px;
@@ -1667,7 +1767,7 @@ export component M3Slider inherits Rectangle {
     background: Colors.transparent;
 
     track-bg := Rectangle {
-        y: (parent.height - self.height) / 2;
+        y: Math.floor((parent.height - self.height) / 2px) * 1px;
         height: 12px;
         border-radius: Theme.radius-full;
         background: Theme.surface-container-highest;
@@ -1688,8 +1788,8 @@ export component M3Slider inherits Rectangle {
 
     thumb := Rectangle {
         property <float> progress: Math.clamp((root.value - root.minimum) / Math.max(0.0001, root.maximum - root.minimum), 0.0, 1.0);
-        x: self.progress * (root.width - self.width);
-        y: (root.height - self.height) / 2;
+        x: Math.floor(self.progress * ((root.width - self.width) / 1px)) * 1px;
+        y: Math.floor((root.height - self.height) / 2px) * 1px;
         width: 20px;
         height: 20px;
         border-radius: 10px;
@@ -1758,7 +1858,7 @@ export component M3Toast inherits Rectangle {
             name: root.icon-name;
             icon-size: 18px;
             icon-color: Theme.primary;
-            y: (parent.height - self.height) / 2;
+            y: Math.floor((parent.height - self.height) / 2px) * 1px;
         }
 
         if root.icon-name == "" && root.icon-text != "": Text {
@@ -1808,7 +1908,7 @@ export component M3InputField inherits Rectangle {
             name: root.icon-name;
             icon-size: 16px;
             icon-color: Theme.on-surface-variant;
-            y: (parent.height - self.height) / 2;
+            y: Math.floor((parent.height - self.height) / 2px) * 1px;
         }
 
         if root.icon-name == "" && root.icon-text != "": Text {
@@ -1835,7 +1935,7 @@ export component M3InputField inherits Rectangle {
 // M3ShortcutField: Campo interactivo para atajos de teclado con auto-captura
 // =============================================================================
 export component M3ShortcutField inherits Rectangle {
-    in-out property <string> text: "";
+    in-out property <string> text <=> input.text;
     in-out property <string> placeholder: "Haz clic y presiona una tecla (ej. F10, Alt+F9)...";
     in-out property <bool> enabled: true;
     callback accepted(string);
@@ -1859,12 +1959,11 @@ export component M3ShortcutField inherits Rectangle {
             name: "keyboard";
             icon-size: 16px;
             icon-color: input.has-focus ? Theme.primary : Theme.on-surface-variant;
-            y: (parent.height - self.height) / 2;
+            y: Math.floor((parent.height - self.height) / 2px) * 1px;
         }
 
         input := TextInput {
             horizontal-stretch: 1;
-            text: root.text;
             font-size: Theme.font-body-medium;
             color: Theme.on-surface;
             vertical-alignment: center;
@@ -1872,42 +1971,90 @@ export component M3ShortcutField inherits Rectangle {
             enabled: root.enabled;
 
             accepted => {
-                root.text = self.text;
                 root.accepted(self.text);
             }
             edited => {
-                root.text = self.text;
                 root.edited(self.text);
             }
             key-pressed(event) => {
-                // Captura directa e instantánea de teclas F1..F12 con o sin modificadores
-                if event.text == Key.F1 || event.text == Key.F2 || event.text == Key.F3 || event.text == Key.F4
-                    || event.text == Key.F5 || event.text == Key.F6 || event.text == Key.F7 || event.text == Key.F8
-                    || event.text == Key.F9 || event.text == Key.F10 || event.text == Key.F11 || event.text == Key.F12 {
-                    
-                    root.text = (event.modifiers.meta ? "Mod+" : "")
-                        + (event.modifiers.control ? "Ctrl+" : "")
-                        + (event.modifiers.alt ? "Alt+" : "")
-                        + (event.modifiers.shift ? "Shift+" : "")
-                        + (event.text == Key.F1 ? "F1" : event.text == Key.F2 ? "F2" : event.text == Key.F3 ? "F3" : event.text == Key.F4 ? "F4" : event.text == Key.F5 ? "F5" : event.text == Key.F6 ? "F6" : event.text == Key.F7 ? "F7" : event.text == Key.F8 ? "F8" : event.text == Key.F9 ? "F9" : event.text == Key.F10 ? "F10" : event.text == Key.F11 ? "F11" : "F12");
-                    self.text = root.text;
-                    root.edited(root.text);
-                    root.accepted(root.text);
-                    return accept;
-                }
+                let prefix = (event.modifiers.control ? "Ctrl+" : "")
+                    + (event.modifiers.alt ? "Alt+" : "")
+                    + (event.modifiers.shift ? "Shift+" : "")
+                    + (event.modifiers.meta ? "Mod+" : "");
 
-                // Borrado instantáneo de un solo toque con Backspace o Delete
-                if event.text == Key.Backspace || event.text == Key.Delete {
+                // Borrado instantáneo cuando se presiona Backspace sin modificadores
+                if event.text == Key.Backspace && prefix == "" {
                     root.text = "";
-                    self.text = "";
                     root.edited("");
                     return accept;
                 }
 
                 // Confirmar con Enter
                 if event.text == Key.Return {
-                    root.text = self.text;
                     root.accepted(self.text);
+                    return accept;
+                }
+
+                let key-name =
+                    event.text == Key.F1 ? "F1" :
+                    event.text == Key.F2 ? "F2" :
+                    event.text == Key.F3 ? "F3" :
+                    event.text == Key.F4 ? "F4" :
+                    event.text == Key.F5 ? "F5" :
+                    event.text == Key.F6 ? "F6" :
+                    event.text == Key.F7 ? "F7" :
+                    event.text == Key.F8 ? "F8" :
+                    event.text == Key.F9 ? "F9" :
+                    event.text == Key.F10 ? "F10" :
+                    event.text == Key.F11 ? "F11" :
+                    event.text == Key.F12 ? "F12" :
+                    event.text == Key.Insert ? "Insert" :
+                    event.text == Key.Delete ? "Delete" :
+                    event.text == Key.Home ? "Home" :
+                    event.text == Key.End ? "End" :
+                    event.text == Key.PageUp ? "PageUp" :
+                    event.text == Key.PageDown ? "PageDown" :
+                    (event.text == "a" || event.text == "A") ? "A" :
+                    (event.text == "b" || event.text == "B") ? "B" :
+                    (event.text == "c" || event.text == "C") ? "C" :
+                    (event.text == "d" || event.text == "D") ? "D" :
+                    (event.text == "e" || event.text == "E") ? "E" :
+                    (event.text == "f" || event.text == "F") ? "F" :
+                    (event.text == "g" || event.text == "G") ? "G" :
+                    (event.text == "h" || event.text == "H") ? "H" :
+                    (event.text == "i" || event.text == "I") ? "I" :
+                    (event.text == "j" || event.text == "J") ? "J" :
+                    (event.text == "k" || event.text == "K") ? "K" :
+                    (event.text == "l" || event.text == "L") ? "L" :
+                    (event.text == "m" || event.text == "M") ? "M" :
+                    (event.text == "n" || event.text == "N") ? "N" :
+                    (event.text == "o" || event.text == "O") ? "O" :
+                    (event.text == "p" || event.text == "P") ? "P" :
+                    (event.text == "q" || event.text == "Q") ? "Q" :
+                    (event.text == "r" || event.text == "R") ? "R" :
+                    (event.text == "s" || event.text == "S") ? "S" :
+                    (event.text == "t" || event.text == "T") ? "T" :
+                    (event.text == "u" || event.text == "U") ? "U" :
+                    (event.text == "v" || event.text == "V") ? "V" :
+                    (event.text == "w" || event.text == "W") ? "W" :
+                    (event.text == "x" || event.text == "X") ? "X" :
+                    (event.text == "y" || event.text == "Y") ? "Y" :
+                    (event.text == "z" || event.text == "Z") ? "Z" :
+                    event.text == "0" ? "0" :
+                    event.text == "1" ? "1" :
+                    event.text == "2" ? "2" :
+                    event.text == "3" ? "3" :
+                    event.text == "4" ? "4" :
+                    event.text == "5" ? "5" :
+                    event.text == "6" ? "6" :
+                    event.text == "7" ? "7" :
+                    event.text == "8" ? "8" :
+                    event.text == "9" ? "9" : "";
+
+                if key-name != "" {
+                    root.text = prefix + key-name;
+                    root.edited(root.text);
+                    root.accepted(root.text);
                     return accept;
                 }
 
@@ -1926,14 +2073,13 @@ export component M3ShortcutField inherits Rectangle {
                 name: "close";
                 icon-size: 14px;
                 icon-color: clear-touch.has-hover ? Theme.on-surface : Theme.on-surface-variant;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
+                x: Math.floor((parent.width - self.width) / 2px) * 1px;
+                y: Math.floor((parent.height - self.height) / 2px) * 1px;
             }
 
             clear-touch := TouchArea {
                 clicked => {
                     root.text = "";
-                    input.text = "";
                     root.edited("");
                     input.focus();
                 }

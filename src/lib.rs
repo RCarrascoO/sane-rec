@@ -16,9 +16,9 @@ pub use compressor::{
 };
 pub use config::{update_niri_shortcuts, Config, ShortcutsConfig};
 pub use discovery::{
-    detect_gpu_info, get_audio_devices, get_connected_outputs, get_open_windows, get_recent_clips,
-    new_hidden_command, resolve_binary, run_interactive_slurp, AudioDeviceInfo, ClipInfo,
-    OutputInfo, WindowInfo,
+    delete_clip, detect_gpu_info, get_audio_devices, get_connected_outputs, get_open_windows,
+    get_recent_clips, new_hidden_command, resolve_binary, run_interactive_slurp, AudioDeviceInfo,
+    ClipInfo, OutputInfo, WindowInfo,
 };
 pub use engine::{
     get_default_audio_sink, get_default_audio_source, is_source_available, EngineError,
@@ -29,4 +29,7 @@ pub use ipc::{
 };
 pub use profiles::EncoderProfile;
 pub use profiles_manager::HardwareProfile;
-pub use updater::{check_for_updates, perform_update, ReleaseInfo};
+pub use updater::{
+    check_for_updates, clean_changelog_markdown, cleanup_old_executable, get_embedded_changelog,
+    perform_update, ReleaseInfo,
+};

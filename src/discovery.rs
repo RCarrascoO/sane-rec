@@ -461,8 +461,8 @@ pub fn get_open_windows() -> Vec<WindowInfo> {
                         GetWindowThreadProcessId(hwnd, &mut pid);
                         list.push(WindowInfo {
                             id: hwnd as usize as u64,
+                            app_id: title.clone(),
                             title,
-                            app_id: "windows-app".to_string(),
                             pid,
                             is_focused: false,
                         });
@@ -773,6 +773,34 @@ pub fn get_recent_clips(dir: &Path) -> Vec<ClipInfo> {
     clips
 }
 
+/// Elimina de forma segura un clip de video validando que sea un archivo existente con extensión `.mp4` o `.mkv`.
+pub fn delete_clip(path: &Path) -> std::io::Result<()> {
+    if !path.exists() || !path.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "El archivo de clip no existe o no es un archivo válido",
+        ));
+    }
+
+    let is_valid_ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            let lower = e.to_lowercase();
+            lower == "mp4" || lower == "mkv"
+        })
+        .unwrap_or(false);
+
+    if !is_valid_ext {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Solo se pueden eliminar archivos de video (.mp4, .mkv)",
+        ));
+    }
+
+    std::fs::remove_file(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -991,6 +1019,41 @@ mod tests {
         assert_eq!(clips[1].name, "Recording_2026-10-29_18-10-26.mp4");
         assert_eq!(clips[1].size_mb, 1.0);
         assert!(clips[1].modified.is_some());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_delete_clip() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "sane_rec_delete_clip_test_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let mp4_path = temp_dir.join("clip_test.mp4");
+        let mkv_path = temp_dir.join("clip_test.MKV");
+        let txt_path = temp_dir.join("important.txt");
+        let missing_path = temp_dir.join("nonexistent.mp4");
+
+        std::fs::write(&mp4_path, b"dummy mp4").unwrap();
+        std::fs::write(&mkv_path, b"dummy mkv").unwrap();
+        std::fs::write(&txt_path, b"do not delete").unwrap();
+
+        assert!(delete_clip(&mp4_path).is_ok());
+        assert!(!mp4_path.exists());
+
+        assert!(delete_clip(&mkv_path).is_ok());
+        assert!(!mkv_path.exists());
+
+        let err_txt = delete_clip(&txt_path).unwrap_err();
+        assert_eq!(err_txt.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(txt_path.exists());
+
+        let err_missing = delete_clip(&missing_path).unwrap_err();
+        assert_eq!(err_missing.kind(), std::io::ErrorKind::NotFound);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
