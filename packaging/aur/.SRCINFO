@@ -1,6 +1,6 @@
 pkgbase = sane-rec-bin
 	pkgdesc = Lightweight Material Design 3 Instant Replay & Screen Recorder for Linux (Wayland/niri) with CPU-first architecture
-	pkgver = 0.3.0
+	pkgver = 0.4.0
 	pkgrel = 1
 	url = https://github.com/RCarrascoO/sane-rec
 	arch = x86_64
@@ -16,7 +16,7 @@ pkgbase = sane-rec-bin
 	optdepends = libnotify: Notificaciones nativas de escritorio
 	provides = sane-rec
 	conflicts = sane-rec
-	source = https://github.com/RCarrascoO/sane-rec/releases/download/v0.3.0/sane-rec-v0.3.0-linux-x86_64.tar.gz
+	source = https://github.com/RCarrascoO/sane-rec/releases/download/v0.4.0/sane-rec-v0.4.0-linux-x86_64.tar.gz
 	sha256sums = 9508ae96e5762d986065091823a359a4cda9f49ee421cea642edbd3206f3f9f5
 
 pkgname = sane-rec-bin

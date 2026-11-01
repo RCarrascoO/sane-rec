@@ -77,6 +77,14 @@ if [[ -f "${SCRIPT_DIR}/assets/sane-rec.desktop" ]]; then
     echo "✔ Acceso directo de escritorio instalado en: ${DESKTOP_DEST}/sane-rec.desktop"
 fi
 
+# 3.1 Copiar perfiles de hardware a ~/.config/sane-rec/profiles/
+PROFILES_DEST="${XDG_CONFIG_HOME:-${HOME}/.config}/sane-rec/profiles"
+mkdir -p "${PROFILES_DEST}"
+if [[ -d "${SCRIPT_DIR}/profiles" ]]; then
+    cp "${SCRIPT_DIR}/profiles/"*.toml "${PROFILES_DEST}/" 2>/dev/null || true
+    echo "✔ Perfiles de hardware actualizados en: ${PROFILES_DEST}"
+fi
+
 if [[ -f "${SCRIPT_DIR}/assets/sane-rec.svg" ]]; then
     cp "${SCRIPT_DIR}/assets/sane-rec.svg" "${ICON_DEST}/sane-rec.svg"
     cp "${SCRIPT_DIR}/assets/sane-rec.svg" "${PIXMAPS_DEST}/sane-rec.svg"
