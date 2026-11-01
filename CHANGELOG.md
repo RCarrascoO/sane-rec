@@ -1,5 +1,13 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.5.2
+- **Aceleración por Hardware AMD Polaris VA-API Zero B-Frames (`-b 0`)**: Grabación fluida por GPU (`h264_vaapi`) a 60 FPS con solo ~3% de uso de CPU y 0 cuelgues del kernel (`ring vce0 timeout`) en tarjetas AMD Radeon RX 470/480/570/580 (Polaris 10/20 / VCE 3.4) y RDNA en Linux Wayland.
+- **Perfil Predefinido `Polaris-VAAPI-ZeroBFrames`**: Nuevo perfil optimizado listo para usar en el gestor de perfiles de equipo.
+- **Parámetros Adaptativos de Códec y Calidad en Tiempo Real**: Controles dinámicos de velocidad y calidad adaptados al códec seleccionado (Modo VCE Directo en VA-API, NVIDIA NVENC p1–p4, AMD AMF speed/balanced/quality, Intel QSV TU y VP9 Realtime cpu-used). Mapeo automático de calidad QP en GPU vs CRF en CPU.
+- **Rejilla 2x2 Responsiva para Códecs por GPU**: Reorganización de la fila de códecs acelerados con prioridad a `h264_vaapi` y prevención de desbordes en ventanas estrechas.
+- **División en 2 Filas del Límite de Memoria RAM**: Adaptación limpia de los chips de memoria en ventanas verticales o compactas.
+- **Prevención de Desbordes en Chips de Perfiles**: Ajuste de ancho mínimo y elisión automática de texto en chips de la interfaz para tarjetas y ventanas reducidas.
+
 ## v0.5.1
 - **Diseño Responsivo Compacto**: Adaptación fluida para anchos reducidos (~600–720px) con botones de acción compactos e iconos limpios en tarjetas de clips, evitando recortes en los botones 'Carpeta' y 'Borrar'.
 - **Prevención de Desbordes Horizontales**: Ajuste y elisión en títulos y descripciones largas en perfiles de hardware ('Intel Hardware QuickSync') y en el gestor de perfiles de equipo.

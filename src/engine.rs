@@ -2190,19 +2190,122 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
             let codec = if config.video.codec.is_empty() {
                 "libx264"
             } else {
-                &config.video.codec
-            };
-            let preset = if config.video.preset.is_empty() {
-                "ultrafast"
-            } else {
-                &config.video.preset
+                config.video.codec.as_str()
             };
             let crf_str = config.video.crf.to_string();
 
-            cmd.args([
-                "-c:v", codec, "-preset", preset, "-crf", &crf_str, "-pix_fmt", "yuv420p",
-                "-threads", "2",
-            ]);
+            if codec.contains("nvenc") {
+                let nv_preset = match config.video.preset.as_str() {
+                    "ultrafast" | "p1" => "p1",
+                    "superfast" | "p2" => "p2",
+                    "veryfast" | "p3" => "p3",
+                    "fast" | "p4" => "p4",
+                    _ => "p3",
+                };
+                cmd.args([
+                    "-c:v",
+                    "h264_nvenc",
+                    "-preset",
+                    nv_preset,
+                    "-rc",
+                    "constqp",
+                    "-qp",
+                    &crf_str,
+                    "-bf",
+                    "0",
+                    "-pix_fmt",
+                    "yuv420p",
+                ]);
+            } else if codec.contains("amf") || codec.contains("vaapi") {
+                let amf_quality = match config.video.preset.as_str() {
+                    "ultrafast" | "speed" => "speed",
+                    "veryfast" | "balanced" => "balanced",
+                    "fast" | "quality" => "quality",
+                    _ => "speed",
+                };
+                cmd.args([
+                    "-c:v",
+                    "h264_amf",
+                    "-usage",
+                    "ultralowlatency",
+                    "-quality",
+                    amf_quality,
+                    "-rc",
+                    "cqp",
+                    "-qp_i",
+                    &crf_str,
+                    "-qp_p",
+                    &crf_str,
+                    "-bf",
+                    "0",
+                    "-pix_fmt",
+                    "yuv420p",
+                ]);
+            } else if codec.contains("qsv") {
+                let qsv_preset = match config.video.preset.as_str() {
+                    "ultrafast" | "veryfast" => "veryfast",
+                    "superfast" | "faster" => "faster",
+                    "veryfast" | "fast" => "fast",
+                    "fast" | "medium" => "medium",
+                    _ => "veryfast",
+                };
+                cmd.args([
+                    "-c:v",
+                    "h264_qsv",
+                    "-preset",
+                    qsv_preset,
+                    "-global_quality",
+                    &crf_str,
+                    "-bf",
+                    "0",
+                    "-pix_fmt",
+                    "yuv420p",
+                ]);
+            } else if codec.contains("vp9") {
+                let cpu_used = match config.video.preset.as_str() {
+                    "ultrafast" => "8",
+                    "superfast" => "7",
+                    "veryfast" => "6",
+                    "fast" => "5",
+                    _ => "6",
+                };
+                cmd.args([
+                    "-c:v",
+                    "libvpx-vp9",
+                    "-deadline",
+                    "realtime",
+                    "-cpu-used",
+                    cpu_used,
+                    "-crf",
+                    &crf_str,
+                    "-b:v",
+                    "0",
+                    "-pix_fmt",
+                    "yuv420p",
+                ]);
+            } else {
+                let preset = if config.video.preset.is_empty() {
+                    "ultrafast"
+                } else {
+                    config.video.preset.as_str()
+                };
+                cmd.args([
+                    "-c:v",
+                    codec,
+                    "-preset",
+                    preset,
+                    "-crf",
+                    &crf_str,
+                    "-tune",
+                    "zerolatency",
+                    "-bf",
+                    "0",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-threads",
+                    "2",
+                ]);
+            }
         }
     }
 
@@ -2266,29 +2369,66 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
                 "--no-dmabuf",
             ]);
         }
-        EncoderProfile::AmdHardware => {
-            cmd.args(["-c", "h264_vaapi", "-b", "0"]);
+        EncoderProfile::AmdHardware | EncoderProfile::IntelHardware => {
+            let qp_arg = format!("qp={}", config.video.crf);
+            cmd.args(["-c", "h264_vaapi", "-b", "0", "-p", &qp_arg]);
         }
         EncoderProfile::NvidiaHardware => {
-            cmd.args(["-c", "h264_nvenc", "-b", "0"]);
-        }
-        EncoderProfile::IntelHardware => {
-            cmd.args(["-c", "h264_vaapi", "-b", "0"]);
+            let cq_arg = format!("cq={}", config.video.crf);
+            cmd.args(["-c", "h264_nvenc", "-b", "0", "-p", "preset=p3", "-p", &cq_arg]);
         }
         EncoderProfile::Custom(_) => {
             let codec = if config.video.codec.is_empty() {
                 "libx264"
             } else {
-                &config.video.codec
+                config.video.codec.as_str()
             };
+            let crf_str = config.video.crf.to_string();
 
-            if codec.contains("vaapi") || codec.contains("nvenc") || codec.contains("qsv") {
-                // Aceleración por hardware nativa en GPU (VA-API / NVENC / QSV) con DMA-BUF directo
-                cmd.args(["-c", codec, "-b", "0"]);
+            if codec.contains("vaapi") || codec.contains("amf") || codec.contains("qsv") {
+                let qp_arg = format!("qp={}", crf_str);
+                cmd.args(["-c", "h264_vaapi", "-b", "0", "-p", &qp_arg]);
+            } else if codec.contains("nvenc") {
+                let nv_preset = match config.video.preset.as_str() {
+                    "ultrafast" | "p1" => "p1",
+                    "superfast" | "p2" => "p2",
+                    "veryfast" | "p3" => "p3",
+                    "fast" | "p4" => "p4",
+                    _ => "p3",
+                };
+                let preset_arg = format!("preset={}", nv_preset);
+                let cq_arg = format!("cq={}", crf_str);
+                cmd.args(["-c", "h264_nvenc", "-b", "0", "-p", &preset_arg, "-p", &cq_arg]);
+            } else if codec.contains("vp9") {
+                let cpu_used = match config.video.preset.as_str() {
+                    "ultrafast" => "8",
+                    "superfast" => "7",
+                    "veryfast" => "6",
+                    "fast" => "5",
+                    _ => "6",
+                };
+                let cpu_arg = format!("cpu-used={}", cpu_used);
+                let crf_arg = format!("crf={}", crf_str);
+                cmd.args([
+                    "-c",
+                    "libvpx-vp9",
+                    "-b",
+                    "0",
+                    "-p",
+                    "deadline=realtime",
+                    "-p",
+                    &cpu_arg,
+                    "-p",
+                    &crf_arg,
+                ]);
             } else {
-                // Encoder por software en CPU (libx264, etc.)
-                let preset_arg = format!("preset={}", config.video.preset);
-                let crf_arg = format!("crf={}", config.video.crf);
+                let preset = if config.video.preset.is_empty() {
+                    "ultrafast"
+                } else {
+                    config.video.preset.as_str()
+                };
+                let preset_arg = format!("preset={}", preset);
+                let crf_arg = format!("crf={}", crf_str);
                 cmd.args([
                     "-c",
                     codec,

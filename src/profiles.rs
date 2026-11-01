@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "kebab-case")]
 pub enum EncoderProfile {
     SaneSafe,
+    #[serde(alias = "amd-vaapi", alias = "amdhardware", alias = "amd", alias = "vaapi", alias = "h264_vaapi")]
     AmdHardware,
+    #[serde(alias = "nvidia-nvenc", alias = "nvidiahardware", alias = "nvidia", alias = "nvenc", alias = "h264_nvenc")]
     NvidiaHardware,
     #[serde(alias = "intel-qsv", alias = "intelhardware", alias = "qsv", alias = "h264_qsv")]
     IntelHardware,
@@ -69,8 +71,10 @@ impl std::str::FromStr for EncoderProfile {
         let normalized = s.trim().to_lowercase();
         Ok(match normalized.as_str() {
             "sane-safe" | "sanesafe" | "cpu" | "x264" => EncoderProfile::SaneSafe,
-            "amd-hardware" | "amdhardware" | "amd" | "vaapi" => EncoderProfile::AmdHardware,
-            "nvidia-hardware" | "nvidiahardware" | "nvidia" | "nvenc" => {
+            "amd-hardware" | "amdhardware" | "amd" | "vaapi" | "amd-vaapi" | "h264_vaapi" => {
+                EncoderProfile::AmdHardware
+            }
+            "nvidia-hardware" | "nvidiahardware" | "nvidia" | "nvenc" | "nvidia-nvenc" | "h264_nvenc" => {
                 EncoderProfile::NvidiaHardware
             }
             "intel-qsv" | "intel-hardware" | "intelhardware" | "intel" | "qsv" | "h264_qsv" => {

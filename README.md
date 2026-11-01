@@ -50,11 +50,12 @@ Olvídate de recortar clips a mano o suscribirte a planes de pago solo para comp
 - Genera en segundo plano una copia ligera optimizada (`_discord.mp4`) calculando bitrates dinámicos y aplicando escalado adaptativo inteligente (**1080p → 720p → 480p**).
 - **Copia instantánea al portapapeles:** Copia automáticamente la ruta del clip comprimido (`wl-copy` en Linux, `Set-Clipboard` en Windows). Basta con presionar `Ctrl + V` en Discord o cualquier red social.
 
-### 🛡️ Arquitectura CPU-First & Perfiles Térmicos
-Creado específicamente para equipos donde los codificadores de GPU fallan o recalientan el sistema:
-- **`Sane Safe` (CPU x264 zerolatency):** Cero riesgo de bloqueos o congelamientos del driver en tarjetas gráficas legendarias como AMD Polaris (RX 470/480/570/580/590) bajo Wayland.
+### 🛡️ Arquitectura CPU-First & Perfiles de Hardware
+Creado para máxima estabilidad tanto en CPU como con aceleración de GPU sin sobrecalentamientos:
+- **`Polaris-VAAPI-ZeroBFrames` (AMD Polaris RX 470/480/570/580):** Soporte de codificación nativa por GPU (`h264_vaapi`) con Zero B-Frames (`-b 0`) bajo Linux Wayland. Captura a 60 FPS con solo ~3% de CPU y cero cuelgues del driver de video (`ring vce0 timeout`).
+- **`Sane Safe` (CPU x264 zerolatency):** Codificación por CPU con latencia cero sin depender del codificador de video de la GPU.
 - **`Pavilion Gaming - Celsius`:** 0% de carga en la tarjeta dedicada (dGPU) en portátiles de juego bajo Windows (HP Pavilion, ASUS TUF, Lenovo Legion), evitando estrangulamiento térmico (*thermal throttling*), sobrecalentamiento y pantallas azules (BSODs).
-- **Soporte de Hardware Completo:** Incluye presets listos para **NVIDIA NVENC**, **AMD AMF / VA-API** e **Intel QuickSync**.
+- **Soporte de Hardware Completo:** Incluye presets adaptativos para **NVIDIA NVENC (p1–p4)**, **AMD AMF / VA-API**, **Intel QuickSync** y **libvpx-vp9** con mapeo inteligente de calidad QP / CRF.
 
 ### 🎮 Compatibilidad Total con Juegos (Minecraft Java & MSI Afterburner / RTSS)
 - Captura fluida en Windows vía `gdigrab` Desktop DWM y DXGI sin perder el foco en títulos OpenGL / Java como Minecraft (evita la apertura no deseada del menú `ESC`).

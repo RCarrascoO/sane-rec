@@ -60,15 +60,17 @@ pub const DEFAULT_PROFILE_POLARIS: &str = include_str!("../profiles/Sane-Desktop
 pub const DEFAULT_PROFILE_NOTEBOOK: &str = include_str!("../profiles/Notebook-Universal-Safe.toml");
 pub const DEFAULT_PROFILE_HIME: &str = include_str!("../profiles/hime-config.toml");
 pub const DEFAULT_PROFILE_PAVILION: &str = include_str!("../profiles/Pavilion-Gaming-Celsius.toml");
+pub const DEFAULT_PROFILE_POLARIS_VAAPI: &str = include_str!("../profiles/Polaris-VAAPI-ZeroBFrames.toml");
 
-pub const DEFAULT_PROFILES: [(&str, &str); 4] = [
+pub const DEFAULT_PROFILES: [(&str, &str); 5] = [
     ("Sane-Desktop-Polaris.toml", DEFAULT_PROFILE_POLARIS),
     ("Notebook-Universal-Safe.toml", DEFAULT_PROFILE_NOTEBOOK),
     ("hime-config.toml", DEFAULT_PROFILE_HIME),
     ("Pavilion-Gaming-Celsius.toml", DEFAULT_PROFILE_PAVILION),
+    ("Polaris-VAAPI-ZeroBFrames.toml", DEFAULT_PROFILE_POLARIS_VAAPI),
 ];
 
-/// Siembra los 4 perfiles por defecto embebidos en el binario si aún no existen en el directorio.
+/// Siembra los 5 perfiles por defecto embebidos en el binario si aún no existen en el directorio.
 pub fn seed_default_profiles() {
     let dir = profiles_dir();
     let _ = fs::create_dir_all(&dir);
@@ -208,6 +210,7 @@ mod tests {
         assert!(profiles.contains(&"Notebook-Universal-Safe".to_string()));
         assert!(profiles.contains(&"hime-config".to_string()));
         assert!(profiles.contains(&"Pavilion-Gaming-Celsius".to_string()));
+        assert!(profiles.contains(&"Polaris-VAAPI-ZeroBFrames".to_string()));
     }
 
     #[test]
@@ -221,6 +224,13 @@ mod tests {
             assert!(profile.fps > 0);
             assert!(profile.max_memory_mb > 0);
         }
+
+        // Validación específica del perfil Polaris VA-API Zero B-Frames
+        let polaris_vaapi: HardwareProfile = toml::from_str(DEFAULT_PROFILE_POLARIS_VAAPI)
+            .expect("Polaris-VAAPI-ZeroBFrames debe parsearse limpiamente");
+        assert_eq!(polaris_vaapi.name, "Polaris-VAAPI-ZeroBFrames");
+        assert_eq!(polaris_vaapi.codec, "h264_vaapi");
+        assert_eq!(polaris_vaapi.fps, 60);
 
         // Validación específica del perfil térmico Pavilion Gaming - Celsius
         let pavilion: HardwareProfile = toml::from_str(DEFAULT_PROFILE_PAVILION)

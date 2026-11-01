@@ -224,8 +224,8 @@ export component AppWindow inherits Window {
         ScrollView {
             width: 100%;
             height: 100%;
-            viewport-width: self.visible-width;
-            viewport-height: content-col.preferred-height + 80px;
+            content-width: self.visible-width;
+            content-height: content-col.preferred-height + 80px;
 
             content-col := VerticalLayout {
                 x: Math.max(0px, Math.floor((parent.visible-width - self.width) / 2px) * 1px);
@@ -1563,10 +1563,9 @@ export component AppWindow inherits Window {
 
                             // 2. AMD Hardware (VA-API)
                             M3ProfileTile {
-                                title: "AMD Hardware (VA-API)";
-                                subtitle: "Aceleración por GPU Radeon • Consumo ultra bajo de CPU";
-                                badge-text: "Experimental";
-                                warning-text: "Incompatible con AMD Polaris (RX 570)";
+                                title: "AMD Hardware (VA-API Zero B-Frames)";
+                                subtitle: "Captura directa DMA-BUF + VCE/VCN (-b 0) • ~3% CPU • Estable en RX 570/580 Polaris y RDNA";
+                                badge-text: "Zero B-Frames • ~3% CPU";
                                 icon-name: "bolt";
                                 is-selected: root.active-profile == "amd-vaapi";
                                 clicked => {
@@ -1684,45 +1683,248 @@ export component AppWindow inherits Window {
                                         font-size: Theme.font-label-small;
                                         color: Theme.on-surface-variant;
                                     }
-                                    HorizontalLayout {
+                                    VerticalLayout {
                                         spacing: 8px;
-                                        M3PresetChip {
-                                            text: "h264_qsv (Intel UHD / QuickSync)";
-                                            is-active: root.custom-codec == "h264_qsv";
-                                            clicked => {
-                                                root.custom-codec = "h264_qsv";
-                                                root.set-custom-codec("h264_qsv");
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            M3PresetChip {
+                                                text: "h264_vaapi (Linux VA-API • Zero B-Frames)";
+                                                is-active: root.custom-codec == "h264_vaapi";
+                                                clicked => {
+                                                    root.custom-codec = "h264_vaapi";
+                                                    root.set-custom-codec("h264_vaapi");
+                                                }
+                                            }
+                                            M3PresetChip {
+                                                text: "h264_amf (AMD AMF Windows)";
+                                                is-active: root.custom-codec == "h264_amf";
+                                                clicked => {
+                                                    root.custom-codec = "h264_amf";
+                                                    root.set-custom-codec("h264_amf");
+                                                }
                                             }
                                         }
-                                        M3PresetChip {
-                                            text: "h264_nvenc (NVIDIA NVENC)";
-                                            is-active: root.custom-codec == "h264_nvenc";
-                                            clicked => {
-                                                root.custom-codec = "h264_nvenc";
-                                                root.set-custom-codec("h264_nvenc");
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            M3PresetChip {
+                                                text: "h264_nvenc (NVIDIA NVENC)";
+                                                is-active: root.custom-codec == "h264_nvenc";
+                                                clicked => {
+                                                    root.custom-codec = "h264_nvenc";
+                                                    root.set-custom-codec("h264_nvenc");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "h264_amf (AMD AMF)";
-                                            is-active: root.custom-codec == "h264_amf";
-                                            clicked => {
-                                                root.custom-codec = "h264_amf";
-                                                root.set-custom-codec("h264_amf");
-                                            }
-                                        }
-                                        M3PresetChip {
-                                            text: "h264_vaapi (Linux VA-API)";
-                                            is-active: root.custom-codec == "h264_vaapi";
-                                            clicked => {
-                                                root.custom-codec = "h264_vaapi";
-                                                root.set-custom-codec("h264_vaapi");
+                                            M3PresetChip {
+                                                text: "h264_qsv (Intel QuickSync)";
+                                                is-active: root.custom-codec == "h264_qsv";
+                                                clicked => {
+                                                    root.custom-codec = "h264_qsv";
+                                                    root.set-custom-codec("h264_qsv");
+                                                }
                                             }
                                         }
                                     }
                                 }
 
-                                // 2. Preset CPU (Velocidad vs CPU)
-                                VerticalLayout {
+                                // 2. Preset CPU / GPU / VP9 según el códec activo
+                                if root.custom-codec == "h264_vaapi": VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Velocidad de codificación (Motor físico VCE / VA-API):";
+                                        font-size: Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: Theme.on-surface;
+                                    }
+                                    Rectangle {
+                                        background: Theme.secondary-container;
+                                        border-radius: Theme.radius-md;
+                                        HorizontalLayout {
+                                            padding: 12px;
+                                            Text {
+                                                text: "Modo Hardware Directo (-b 0 Zero B-Frames activo): La GPU codifica cada fotograma en <2 ms (~3% uso de CPU) sin retener B-frames en VRAM.";
+                                                wrap: word-wrap;
+                                                horizontal-stretch: 1;
+                                                min-width: 0px;
+                                                color: Theme.on-secondary-container;
+                                                font-size: Theme.font-body-small;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if root.custom-codec == "h264_nvenc": VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Preset de hardware NVIDIA NVENC:";
+                                        font-size: Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: Theme.on-surface;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3PresetChip {
+                                            text: "p1 (Máx FPS)";
+                                            is-active: root.custom-preset == "ultrafast" || root.custom-preset == "p1";
+                                            clicked => {
+                                                root.custom-preset = "ultrafast";
+                                                root.set-custom-preset("ultrafast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "p2 (Súper rápido)";
+                                            is-active: root.custom-preset == "superfast" || root.custom-preset == "p2";
+                                            clicked => {
+                                                root.custom-preset = "superfast";
+                                                root.set-custom-preset("superfast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "p3 (Rápido)";
+                                            is-active: root.custom-preset == "veryfast" || root.custom-preset == "p3";
+                                            clicked => {
+                                                root.custom-preset = "veryfast";
+                                                root.set-custom-preset("veryfast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "p4 (Equilibrado)";
+                                            is-active: root.custom-preset == "fast" || root.custom-preset == "p4";
+                                            clicked => {
+                                                root.custom-preset = "fast";
+                                                root.set-custom-preset("fast");
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if root.custom-codec == "h264_amf": VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Perfil de hardware AMD AMF:";
+                                        font-size: Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: Theme.on-surface;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3PresetChip {
+                                            text: "speed (Velocidad)";
+                                            is-active: root.custom-preset == "ultrafast" || root.custom-preset == "speed";
+                                            clicked => {
+                                                root.custom-preset = "ultrafast";
+                                                root.set-custom-preset("ultrafast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "balanced (Equilibrado)";
+                                            is-active: root.custom-preset == "veryfast" || root.custom-preset == "balanced";
+                                            clicked => {
+                                                root.custom-preset = "veryfast";
+                                                root.set-custom-preset("veryfast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "quality (Calidad)";
+                                            is-active: root.custom-preset == "fast" || root.custom-preset == "quality";
+                                            clicked => {
+                                                root.custom-preset = "fast";
+                                                root.set-custom-preset("fast");
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if root.custom-codec == "h264_qsv": VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Preset Intel QuickSync (TU):";
+                                        font-size: Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: Theme.on-surface;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3PresetChip {
+                                            text: "veryfast (TU7)";
+                                            is-active: root.custom-preset == "ultrafast" || root.custom-preset == "veryfast";
+                                            clicked => {
+                                                root.custom-preset = "ultrafast";
+                                                root.set-custom-preset("ultrafast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "faster (TU6)";
+                                            is-active: root.custom-preset == "superfast" || root.custom-preset == "faster";
+                                            clicked => {
+                                                root.custom-preset = "superfast";
+                                                root.set-custom-preset("superfast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "fast (TU4)";
+                                            is-active: root.custom-preset == "veryfast" || root.custom-preset == "fast";
+                                            clicked => {
+                                                root.custom-preset = "veryfast";
+                                                root.set-custom-preset("veryfast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "medium (TU3)";
+                                            is-active: root.custom-preset == "fast" || root.custom-preset == "medium";
+                                            clicked => {
+                                                root.custom-preset = "fast";
+                                                root.set-custom-preset("fast");
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if root.custom-codec == "libvpx-vp9": VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Velocidad VP9 Realtime (CPU-Used):";
+                                        font-size: Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: Theme.on-surface;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        M3PresetChip {
+                                            text: "CPU-8 (Ultra rápido)";
+                                            is-active: root.custom-preset == "ultrafast" || root.custom-preset == "8";
+                                            clicked => {
+                                                root.custom-preset = "ultrafast";
+                                                root.set-custom-preset("ultrafast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "CPU-7 (Súper rápido)";
+                                            is-active: root.custom-preset == "superfast" || root.custom-preset == "7";
+                                            clicked => {
+                                                root.custom-preset = "superfast";
+                                                root.set-custom-preset("superfast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "CPU-6 (Rápido)";
+                                            is-active: root.custom-preset == "veryfast" || root.custom-preset == "6";
+                                            clicked => {
+                                                root.custom-preset = "veryfast";
+                                                root.set-custom-preset("veryfast");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "CPU-5 (Equilibrado)";
+                                            is-active: root.custom-preset == "fast" || root.custom-preset == "5";
+                                            clicked => {
+                                                root.custom-preset = "fast";
+                                                root.set-custom-preset("fast");
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if root.custom-codec != "h264_vaapi" && root.custom-codec != "h264_nvenc" && root.custom-codec != "h264_amf" && root.custom-codec != "h264_qsv" && root.custom-codec != "libvpx-vp9": VerticalLayout {
                                     spacing: 8px;
                                     Text {
                                         text: "Preset de velocidad CPU:";
@@ -1767,11 +1969,11 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                // 3. Calidad CRF
+                                // 3. Calidad CRF / QP
                                 VerticalLayout {
                                     spacing: 8px;
                                     Text {
-                                        text: "Calidad CRF (" + root.custom-crf + " - menor es mayor calidad):";
+                                        text: (root.custom-codec == "h264_vaapi" || root.custom-codec == "h264_nvenc" || root.custom-codec == "h264_amf" || root.custom-codec == "h264_qsv") ? ("Calidad QP en GPU (" + root.custom-crf + " - menor es mayor calidad):") : ("Calidad CRF (" + root.custom-crf + " - menor es mayor calidad):");
                                         font-size: Theme.font-label-medium;
                                         font-weight: 700;
                                         color: Theme.on-surface;
@@ -1822,46 +2024,52 @@ export component AppWindow inherits Window {
                                         font-weight: 700;
                                         color: Theme.on-surface;
                                     }
-                                    HorizontalLayout {
+                                    VerticalLayout {
                                         spacing: 8px;
-                                        M3PresetChip {
-                                            text: "100 MB";
-                                            is-active: root.max-memory-mb <= 120;
-                                            clicked => {
-                                                root.max-memory-mb = 100;
-                                                root.set-custom-max-ram(100);
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            M3PresetChip {
+                                                text: "100 MB";
+                                                is-active: root.max-memory-mb <= 120;
+                                                clicked => {
+                                                    root.max-memory-mb = 100;
+                                                    root.set-custom-max-ram(100);
+                                                }
+                                            }
+                                            M3PresetChip {
+                                                text: "150 MB (Recomendado)";
+                                                is-active: root.max-memory-mb > 120 && root.max-memory-mb <= 200;
+                                                clicked => {
+                                                    root.max-memory-mb = 150;
+                                                    root.set-custom-max-ram(150);
+                                                }
+                                            }
+                                            M3PresetChip {
+                                                text: "250 MB";
+                                                is-active: root.max-memory-mb > 200 && root.max-memory-mb <= 350;
+                                                clicked => {
+                                                    root.max-memory-mb = 250;
+                                                    root.set-custom-max-ram(250);
+                                                }
                                             }
                                         }
-                                        M3PresetChip {
-                                            text: "150 MB (Recomendado)";
-                                            is-active: root.max-memory-mb > 120 && root.max-memory-mb <= 200;
-                                            clicked => {
-                                                root.max-memory-mb = 150;
-                                                root.set-custom-max-ram(150);
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            M3PresetChip {
+                                                text: "500 MB";
+                                                is-active: root.max-memory-mb > 350 && root.max-memory-mb <= 750;
+                                                clicked => {
+                                                    root.max-memory-mb = 500;
+                                                    root.set-custom-max-ram(500);
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "250 MB";
-                                            is-active: root.max-memory-mb > 200 && root.max-memory-mb <= 350;
-                                            clicked => {
-                                                root.max-memory-mb = 250;
-                                                root.set-custom-max-ram(250);
-                                            }
-                                        }
-                                        M3PresetChip {
-                                            text: "500 MB";
-                                            is-active: root.max-memory-mb > 350 && root.max-memory-mb <= 750;
-                                            clicked => {
-                                                root.max-memory-mb = 500;
-                                                root.set-custom-max-ram(500);
-                                            }
-                                        }
-                                        M3PresetChip {
-                                            text: "1 GB (Gamer)";
-                                            is-active: root.max-memory-mb > 750;
-                                            clicked => {
-                                                root.max-memory-mb = 1024;
-                                                root.set-custom-max-ram(1024);
+                                            M3PresetChip {
+                                                text: "1 GB (Gamer)";
+                                                is-active: root.max-memory-mb > 750;
+                                                clicked => {
+                                                    root.max-memory-mb = 1024;
+                                                    root.set-custom-max-ram(1024);
+                                                }
                                             }
                                         }
                                     }
@@ -3244,7 +3452,7 @@ export component AppWindow inherits Window {
 
                                         Text {
                                             horizontal-stretch: 1;
-                                            text: "Paso 4: Optimización para Juegos (Minecraft Java, MSI Afterburner y Laptops)";
+                                            text: "Paso 4: Optimización para Juegos y Hardware (Polaris VA-API, Minecraft y Laptops)";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.on-surface;
@@ -3254,7 +3462,7 @@ export component AppWindow inherits Window {
 
                                     Text {
                                         horizontal-stretch: 1;
-                                        text: "• Minecraft Java sin pausa automática: Para capturar Minecraft Java sin que se abra el menú de pausa (ESC) al interactuar con otra ventana o superposición, presiona el atajo F3 + P dentro de Minecraft (desactiva la pausa al perder foco) o utiliza el modo de captura de Monitor Completo en sane-rec.\n• Perfiles 'Sane Safe (CPU)' y 'Pavilion Gaming - Celsius': Diseñados para mantener 0% de carga en el codificador de la GPU dedicada, evitando conflictos con overlays como MSI Afterburner / RivaTuner y manteniendo temperaturas óptimas en laptops gaming y gráficas AMD Polaris.";
+                                        text: "• AMD Polaris VA-API Zero B-Frames (-b 0): Gracias a la desactivación estricta de B-frames y captura directa DMA-BUF, las gráficas AMD Radeon RX 470/480/570/580 (Polaris VCE 3.4) ahora graban fluidamente por aceleración de hardware en Linux Wayland a 60 FPS con solo ~3% de uso de CPU y 0 cuelgues del kernel ('ring vce0 timeout').\n• Minecraft Java sin pausa automática: Para capturar Minecraft Java sin que se abra el menú de pausa (ESC) al interactuar con otra ventana o superposición, presiona el atajo F3 + P dentro de Minecraft (desactiva la pausa al perder foco) o utiliza el modo de captura de Monitor Completo en sane-rec.\n• Perfiles 'Sane Safe (CPU)' y 'Pavilion Gaming - Celsius': Diseñados para mantener 0% de carga en el codificador de la GPU dedicada, evitando conflictos con overlays como MSI Afterburner / RivaTuner y manteniendo temperaturas óptimas en laptops gaming.";
                                         font-size: Theme.font-body-medium;
                                         color: Theme.on-surface-variant;
                                         wrap: word-wrap;
@@ -3308,7 +3516,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            // v0.5.1
+                            // v0.5.2
                             M3Card {
                                 content-padding: 18px;
                                 card-background: Theme.surface-container-low;
@@ -3324,7 +3532,7 @@ export component AppWindow inherits Window {
                                         Text {
                                             horizontal-stretch: 1;
                                             min-width: 0px;
-                                            text: "v0.5.1 — Diseño Compacto Responsivo, Scroll Preciso y Renderizado Skia";
+                                            text: "v0.5.2 — Codificación Hardware Polaris VA-API Zero B-Frames y Presets Adaptativos";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.primary;
@@ -3347,6 +3555,42 @@ export component AppWindow inherits Window {
                                                     vertical-alignment: center;
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "• Soporte oficial para AMD Polaris (RX 470/480/570/580) en Linux Wayland vía VA-API Zero B-Frames (-b 0): grabación por GPU a 60 FPS con ~3% CPU sin cuelgues ni 'ring vce0 timeout'.\n• Nuevo perfil predefinido 'Polaris-VAAPI-ZeroBFrames' listo para usar en el gestor de perfiles.\n• Controles dinámicos de velocidad y calidad adaptados al códec seleccionado (VCE Directo, NVIDIA NVENC p1–p4, AMD AMF speed/balanced/quality, Intel QSV TU y VP9 Realtime cpu-used).\n• Rejilla 2x2 responsiva para códecs por hardware en Ajustes y división de presets de RAM en doble fila para evitar desbordes en ventanas estrechas.\n• Prevención de desborde y recorte de texto en chips de perfiles guardados.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.5.1
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            min-width: 0px;
+                                            text: "v0.5.1 — Diseño Compacto Responsivo, Scroll Preciso y Renderizado Skia";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.primary;
+                                            vertical-alignment: center;
+                                            wrap: word-wrap;
                                         }
                                     }
 

@@ -812,6 +812,7 @@ export component M3PresetChip inherits Rectangle {
     in-out property <bool> is-active: false;
     callback clicked();
 
+    min-width: 0px;
     height: 34px;
     border-radius: Theme.radius-full;
     border-width: 0px;
@@ -837,6 +838,8 @@ export component M3PresetChip inherits Rectangle {
                 font-size: Theme.font-label-medium;
                 font-weight: root.is-active ? 700 : 500;
                 vertical-alignment: center;
+                overflow: elide;
+                min-width: 0px;
                 color: root.is-active ?
                     Theme.on-primary :
                     Theme.on-surface-variant;

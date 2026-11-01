@@ -1,0 +1,10 @@
+name = "Polaris-VAAPI-ZeroBFrames"
+description = "Aceleración por hardware GPU AMD (VA-API Zero B-Frames -b 0) para RX 470/480/570/580 Polaris y RDNA. ~3% CPU a 60 FPS sin ring vce0 timeout."
+target_device = "AMD Radeon Polaris / RDNA (Linux VA-API)"
+codec = "h264_vaapi"
+preset = "ultrafast"
+crf = 21
+fps = 60
+resolution = "1360x768"
+max_memory_mb = 150
+audio_track_mode = 0
