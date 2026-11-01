@@ -1,6 +1,6 @@
 # Maintainer: RCarrascoO <https://github.com/RCarrascoO>
 pkgname=sane-rec-bin
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Lightweight Material Design 3 Instant Replay & Screen Recorder for Linux (Wayland/niri) with CPU-first architecture"
 arch=('x86_64')
@@ -33,8 +33,11 @@ package() {
     # Instalar entrada de escritorio (.desktop)
     install -Dm644 assets/sane-rec.desktop "${pkgdir}/usr/share/applications/sane-rec.desktop"
 
-    # Instalar icono vectorial SVG
+    # Instalar icono PNG oficial e icono vectorial SVG
+    install -Dm644 assets/sane-rec.png "${pkgdir}/usr/share/icons/hicolor/512x512/apps/sane-rec.png"
+    install -Dm644 assets/sane-rec.png "${pkgdir}/usr/share/pixmaps/sane-rec.png"
     install -Dm644 assets/sane-rec.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/sane-rec.svg"
+    install -Dm644 assets/sane-rec.svg "${pkgdir}/usr/share/pixmaps/sane-rec.svg"
 
     # Instalar documentación y licencia
     install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
