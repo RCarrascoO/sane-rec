@@ -29,6 +29,36 @@ impl EncoderProfile {
             EncoderProfile::Custom(ref custom) => custom.as_str(),
         }
     }
+
+    /// Devuelve los elementos del encoder H.264 permitiendo limitar el número de hilos (útil para perfiles térmicos/laptops).
+    pub fn encoder_elements_with_threads(&self, threads: Option<u32>) -> String {
+        match self {
+            EncoderProfile::SaneSafe => {
+                if let Some(t) = threads {
+                    format!(
+                        "x264enc speed-preset=ultrafast tune=zerolatency key-int-max=60 bframes=0 threads={}",
+                        t
+                    )
+                } else {
+                    self.encoder_elements().to_string()
+                }
+            }
+            EncoderProfile::Custom(ref custom) => {
+                if let Some(t) = threads {
+                    if custom.contains("threads=") {
+                        custom.clone()
+                    } else if custom.contains("x264enc") {
+                        format!("{} threads={}", custom, t)
+                    } else {
+                        custom.clone()
+                    }
+                } else {
+                    custom.clone()
+                }
+            }
+            _ => self.encoder_elements().to_string(),
+        }
+    }
 }
 
 impl std::str::FromStr for EncoderProfile {
@@ -66,6 +96,16 @@ pub fn build_video_pipeline(
     target_node: Option<&str>,
     fps: u32,
 ) -> String {
+    build_video_pipeline_with_threads(profile, target_node, fps, None)
+}
+
+/// Construye el pipeline GStreamer para captura de video permitiendo limitar el número de hilos de codificación.
+pub fn build_video_pipeline_with_threads(
+    profile: &EncoderProfile,
+    target_node: Option<&str>,
+    fps: u32,
+    threads: Option<u32>,
+) -> String {
     let src = match target_node {
         Some(node) if !node.trim().is_empty() && node != "portal" => {
             format!("pipewiresrc target-object={} do-timestamp=true", node.trim())
@@ -73,7 +113,7 @@ pub fn build_video_pipeline(
         _ => "pipewiresrc do-timestamp=true".to_string(),
     };
 
-    let encoder_str = profile.encoder_elements();
+    let encoder_str = profile.encoder_elements_with_threads(threads);
     let parse_str = if encoder_str.contains("h264parse") {
         ""
     } else {
@@ -140,6 +180,21 @@ mod tests {
         assert!(pipeline.contains("videoconvert"));
         assert!(pipeline.contains("x264enc speed-preset=ultrafast tune=zerolatency key-int-max=60 bframes=0"));
         assert!(pipeline.contains("h264parse"));
+    }
+
+    #[test]
+    fn test_build_video_pipeline_with_threads() {
+        let pipeline_2t = build_video_pipeline_with_threads(&EncoderProfile::SaneSafe, None, 30, Some(2));
+        assert!(pipeline_2t.contains("threads=2"));
+        assert!(pipeline_2t.contains("framerate=30/1"));
+
+        let pipeline_custom = build_video_pipeline_with_threads(
+            &EncoderProfile::Custom("x264enc preset=ultrafast".to_string()),
+            None,
+            30,
+            Some(2),
+        );
+        assert!(pipeline_custom.contains("threads=2"));
     }
 
     #[test]

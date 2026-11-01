@@ -34,73 +34,56 @@ impl Default for HardwareProfile {
     }
 }
 
-/// Devuelve la ruta al directorio de perfiles (`~/.config/sane-rec/profiles/`).
+/// Devuelve la ruta al directorio de perfiles (`~/.config/sane-rec/profiles/` o `%APPDATA%\sane-rec\profiles\`).
 pub fn profiles_dir() -> PathBuf {
-    if let Some(user_dirs) = directories::BaseDirs::new() {
-        user_dirs.config_dir().join("sane-rec").join("profiles")
-    } else {
-        PathBuf::from("/home/sane/.config/sane-rec/profiles")
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(user_dirs) = directories::BaseDirs::new() {
+            user_dirs.config_dir().join("sane-rec").join("profiles")
+        } else if let Ok(appdata) = std::env::var("APPDATA") {
+            PathBuf::from(appdata).join("sane-rec").join("profiles")
+        } else {
+            PathBuf::from("profiles")
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(user_dirs) = directories::BaseDirs::new() {
+            user_dirs.config_dir().join("sane-rec").join("profiles")
+        } else {
+            PathBuf::from("/home/sane/.config/sane-rec/profiles")
+        }
+    }
+}
+
+pub const DEFAULT_PROFILE_POLARIS: &str = include_str!("../profiles/Sane-Desktop-Polaris.toml");
+pub const DEFAULT_PROFILE_NOTEBOOK: &str = include_str!("../profiles/Notebook-Universal-Safe.toml");
+pub const DEFAULT_PROFILE_HIME: &str = include_str!("../profiles/hime-config.toml");
+pub const DEFAULT_PROFILE_PAVILION: &str = include_str!("../profiles/Pavilion-Gaming-Celsius.toml");
+
+pub const DEFAULT_PROFILES: [(&str, &str); 4] = [
+    ("Sane-Desktop-Polaris.toml", DEFAULT_PROFILE_POLARIS),
+    ("Notebook-Universal-Safe.toml", DEFAULT_PROFILE_NOTEBOOK),
+    ("hime-config.toml", DEFAULT_PROFILE_HIME),
+    ("Pavilion-Gaming-Celsius.toml", DEFAULT_PROFILE_PAVILION),
+];
+
+/// Siembra los 4 perfiles por defecto embebidos en el binario si aún no existen en el directorio.
+pub fn seed_default_profiles() {
+    let dir = profiles_dir();
+    let _ = fs::create_dir_all(&dir);
+
+    for (file_name, toml_str) in DEFAULT_PROFILES {
+        let dest = dir.join(file_name);
+        if !dest.exists() {
+            let _ = fs::write(&dest, toml_str);
+        }
     }
 }
 
 /// Inicializa los perfiles por defecto si aún no existen en el directorio.
 pub fn init_default_profiles() {
-    let dir = profiles_dir();
-    let _ = fs::create_dir_all(&dir);
-
-    let polaris = HardwareProfile {
-        name: "Sane-Desktop-Polaris".to_string(),
-        description: "Optimizado para PC de escritorio con AMD Polaris (RX 570) y CPU multinúcleo (60 FPS)".to_string(),
-        target_device: "AMD Polaris RX 570 / Desktop".to_string(),
-        codec: "libx264".to_string(),
-        preset: "ultrafast".to_string(),
-        crf: 21,
-        fps: 60,
-        resolution: "1360x768".to_string(),
-        max_memory_mb: 150,
-        audio_track_mode: 0,
-    };
-
-    let notebook = HardwareProfile {
-        name: "Notebook-Universal-Safe".to_string(),
-        description: "Ahorro de batería y bajo consumo térmico para portátiles con gráficos integrados (30 FPS)".to_string(),
-        target_device: "Notebook / Laptop universal".to_string(),
-        codec: "libx264".to_string(),
-        preset: "superfast".to_string(),
-        crf: 23,
-        fps: 30,
-        resolution: "1280x720".to_string(),
-        max_memory_mb: 100,
-        audio_track_mode: 0,
-    };
-
-    let hime = HardwareProfile {
-        name: "hime-config".to_string(),
-        description: "Aceleración por GPU AMD RDNA 4 (RX 9060 XT) via VA-API a 1080p 60 FPS con 32GB RAM".to_string(),
-        target_device: "AMD Radeon RX 9060 XT (RDNA 4) / Ryzen 5 5500 / Hyprland".to_string(),
-        codec: "h264_vaapi".to_string(),
-        preset: "fast".to_string(),
-        crf: 18,
-        fps: 60,
-        resolution: "1920x1080".to_string(),
-        max_memory_mb: 500,
-        audio_track_mode: 0,
-    };
-
-    let p_path = dir.join("Sane-Desktop-Polaris.toml");
-    if !p_path.exists() {
-        let _ = save_profile(&polaris);
-    }
-
-    let n_path = dir.join("Notebook-Universal-Safe.toml");
-    if !n_path.exists() {
-        let _ = save_profile(&notebook);
-    }
-
-    let h_path = dir.join("hime-config.toml");
-    if !h_path.exists() {
-        let _ = save_profile(&hime);
-    }
+    seed_default_profiles();
 }
 
 /// Lista los nombres de los perfiles disponibles (sin extensión .toml).
@@ -135,10 +118,19 @@ pub fn load_profile(name: &str) -> Result<HardwareProfile, String> {
     } else {
         format!("{}.toml", trimmed)
     };
-    let path = profiles_dir().join(file_name);
+    let path = profiles_dir().join(&file_name);
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Error al leer perfil '{}': {}", path.display(), e))?;
+    let content = if path.exists() {
+        fs::read_to_string(&path)
+            .map_err(|e| format!("Error al leer perfil '{}': {}", path.display(), e))?
+    } else {
+        // Fallback a los perfiles embebidos por defecto si aún no existen físicamente en disco
+        DEFAULT_PROFILES
+            .iter()
+            .find(|(fname, _)| fname.eq_ignore_ascii_case(&file_name))
+            .map(|(_, content)| (*content).to_string())
+            .ok_or_else(|| format!("Error al leer perfil '{}': Archivo no encontrado", path.display()))?
+    };
 
     toml::from_str::<HardwareProfile>(&content)
         .map_err(|e| format!("Error al parsear TOML del perfil: {}", e))
@@ -215,5 +207,35 @@ mod tests {
         assert!(profiles.contains(&"Sane-Desktop-Polaris".to_string()));
         assert!(profiles.contains(&"Notebook-Universal-Safe".to_string()));
         assert!(profiles.contains(&"hime-config".to_string()));
+        assert!(profiles.contains(&"Pavilion-Gaming-Celsius".to_string()));
+    }
+
+    #[test]
+    fn test_seed_and_parse_all_default_profiles() {
+        for (filename, raw_toml) in DEFAULT_PROFILES {
+            let profile: HardwareProfile = toml::from_str(raw_toml)
+                .unwrap_or_else(|e| panic!("Error al parsear perfil por defecto {}: {}", filename, e));
+            assert!(!profile.name.is_empty());
+            assert!(!profile.description.is_empty());
+            assert!(!profile.codec.is_empty());
+            assert!(profile.fps > 0);
+            assert!(profile.max_memory_mb > 0);
+        }
+
+        // Validación específica del perfil térmico Pavilion Gaming - Celsius
+        let pavilion: HardwareProfile = toml::from_str(DEFAULT_PROFILE_PAVILION)
+            .expect("Pavilion-Gaming-Celsius debe parsearse limpiamente");
+        assert_eq!(pavilion.name, "Pavilion-Gaming-Celsius");
+        assert_eq!(pavilion.fps, 30);
+        assert_eq!(pavilion.resolution, "1280x720");
+        assert_eq!(pavilion.max_memory_mb, 350);
+        assert_eq!(pavilion.codec, "libx264");
+        assert_eq!(pavilion.preset, "ultrafast");
+        assert_eq!(pavilion.crf, 25);
+
+        seed_default_profiles();
+        let loaded = load_profile("Pavilion-Gaming-Celsius").expect("Debe cargar Pavilion-Gaming-Celsius");
+        assert_eq!(loaded.name, "Pavilion-Gaming-Celsius");
+        assert_eq!(loaded.fps, 30);
     }
 }

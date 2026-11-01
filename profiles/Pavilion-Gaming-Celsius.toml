@@ -1,0 +1,15 @@
+# Perfil térmico anti-BSOD (<65°C GPU) para HP Pavilion Gaming 15 (i5-9300H + GTX 1050 3GB + 16GB RAM). 720p @ 30 FPS con 0% carga en dGPU NVIDIA y búfer en RAM.
+name = "Pavilion-Gaming-Celsius"
+description = "Perfil térmico anti-BSOD (<65°C GPU) para HP Pavilion Gaming 15 (i5-9300H + GTX 1050 3GB + 16GB RAM). 720p @ 30 FPS con 0% carga en dGPU NVIDIA y búfer en RAM."
+target_device = "HP Pavilion Gaming 15-dk0xxx (i5-9300H / GTX 1050 3GB / 16GB RAM)"
+codec = "libx264"
+preset = "ultrafast"
+crf = 25
+fps = 30
+resolution = "1280x720"
+max_memory_mb = 350
+audio_track_mode = 0
+replay_duration_secs = 30
+max_ram_mb = 350
+profile = "SaneSafe"
+threads = 2

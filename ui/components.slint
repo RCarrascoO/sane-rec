@@ -909,6 +909,8 @@ export component M3NavItem inherits Rectangle {
 export component M3NavigationRail inherits Rectangle {
     in-out property <int> active-view: 0;
     in-out property <bool> compact: false;
+    in-out property <string> backend-title: "Wayland / niri";
+    in-out property <string> backend-subtitle: "PipeWire • 60 FPS";
     callback view-selected(int);
 
     width: root.compact ? 68px : 188px;
@@ -1076,14 +1078,14 @@ export component M3NavigationRail inherits Rectangle {
                     spacing: 1px;
 
                     Text {
-                        text: "Wayland / niri";
+                        text: root.backend-title;
                         font-size: Theme.font-label-small;
                         font-weight: 700;
                         color: Theme.on-surface;
                     }
 
                     Text {
-                        text: "PipeWire • 60 FPS";
+                        text: root.backend-subtitle;
                         font-size: 10px;
                         color: Theme.on-surface-variant;
                     }

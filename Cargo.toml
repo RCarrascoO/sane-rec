@@ -3,16 +3,12 @@ name = "sane-rec"
 version = "0.3.0"
 edition = "2021"
 authors = ["RCarrascoO"]
-description = "Lightweight Material Design 3 Instant Replay & Screen Recorder for Linux with CPU-first architecture"
+description = "Lightweight Material Design 3 Instant Replay & Screen Recorder for Linux and Windows with CPU-first architecture"
 license = "MIT OR Apache-2.0"
 build = "build.rs"
 
 [dependencies]
 slint = "1.8"
-gstreamer = "0.23"
-gstreamer-app = "0.23"
-gstreamer-video = "0.23"
-gstreamer-audio = "0.23"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
@@ -28,3 +24,13 @@ slint-build = "1.8"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+cpal = "0.15"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics_Gdi",
+] }
+

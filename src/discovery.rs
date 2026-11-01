@@ -42,9 +42,72 @@ pub struct ClipInfo {
     pub modified: Option<SystemTime>,
 }
 
+/// Resuelve la ruta al binario solicitado (ej. ffmpeg, ffprobe).
+/// En Windows, busca primero en el directorio del ejecutable actual antes de recurrir al PATH.
+pub fn resolve_binary(name: &str) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let exe_name = if name.to_lowercase().ends_with(".exe") {
+            name.to_string()
+        } else {
+            format!("{}.exe", name)
+        };
+
+        if let Ok(current_exe) = std::env::current_exe() {
+            if let Some(parent) = current_exe.parent() {
+                let candidate = parent.join(&exe_name);
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+        PathBuf::from(exe_name)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from(name)
+    }
+}
+
+/// Detección de hardware y tarjetas gráficas activas en el sistema.
+#[cfg(target_os = "windows")]
+pub fn detect_gpu_info() -> String {
+    use std::os::windows::process::CommandExt;
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+        ])
+        .creation_flags(0x08000000)
+        .output();
+
+    if let Ok(out) = output {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let gpus: Vec<&str> = text
+                .lines()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty())
+                .collect();
+            if !gpus.is_empty() {
+                return gpus.join(" + ");
+            }
+        }
+    }
+    "Windows DXGI".to_string()
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn detect_gpu_info() -> String {
+    "Wayland / niri".to_string()
+}
+
 /// Obtiene las salidas de pantalla conectadas.
 /// Ejecuta `niri msg -j outputs` y parsea el JSON.
 /// Si falla o no se está ejecutando Niri, hace fallback a `wf-recorder -L`.
+#[cfg(target_os = "linux")]
 pub fn get_connected_outputs() -> Vec<OutputInfo> {
     // 1. Intentar con niri msg -j outputs
     let niri_res = Command::new("niri")
@@ -91,6 +154,104 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
     }
 
     Vec::new()
+}
+
+/// Obtiene las salidas de pantalla conectadas en Windows usando la API Win32 EnumDisplayDevices/EnumDisplaySettings.
+#[cfg(target_os = "windows")]
+pub fn get_connected_outputs() -> Vec<OutputInfo> {
+    use windows_sys::Win32::Graphics::Gdi::{
+        EnumDisplayDevicesW, EnumDisplaySettingsExW, DEVMODEW, DISPLAY_DEVICEW,
+        DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_PRIMARY_DEVICE, ENUM_CURRENT_SETTINGS,
+    };
+
+    let mut outputs = Vec::new();
+    let mut dev_idx = 0;
+
+    loop {
+        let mut display_device: DISPLAY_DEVICEW = unsafe { std::mem::zeroed() };
+        display_device.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+
+        let res = unsafe {
+            EnumDisplayDevicesW(std::ptr::null(), dev_idx, &mut display_device, 0)
+        };
+        if res == 0 {
+            break;
+        }
+
+        if (display_device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) != 0 {
+            let name_end = display_device
+                .DeviceName
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(display_device.DeviceName.len());
+            let name = String::from_utf16_lossy(&display_device.DeviceName[..name_end]);
+
+            let str_end = display_device
+                .DeviceString
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(display_device.DeviceString.len());
+            let dev_desc = String::from_utf16_lossy(&display_device.DeviceString[..str_end]);
+
+            let mut devmode: DEVMODEW = unsafe { std::mem::zeroed() };
+            devmode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+
+            let settings_res = unsafe {
+                EnumDisplaySettingsExW(
+                    display_device.DeviceName.as_ptr(),
+                    ENUM_CURRENT_SETTINGS,
+                    &mut devmode,
+                    0,
+                )
+            };
+
+            let (width, height, refresh_rate) = if settings_res != 0 {
+                (
+                    devmode.dmPelsWidth,
+                    devmode.dmPelsHeight,
+                    devmode.dmDisplayFrequency as f32,
+                )
+            } else {
+                (1920, 1080, 60.0)
+            };
+
+            let is_current = (display_device.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0;
+            let display_name = if !dev_desc.is_empty() {
+                dev_desc
+            } else {
+                name.clone()
+            };
+
+            let description = format!(
+                "{} ({}x{} @ {:.0}Hz)",
+                display_name, width, height, refresh_rate
+            );
+
+            outputs.push(OutputInfo {
+                name,
+                description,
+                width,
+                height,
+                refresh_rate,
+                is_current,
+            });
+        }
+
+        dev_idx += 1;
+    }
+
+    if outputs.is_empty() {
+        outputs.push(OutputInfo {
+            name: r"\\.\DISPLAY1".to_string(),
+            description: "Pantalla Principal (1920x1080 @ 60Hz)".to_string(),
+            width: 1920,
+            height: 1080,
+            refresh_rate: 60.0,
+            is_current: true,
+        });
+    }
+
+    outputs
 }
 
 /// Parsea el JSON devuelto por `niri msg -j outputs`.
@@ -251,6 +412,7 @@ pub fn parse_wf_recorder_outputs(output_str: &str) -> Vec<OutputInfo> {
 
 /// Obtiene las ventanas abiertas en el compositor Niri.
 /// Ejecuta `niri msg -j windows` y parsea el array resultante.
+#[cfg(target_os = "linux")]
 pub fn get_open_windows() -> Vec<WindowInfo> {
     let output = Command::new("niri")
         .args(["msg", "-j", "windows"])
@@ -263,6 +425,50 @@ pub fn get_open_windows() -> Vec<WindowInfo> {
         }
         _ => Vec::new(),
     }
+}
+
+/// Obtiene las ventanas abiertas y visibles en Windows usando Win32 EnumWindows.
+#[cfg(target_os = "windows")]
+pub fn get_open_windows() -> Vec<WindowInfo> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+        IsWindowVisible,
+    };
+
+    unsafe extern "system" fn enum_window_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let list = &mut *(lparam as *mut Vec<WindowInfo>);
+        if IsWindowVisible(hwnd) != 0 {
+            let length = GetWindowTextLengthW(hwnd);
+            if length > 0 {
+                let mut buffer = vec![0u16; (length + 1) as usize];
+                let written = GetWindowTextW(hwnd, buffer.as_mut_ptr(), length + 1);
+                if written > 0 {
+                    let title = String::from_utf16_lossy(&buffer[..written as usize])
+                        .trim()
+                        .to_string();
+                    if !title.is_empty() && title != "Program Manager" && title != "Settings" {
+                        let mut pid: u32 = 0;
+                        GetWindowThreadProcessId(hwnd, &mut pid);
+                        list.push(WindowInfo {
+                            id: hwnd as u64,
+                            title,
+                            app_id: "windows-app".to_string(),
+                            pid,
+                            is_focused: false,
+                        });
+                    }
+                }
+            }
+        }
+        1
+    }
+
+    let mut windows = Vec::new();
+    unsafe {
+        EnumWindows(Some(enum_window_callback), &mut windows as *mut _ as LPARAM);
+    }
+    windows
 }
 
 /// Parsea el JSON devuelto por `niri msg -j windows`.
@@ -315,6 +521,7 @@ pub fn parse_niri_windows(json_str: &str) -> Vec<WindowInfo> {
 /// Retorna `(monitors, microphones)`:
 /// - `monitors`: dispositivos de salida / escritorio (terminan en `.monitor` o con clase `Audio/Sink`).
 /// - `microphones`: entradas físicas o virtuales (con clase `Audio/Source`).
+#[cfg(target_os = "linux")]
 pub fn get_audio_devices() -> (Vec<AudioDeviceInfo>, Vec<AudioDeviceInfo>) {
     let default_sink = Command::new("pactl")
         .arg("get-default-sink")
@@ -351,6 +558,51 @@ pub fn get_audio_devices() -> (Vec<AudioDeviceInfo>, Vec<AudioDeviceInfo>) {
         }
         _ => (Vec::new(), Vec::new()),
     }
+}
+
+/// Obtiene los dispositivos de audio en Windows mediante el host WASAPI de cpal.
+#[cfg(target_os = "windows")]
+pub fn get_audio_devices() -> (Vec<AudioDeviceInfo>, Vec<AudioDeviceInfo>) {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    let host = cpal::default_host();
+    let mut monitors = Vec::new();
+    let mut microphones = Vec::new();
+
+    // 1. Audio del Sistema / Juego (WASAPI Loopback)
+    monitors.push(AudioDeviceInfo {
+        name: "default_output".to_string(),
+        description: "Audio del Sistema (WASAPI Loopback)".to_string(),
+        is_default: true,
+    });
+
+    if let Ok(outputs) = host.output_devices() {
+        for dev in outputs {
+            if let Ok(name) = dev.name() {
+                monitors.push(AudioDeviceInfo {
+                    name: format!("loopback:{}", name),
+                    description: format!("{} (Loopback Sistema)", name),
+                    is_default: false,
+                });
+            }
+        }
+    }
+
+    // 2. Entradas de Micrófono físicas y virtuales
+    let default_in = host.default_input_device().and_then(|d| d.name().ok());
+    if let Ok(inputs) = host.input_devices() {
+        for dev in inputs {
+            if let Ok(name) = dev.name() {
+                let is_def = default_in.as_deref() == Some(&name);
+                microphones.push(AudioDeviceInfo {
+                    name: name.clone(),
+                    description: name,
+                    is_default: is_def,
+                });
+            }
+        }
+    }
+
+    (monitors, microphones)
 }
 
 /// Parsea el JSON devuelto por `pactl -f json list sources`.
@@ -436,9 +688,10 @@ pub fn parse_pactl_sources(
     (monitors, microphones)
 }
 
-/// Lanza `slurp` interactivamente para seleccionar una región de pantalla.
+/// Lanza `slurp` interactivamente para seleccionar una región de pantalla en Linux.
 /// Si el usuario selecciona una región, retorna la cadena con formato "x,y WxH".
 /// Si cancela (por ejemplo pulsando Esc) o hay error, retorna `None`.
+#[cfg(target_os = "linux")]
 pub fn run_interactive_slurp() -> Option<String> {
     let output = Command::new("slurp")
         .output()
@@ -454,6 +707,12 @@ pub fn run_interactive_slurp() -> Option<String> {
     } else {
         None
     }
+}
+
+/// Fallback para sistemas no soportados por slurp (Windows).
+#[cfg(not(target_os = "linux"))]
+pub fn run_interactive_slurp() -> Option<String> {
+    None
 }
 
 /// Escanea el directorio especificado (ej. `/mnt/Files/Videos/Replays/`) y lista

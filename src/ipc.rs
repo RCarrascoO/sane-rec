@@ -126,7 +126,8 @@ impl From<serde_json::Error> for IpcError {
 
 pub type Result<T> = std::result::Result<T, IpcError>;
 
-/// Retorna la ruta al socket Unix `/run/user/<UID>/sane-rec.sock`.
+/// Retorna la ruta al socket Unix `/run/user/<UID>/sane-rec.sock` en Linux, o el endpoint TCP en Windows.
+#[cfg(target_os = "linux")]
 pub fn socket_path() -> PathBuf {
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         PathBuf::from(runtime_dir).join("sane-rec.sock")
@@ -136,12 +137,46 @@ pub fn socket_path() -> PathBuf {
     }
 }
 
-/// Envía una acción mediante el socket Unix por defecto de forma asíncrona y espera la respuesta.
+#[cfg(not(target_os = "linux"))]
+pub fn socket_path() -> PathBuf {
+    PathBuf::from("127.0.0.1:45892")
+}
+
+/// Envía una acción mediante IPC por defecto de forma asíncrona y espera la respuesta.
+#[cfg(target_os = "linux")]
 pub async fn send_command(action: &str) -> Result<IpcResponse> {
     send_command_at(&socket_path(), action).await
 }
 
+#[cfg(target_os = "windows")]
+pub async fn send_command(action: &str) -> Result<IpcResponse> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let mut stream = tokio::net::TcpStream::connect("127.0.0.1:45892").await?;
+    let req = IpcRequest {
+        action: action.to_string(),
+    };
+    let mut req_bytes = serde_json::to_vec(&req)?;
+    req_bytes.push(b'\n');
+    stream.write_all(&req_bytes).await?;
+    stream.flush().await?;
+
+    let (reader, _) = stream.split();
+    let mut buf_reader = BufReader::new(reader);
+    let mut line = String::new();
+    let bytes_read = buf_reader.read_line(&mut line).await?;
+    if bytes_read == 0 {
+        return Err(IpcError::Custom(
+            "Connection closed by server without response".to_string(),
+        ));
+    }
+
+    let resp: IpcResponse = serde_json::from_str(&line)?;
+    Ok(resp)
+}
+
 /// Envía una acción a un socket Unix en una ruta específica de forma asíncrona.
+#[cfg(unix)]
 pub async fn send_command_at(path: &Path, action: &str) -> Result<IpcResponse> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -168,12 +203,40 @@ pub async fn send_command_at(path: &Path, action: &str) -> Result<IpcResponse> {
     Ok(resp)
 }
 
-/// Envía una acción mediante el socket Unix por defecto de forma síncrona.
+/// Envía una acción mediante IPC por defecto de forma síncrona.
+#[cfg(target_os = "linux")]
 pub fn send_command_sync(action: &str) -> Result<IpcResponse> {
     send_command_sync_at(&socket_path(), action)
 }
 
+#[cfg(target_os = "windows")]
+pub fn send_command_sync(action: &str) -> Result<IpcResponse> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let mut stream = std::net::TcpStream::connect("127.0.0.1:45892")?;
+    let req = IpcRequest {
+        action: action.to_string(),
+    };
+    let mut req_bytes = serde_json::to_vec(&req)?;
+    req_bytes.push(b'\n');
+    stream.write_all(&req_bytes)?;
+    stream.flush()?;
+
+    let mut buf_reader = BufReader::new(stream);
+    let mut line = String::new();
+    let bytes_read = buf_reader.read_line(&mut line)?;
+    if bytes_read == 0 {
+        return Err(IpcError::Custom(
+            "Connection closed by server without response".to_string(),
+        ));
+    }
+
+    let resp: IpcResponse = serde_json::from_str(&line)?;
+    Ok(resp)
+}
+
 /// Envía una acción a un socket Unix en una ruta específica de forma síncrona.
+#[cfg(unix)]
 pub fn send_command_sync_at(path: &Path, action: &str) -> Result<IpcResponse> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
@@ -200,12 +263,147 @@ pub fn send_command_sync_at(path: &Path, action: &str) -> Result<IpcResponse> {
     Ok(resp)
 }
 
-/// Inicia el listener IPC en la ruta por defecto `/run/user/<UID>/sane-rec.sock`.
+/// Inicia el listener IPC en Linux (Unix domain socket) o en Windows (TCP localhost 45892).
+#[cfg(target_os = "linux")]
 pub async fn start_listener(tx: tokio::sync::mpsc::Sender<IpcCommand>) -> Result<()> {
     start_listener_at(&socket_path(), tx).await
 }
 
+#[cfg(target_os = "windows")]
+pub async fn start_listener(tx: tokio::sync::mpsc::Sender<IpcCommand>) -> Result<()> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:45892").await?;
+
+    loop {
+        let (mut stream, _) = match listener.accept().await {
+            Ok(conn) => conn,
+            Err(_) => break,
+        };
+
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+            let (reader, mut writer) = stream.split();
+            let mut buf_reader = BufReader::new(reader);
+            let mut line = String::new();
+
+            match buf_reader.read_line(&mut line).await {
+                Ok(0) => {}
+                Ok(_) => {
+                    let req: IpcRequest = match serde_json::from_str(&line) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let resp = IpcResponse::error(format!("Invalid request format: {}", e));
+                            if let Ok(mut bytes) = serde_json::to_vec(&resp) {
+                                bytes.push(b'\n');
+                                let _ = writer.write_all(&bytes).await;
+                                let _ = writer.flush().await;
+                            }
+                            return;
+                        }
+                    };
+
+                    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                    let cmd = IpcCommand {
+                        action: req.action,
+                        responder: resp_tx,
+                    };
+
+                    let response = if tx.send(cmd).await.is_err() {
+                        IpcResponse::error("Server backend unavailable or shutting down")
+                    } else {
+                        match resp_rx.await {
+                            Ok(resp) => resp,
+                            Err(_) => {
+                                IpcResponse::error("Backend dropped request without response")
+                            }
+                        }
+                    };
+
+                    if let Ok(mut bytes) = serde_json::to_vec(&response) {
+                        bytes.push(b'\n');
+                        let _ = writer.write_all(&bytes).await;
+                        let _ = writer.flush().await;
+                    }
+                }
+                Err(_) => {}
+            }
+        });
+    }
+
+    Ok(())
+}
+
+/// Inicia el listener de Hotkeys Globales (F9 y F10) en Windows dentro de juegos DirectX/Vulkan.
+#[cfg(target_os = "windows")]
+pub fn spawn_global_hotkeys_listener() {
+    std::thread::Builder::new()
+        .name("sane-rec-win-hotkeys".into())
+        .spawn(move || {
+            run_windows_hotkey_loop();
+        })
+        .ok();
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_hotkey_loop() {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        RegisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, TranslateMessage, MSG, WM_HOTKEY,
+    };
+
+    const VK_F9: u32 = 0x78;
+    const VK_F10: u32 = 0x79;
+    const HOTKEY_ID_RECORD: i32 = 1;
+    const HOTKEY_ID_SAVE: i32 = 2;
+    const HOTKEY_ID_RECORD_CTRL_SHIFT: i32 = 3;
+    const HOTKEY_ID_SAVE_CTRL_SHIFT: i32 = 4;
+
+    unsafe {
+        // F9 y F10 directos
+        RegisterHotKey(0, HOTKEY_ID_RECORD, MOD_NOREPEAT, VK_F9);
+        RegisterHotKey(0, HOTKEY_ID_SAVE, MOD_NOREPEAT, VK_F10);
+
+        // Ctrl+Shift+F9 y Ctrl+Shift+F10 como respaldo
+        RegisterHotKey(
+            0,
+            HOTKEY_ID_RECORD_CTRL_SHIFT,
+            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+            VK_F9,
+        );
+        RegisterHotKey(
+            0,
+            HOTKEY_ID_SAVE_CTRL_SHIFT,
+            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+            VK_F10,
+        );
+
+        let mut msg: MSG = std::mem::zeroed();
+        while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+            if msg.message == WM_HOTKEY {
+                match msg.wParam as i32 {
+                    HOTKEY_ID_RECORD | HOTKEY_ID_RECORD_CTRL_SHIFT => {
+                        let _ = send_command_sync("record_toggle");
+                    }
+                    HOTKEY_ID_SAVE | HOTKEY_ID_SAVE_CTRL_SHIFT => {
+                        let _ = send_command_sync("save");
+                    }
+                    _ => {}
+                }
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn spawn_global_hotkeys_listener() {}
+
 /// Inicia el listener IPC en una ruta arbitraria de socket Unix.
+#[cfg(unix)]
 pub async fn start_listener_at(
     path: &Path,
     tx: tokio::sync::mpsc::Sender<IpcCommand>,
@@ -325,6 +523,7 @@ mod tests {
         assert!(resp_data.data.is_some());
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_ipc_listener_and_send_command_roundtrip() {
         let temp_dir = std::env::temp_dir().join(format!("sane_rec_ipc_test_{}", std::process::id()));

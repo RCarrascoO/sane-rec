@@ -42,6 +42,8 @@ pub struct VideoConfig {
     pub crf: u32,
     #[serde(default = "default_video_codec")]
     pub codec: String,
+    #[serde(default)]
+    pub custom_threads: Option<u32>,
 }
 
 fn default_video_codec() -> String {
@@ -58,6 +60,7 @@ impl Default for VideoConfig {
             preset: "ultrafast".to_string(),
             crf: 23,
             codec: "libx264".to_string(),
+            custom_threads: None,
         }
     }
 }
@@ -97,6 +100,25 @@ fn default_discord_target_mb() -> u32 {
     10
 }
 
+pub fn default_output_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(user_dirs) = directories::UserDirs::new() {
+            if let Some(video_dir) = user_dirs.video_dir() {
+                return video_dir.join("SaneRec");
+            }
+        }
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            return PathBuf::from(userprofile).join("Videos").join("SaneRec");
+        }
+        PathBuf::from("C:\\Videos\\SaneRec")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("/mnt/Files/Videos/Replays")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageConfig {
     pub output_dir: PathBuf,
@@ -111,7 +133,7 @@ pub struct StorageConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            output_dir: PathBuf::from("/mnt/Files/Videos/Replays"),
+            output_dir: default_output_dir(),
             filename_format: "Replay_%Y-%m-%d_%H-%M-%S".to_string(),
             format: "mp4".to_string(),
             dual_clip: false,
@@ -149,39 +171,53 @@ impl Default for ShortcutsConfig {
 }
 
 /// Actualiza los atajos de teclado de sane-rec en el archivo de configuración de niri.
+/// En Windows, retorna `Ok(false)` limpiamente sin interactuar con configuraciones de Wayland.
 pub fn update_niri_shortcuts(save_bind: &str, record_bind: &str) -> std::io::Result<bool> {
-    let path = if let Some(dirs) = directories::BaseDirs::new() {
-        dirs.home_dir().join(".config/niri/config.d/70-binds.kdl")
-    } else {
-        PathBuf::from("/home/sane/.config/niri/config.d/70-binds.kdl")
-    };
-
-    if !path.exists() {
-        return Ok(false);
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (save_bind, record_bind);
+        Ok(false)
     }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let path = if let Some(dirs) = directories::BaseDirs::new() {
+            dirs.home_dir().join(".config/niri/config.d/70-binds.kdl")
+        } else {
+            PathBuf::from("/home/sane/.config/niri/config.d/70-binds.kdl")
+        };
 
-    let content = std::fs::read_to_string(&path)?;
-    let mut lines: Vec<String> = content.lines().map(String::from).collect();
-    let mut updated = false;
-
-    for i in 0..lines.len() {
-        let trimmed = lines[i].trim();
-        if trimmed.contains("spawn \"sane-rec\" \"save\"") {
-            lines[i] = format!("    {} {{ spawn \"sane-rec\" \"save\"; }}", save_bind);
-            updated = true;
-        } else if trimmed.contains("spawn \"sane-rec\" \"record\"") {
-            lines[i] = format!("    {} {{ spawn \"sane-rec\" \"record\" \"toggle\"; }}", record_bind);
-            updated = true;
+        if !path.exists() {
+            return Ok(false);
         }
-    }
 
-    if updated {
-        let mut new_content = lines.join("\n");
-        new_content.push('\n');
-        std::fs::write(&path, new_content)?;
-    }
+        let content = std::fs::read_to_string(&path)?;
+        let mut lines: Vec<String> = content.lines().map(String::from).collect();
+        let mut updated = false;
 
-    Ok(updated)
+        for i in 0..lines.len() {
+            let trimmed = lines[i].trim();
+            if trimmed.contains("spawn \"sane-rec\" \"save\"") {
+                lines[i] = format!("    {} {{ spawn \"sane-rec\" \"save\"; }}", save_bind);
+                updated = true;
+            } else if trimmed.contains("spawn \"sane-rec\" \"record\"") {
+                lines[i] = format!("    {} {{ spawn \"sane-rec\" \"record\" \"toggle\"; }}", record_bind);
+                updated = true;
+            }
+        }
+
+        if updated {
+            let mut new_content = lines.join("\n");
+            new_content.push('\n');
+            std::fs::write(&path, new_content)?;
+        }
+
+        Ok(updated)
+    }
+}
+
+/// Inyecta o actualiza los atajos de teclado en Niri si aplica. En Windows retorna Ok(false) limpiamente.
+pub fn inject_niri_keybinds(save_bind: &str, record_bind: &str) -> std::io::Result<bool> {
+    update_niri_shortcuts(save_bind, record_bind)
 }
 
 #[derive(Debug)]
@@ -232,12 +268,25 @@ impl From<toml::ser::Error> for ConfigError {
 pub type Result<T> = std::result::Result<T, ConfigError>;
 
 pub fn default_config_path() -> PathBuf {
-    if let Some(dirs) = directories::BaseDirs::new() {
-        dirs.config_dir().join("sane-rec").join("config.toml")
-    } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".config").join("sane-rec").join("config.toml")
-    } else {
-        PathBuf::from("config.toml")
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(dirs) = directories::BaseDirs::new() {
+            dirs.config_dir().join("sane-rec").join("config.toml")
+        } else if let Ok(appdata) = std::env::var("APPDATA") {
+            PathBuf::from(appdata).join("sane-rec").join("config.toml")
+        } else {
+            PathBuf::from("config.toml")
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(dirs) = directories::BaseDirs::new() {
+            dirs.config_dir().join("sane-rec").join("config.toml")
+        } else if let Ok(home) = std::env::var("HOME") {
+            PathBuf::from(home).join(".config").join("sane-rec").join("config.toml")
+        } else {
+            PathBuf::from("config.toml")
+        }
     }
 }
 
@@ -328,6 +377,7 @@ mod tests {
         assert_eq!(cfg.video.preset, "ultrafast");
         assert_eq!(cfg.video.crf, 23);
         assert_eq!(cfg.video.codec, "libx264");
+        assert_eq!(cfg.video.custom_threads, None);
 
         assert!(cfg.audio.capture_desktop);
         assert!(!cfg.audio.capture_mic);
@@ -335,7 +385,10 @@ mod tests {
         assert_eq!(cfg.audio.volume_system, 1.0);
         assert_eq!(cfg.audio.volume_mic, 0.85);
 
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(cfg.storage.output_dir, PathBuf::from("/mnt/Files/Videos/Replays"));
+        #[cfg(target_os = "windows")]
+        assert!(cfg.storage.output_dir.to_string_lossy().contains("SaneRec"));
         assert_eq!(cfg.storage.filename_format, "Replay_%Y-%m-%d_%H-%M-%S");
         assert_eq!(cfg.storage.format, "mp4");
         assert!(!cfg.storage.dual_clip);
@@ -375,5 +428,12 @@ mod tests {
         assert_eq!(loaded.storage.output_dir, test_output_dir);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_inject_niri_keybinds_does_not_panic() {
+        // En Windows retorna Ok(false), en Linux busca el archivo o retorna Ok(false)
+        let res = inject_niri_keybinds("Mod+F10", "Mod+F9");
+        assert!(res.is_ok());
     }
 }

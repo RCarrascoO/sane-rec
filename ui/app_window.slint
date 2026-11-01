@@ -98,6 +98,7 @@ export component AppWindow inherits Window {
     callback toggle-audio-mic(bool);
     callback save-hardware-profile(string);
     callback load-hardware-profile(string);
+    callback load-system-profile(string);
     callback export-hardware-profile(string);
     callback import-hardware-profile();
     callback refresh-hardware-profiles();
@@ -128,8 +129,11 @@ export component AppWindow inherits Window {
     in-out property <bool> is-updating: false;
 
     // Gestor de perfiles de hardware
-    in-out property <[string]> available-profiles-list: ["Sane-Desktop-Polaris", "Notebook-Universal-Safe"];
+    in-out property <[string]> available-profiles-list: ["Sane-Desktop-Polaris", "Notebook-Universal-Safe", "Pavilion-Gaming-Celsius"];
     in-out property <string> selected-profile-name: "Sane-Desktop-Polaris";
+    in-out property <string> active-system-profile: "Sane-Desktop-Polaris";
+    in-out property <string> backend-title: "Wayland / niri";
+    in-out property <string> backend-subtitle: "PipeWire • " + root.selected-fps + " FPS";
 
     // Atajos de teclado y límites
     in-out property <string> shortcut-save: "Mod+F10";
@@ -213,6 +217,8 @@ export component AppWindow inherits Window {
         height: parent.height;
         active-view <=> root.active-view;
         compact: root.width < 820px;
+        backend-title: root.backend-title;
+        backend-subtitle: root.backend-subtitle;
     }
 
     // =========================================================================
@@ -1856,10 +1862,12 @@ export component AppWindow inherits Window {
                                         spacing: 8px;
                                         for p-name in root.available-profiles-list: M3PresetChip {
                                             text: p-name;
-                                            is-active: root.selected-profile-name == p-name;
+                                            is-active: root.selected-profile-name == p-name || root.active-system-profile == p-name;
                                             clicked => {
                                                 root.selected-profile-name = p-name;
+                                                root.active-system-profile = p-name;
                                                 root.load-hardware-profile(p-name);
+                                                root.load-system-profile(p-name);
                                             }
                                         }
                                     }

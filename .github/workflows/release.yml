@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build-release:
-    name: Build & Publish Release Tarball
+  build-linux:
+    name: Build & Package Linux Release
     runs-on: ubuntu-latest
 
     steps:
@@ -20,13 +20,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install system dependencies (GStreamer, Slint, Fontconfig)
+      - name: Install system dependencies (Slint, Fontconfig)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
             libasound2-dev \
             libfontconfig1-dev \
             libxkbcommon-dev
@@ -42,19 +40,102 @@ jobs:
           RELEASE_TAG=${GITHUB_REF#refs/tags/}
           PACKAGE_DIR="sane-rec-${RELEASE_TAG}-linux-x86_64"
           mkdir -p "${PACKAGE_DIR}/assets"
+          mkdir -p "${PACKAGE_DIR}/profiles"
           cp target/release/sane-rec "${PACKAGE_DIR}/"
           cp install.sh "${PACKAGE_DIR}/"
           cp README.md "${PACKAGE_DIR}/"
+          cp -r profiles/*.toml "${PACKAGE_DIR}/profiles/"
           cp assets/sane-rec.desktop "${PACKAGE_DIR}/assets/"
           cp assets/sane-rec.svg "${PACKAGE_DIR}/assets/"
           cp assets/sane-rec.png "${PACKAGE_DIR}/assets/"
           tar -czf "${PACKAGE_DIR}.tar.gz" "${PACKAGE_DIR}"
-          echo "PACKAGE_NAME=${PACKAGE_DIR}.tar.gz" >> $GITHUB_ENV
+          sha256sum "${PACKAGE_DIR}.tar.gz" > "${PACKAGE_DIR}.tar.gz.sha256"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: |
+            sane-rec-*-linux-x86_64.tar.gz
+            sane-rec-*-linux-x86_64.tar.gz.sha256
+
+  build-windows:
+    name: Build & Package Windows Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Download and extract static FFmpeg for Windows
+        shell: pwsh
+        run: |
+          $ffmpegZip = "ffmpeg-release-essentials.zip"
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $ffmpegZip
+          Expand-Archive -Path $ffmpegZip -DestinationPath "ffmpeg_extracted"
+          $extractedDir = Get-ChildItem -Directory -Path "ffmpeg_extracted" | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path "packaging\windows"
+          Copy-Item "$($extractedDir.FullName)\bin\ffmpeg.exe" -Destination "packaging\windows\ffmpeg.exe"
+          Copy-Item "$($extractedDir.FullName)\bin\ffprobe.exe" -Destination "packaging\windows\ffprobe.exe"
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          $PORTABLE_DIR = "sane-rec-windows-x64-portable"
+          New-Item -ItemType Directory -Force -Path $PORTABLE_DIR
+          Copy-Item "target\release\sane-rec.exe" -Destination $PORTABLE_DIR
+          Copy-Item "packaging\windows\ffmpeg.exe" -Destination $PORTABLE_DIR
+          Copy-Item "packaging\windows\ffprobe.exe" -Destination $PORTABLE_DIR
+          Copy-Item -Recurse "profiles" -Destination "$PORTABLE_DIR\profiles"
+          Copy-Item -Recurse "assets" -Destination "$PORTABLE_DIR\assets"
+          if (Test-Path "packaging\windows\README_WINDOWS.md") {
+              Copy-Item "packaging\windows\README_WINDOWS.md" -Destination $PORTABLE_DIR
+          }
+          Compress-Archive -Path "$PORTABLE_DIR\*" -DestinationPath "sane-rec-windows-x64-portable.zip" -Force
+
+      - name: Build Inno Setup Installer
+        shell: pwsh
+        run: |
+          if (Get-Command iscc -ErrorAction SilentlyContinue) {
+              iscc packaging\windows\installer.iss
+          } else {
+              & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss
+          }
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            sane-rec-windows-x64-portable.zip
+            packaging/windows/sane-rec-setup-x64.exe
+
+  publish-release:
+    name: Publish Release to GitHub
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.PACKAGE_NAME }}
+          files: release-assets/*
           draft: false
           prerelease: false
           generate_release_notes: true

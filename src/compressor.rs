@@ -9,7 +9,14 @@ use std::process::Command;
 
 /// Obtiene la duración exacta de un archivo de vídeo en segundos usando ffprobe.
 pub fn get_video_duration_secs(path: &Path) -> Option<f64> {
-    let output = Command::new("ffprobe")
+    let binary = crate::discovery::resolve_binary("ffprobe");
+    let mut cmd = Command::new(binary);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let output = cmd
         .args([
             "-v",
             "error",
@@ -100,7 +107,14 @@ pub fn compress_to_target_size(
     let b_v = format!("{}k", video_kbps);
     let b_a = format!("{}k", audio_kbps);
 
-    let status = Command::new("ffmpeg")
+    let binary = crate::discovery::resolve_binary("ffmpeg");
+    let mut cmd = Command::new(binary);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let status = cmd
         .args(["-y", "-i"])
         .arg(input_path)
         .args([

@@ -11,10 +11,17 @@ use crate::profiles::EncoderProfile;
 
 pub const DEFAULT_SEGMENT_DURATION_SECS: u32 = 1;
 
-/// Retorna la ruta por defecto al buffer circular en memoria RAM: `/dev/shm/sane-rec-<UID>/`.
+/// Retorna la ruta por defecto al buffer circular en memoria RAM: `/dev/shm/sane-rec-<UID>/` en Linux o directorio temp en Windows.
 pub fn default_buffer_dir() -> PathBuf {
-    let uid = unsafe { libc::getuid() };
-    PathBuf::from(format!("/dev/shm/sane-rec-{}", uid))
+    #[cfg(target_os = "linux")]
+    {
+        let uid = unsafe { libc::getuid() };
+        PathBuf::from(format!("/dev/shm/sane-rec-{}", uid))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::env::temp_dir().join("sane-rec-buffer")
+    }
 }
 
 /// Estado actual del motor de grabación y repetición instantánea.
@@ -93,6 +100,10 @@ pub struct ReplayEngine {
     pruner_running: Arc<AtomicBool>,
     start_lock: Mutex<()>,
     is_saving: Arc<AtomicBool>,
+    #[allow(dead_code)]
+    win_ram_buffer: Arc<Mutex<std::collections::VecDeque<(Instant, Vec<u8>)>>>,
+    #[allow(dead_code)]
+    win_buffer_running: Arc<AtomicBool>,
 }
 
 impl ReplayEngine {
@@ -125,6 +136,8 @@ impl ReplayEngine {
             pruner_running: Arc::new(AtomicBool::new(false)),
             start_lock: Mutex::new(()),
             is_saving: Arc::new(AtomicBool::new(false)),
+            win_ram_buffer: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            win_buffer_running: Arc::new(AtomicBool::new(false)),
         };
 
         // Limpieza automática de segmentos antiguos en RAM al inicializar
@@ -566,7 +579,8 @@ impl ReplayEngine {
         cmd
     }
 
-    /// Inicia el proceso de grabación en búfer rodante en RAM con `wf-recorder`.
+    /// Inicia el proceso de grabación en búfer rodante en RAM con `wf-recorder` en Linux.
+    #[cfg(target_os = "linux")]
     pub fn start_replay(&self) -> Result<()> {
         let _start_guard = self.start_lock.lock().unwrap();
         if self.is_running() {
@@ -659,7 +673,8 @@ impl ReplayEngine {
         Ok(())
     }
 
-    /// Detiene el proceso de repetición instantánea enviando SIGINT, descarga módulos de audio y limpia la RAM.
+    /// Detiene el proceso de repetición instantánea enviando SIGINT en Linux.
+    #[cfg(target_os = "linux")]
     pub fn stop_replay(&self) -> Result<()> {
         self.pruner_running.store(false, Ordering::SeqCst);
         let mut guard = self.replay_process.lock().unwrap();
@@ -678,6 +693,121 @@ impl ReplayEngine {
 
         // Limpieza de segmentos en RAM
         let _ = self.clean_buffer();
+        play_feedback_sound("device-removed");
+        Ok(())
+    }
+
+    /// Inicia el proceso de repetición instantánea en Windows transmitiendo MPEG-TS a la RAM física.
+    #[cfg(target_os = "windows")]
+    pub fn start_replay(&self) -> Result<()> {
+        let _start_guard = self.start_lock.lock().unwrap();
+        if self.is_running() {
+            return Err(EngineError::AlreadyRunning);
+        }
+
+        self.win_ram_buffer.lock().unwrap().clear();
+
+        let config = self.config();
+        let mut cmd = Command::new(crate::discovery::resolve_binary("ffmpeg"));
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.arg("-y");
+
+        apply_windows_input_args(&mut cmd, &config);
+        apply_windows_profile_args(&mut cmd, &config);
+
+        let fps = config.video.fps.max(15);
+        let fps_str = fps.to_string();
+
+        cmd.args([
+            "-g",
+            &fps_str,
+            "-keyint_min",
+            &fps_str,
+            "-f",
+            "mpegts",
+            "-mpegts_flags",
+            "resend_headers",
+            "pipe:1",
+        ]);
+
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        let mut child = cmd.spawn()?;
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| EngineError::Custom("Fallo al capturar stdout de ffmpeg".into()))?;
+
+        *self.replay_process.lock().unwrap() = Some(child);
+        *self.start_time.lock().unwrap() = Some(Instant::now());
+        self.win_buffer_running.store(true, Ordering::SeqCst);
+
+        let ram_buf = Arc::clone(&self.win_ram_buffer);
+        let running_flag = Arc::clone(&self.win_buffer_running);
+        let dur_secs = config.replay.duration_secs;
+        let max_bytes = (config.replay.max_memory_mb as usize) * 1024 * 1024;
+
+        std::thread::Builder::new()
+            .name("sane-rec-win-ram-buffer".into())
+            .spawn(move || {
+                use std::io::Read;
+                let mut buffer = vec![0u8; 65536];
+                while running_flag.load(Ordering::Relaxed) {
+                    match stdout.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let now = Instant::now();
+                            let chunk = buffer[..n].to_vec();
+                            if let Ok(mut q) = ram_buf.lock() {
+                                q.push_back((now, chunk));
+
+                                let cutoff = Duration::from_secs((dur_secs + 3) as u64);
+                                while let Some(front) = q.front() {
+                                    if now.duration_since(front.0) > cutoff {
+                                        q.pop_front();
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                let mut total_len: usize = q.iter().map(|(_, c)| c.len()).sum();
+                                while total_len > max_bytes && q.len() > 10 {
+                                    if let Some(removed) = q.pop_front() {
+                                        total_len = total_len.saturating_sub(removed.1.len());
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            })
+            .ok();
+
+        play_feedback_sound("device-added");
+        Ok(())
+    }
+
+    /// Detiene el proceso de repetición instantánea en Windows y libera el buffer en RAM.
+    #[cfg(target_os = "windows")]
+    pub fn stop_replay(&self) -> Result<()> {
+        self.win_buffer_running.store(false, Ordering::SeqCst);
+        let mut guard = self.replay_process.lock().unwrap();
+        if let Some(mut child) = guard.take() {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(b"q\n");
+                let _ = stdin.flush();
+            }
+            let _ = child.wait();
+        }
+        *self.start_time.lock().unwrap() = None;
+        self.win_ram_buffer.lock().unwrap().clear();
         play_feedback_sound("device-removed");
         Ok(())
     }
@@ -719,7 +849,8 @@ impl ReplayEngine {
         }
     }
 
-    /// Inicia la grabación continua directa al directorio de almacenamiento con `wf-recorder`.
+    /// Inicia la grabación continua directa al directorio de almacenamiento con `wf-recorder` en Linux.
+    #[cfg(target_os = "linux")]
     pub fn start_continuous_recording(&self) -> Result<PathBuf> {
         let _start_guard = self.start_lock.lock().unwrap();
         if self.is_recording() {
@@ -800,7 +931,8 @@ impl ReplayEngine {
         Ok(output_path)
     }
 
-    /// Detiene la grabación continua enviando SIGINT, espera el cierre ordenado del archivo, descarga audio y notifica.
+    /// Detiene la grabación continua enviando SIGINT en Linux.
+    #[cfg(target_os = "linux")]
     pub fn stop_continuous_recording(&self) -> Result<PathBuf> {
         let mut guard = self.continuous_process.lock().unwrap();
         let mut child = guard.take().ok_or(EngineError::NotRunning)?;
@@ -832,6 +964,94 @@ impl ReplayEngine {
         play_feedback_sound("complete");
 
         // Si el modo "doble clip" está activo, genera en segundo plano la copia optimizada para Discord
+        let current_cfg = Config::load().unwrap_or_else(|_| self.config());
+        if current_cfg.storage.dual_clip {
+            let target_mb = current_cfg.storage.discord_target_mb;
+            crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
+        }
+
+        Ok(output_path)
+    }
+
+    /// Inicia la grabación continua directa en Windows con ffmpeg.
+    #[cfg(target_os = "windows")]
+    pub fn start_continuous_recording(&self) -> Result<PathBuf> {
+        let _start_guard = self.start_lock.lock().unwrap();
+        if self.is_recording() {
+            return Err(EngineError::AlreadyRunning);
+        }
+
+        let config = self.config();
+        config.ensure_output_dir().map_err(|e| {
+            EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+        })?;
+
+        let timestamp = chrono::Local::now()
+            .format("Recording_%Y-%m-%d_%H-%M-%S")
+            .to_string();
+        let filename = format!("{}.{}", timestamp, config.storage.format);
+        let output_path = config.storage.output_dir.join(filename);
+
+        let mut cmd = Command::new(crate::discovery::resolve_binary("ffmpeg"));
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.arg("-y");
+
+        apply_windows_input_args(&mut cmd, &config);
+        apply_windows_profile_args(&mut cmd, &config);
+
+        cmd.args(["-movflags", "+faststart"]);
+        cmd.arg(&output_path);
+
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        let child = cmd.spawn()?;
+        *self.continuous_process.lock().unwrap() = Some(child);
+        *self.continuous_output.lock().unwrap() = Some(output_path.clone());
+        *self.continuous_start_time.lock().unwrap() = Some(Instant::now());
+
+        let _ = notify_rust::Notification::new()
+            .appname("sane-rec")
+            .summary("🔴 Grabación Iniciada")
+            .body(&format!("Grabando pantalla en {}", output_path.display()))
+            .icon("media-record")
+            .show();
+
+        play_feedback_sound("message-new-instant");
+        Ok(output_path)
+    }
+
+    /// Detiene la grabación continua en Windows enviando 'q' a stdin de ffmpeg y finalizando el archivo MP4 limpiamente.
+    #[cfg(target_os = "windows")]
+    pub fn stop_continuous_recording(&self) -> Result<PathBuf> {
+        let mut guard = self.continuous_process.lock().unwrap();
+        let mut child = guard.take().ok_or(EngineError::NotRunning)?;
+        let output_path = self
+            .continuous_output
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or_else(|| PathBuf::from("recording.mp4"));
+        *self.continuous_start_time.lock().unwrap() = None;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(b"q\n");
+            let _ = stdin.flush();
+        }
+        let _ = child.wait();
+
+        let _ = notify_rust::Notification::new()
+            .appname("sane-rec")
+            .summary("⏹️ Grabación Finalizada")
+            .body(&format!("Vídeo guardado en {}", output_path.display()))
+            .icon("video-x-generic")
+            .show();
+
+        play_feedback_sound("complete");
+
         let current_cfg = Config::load().unwrap_or_else(|_| self.config());
         if current_cfg.storage.dual_clip {
             let target_mb = current_cfg.storage.discord_target_mb;
@@ -878,7 +1098,8 @@ impl ReplayEngine {
         }
     }
 
-    /// Guarda un replay del búfer actual concatenando segmentos en RAM a alta velocidad con ffmpeg.
+    /// Guarda un replay del búfer actual concatenando segmentos en RAM a alta velocidad con ffmpeg en Linux.
+    #[cfg(target_os = "linux")]
     pub fn save_clip(&self) -> Result<PathBuf> {
         // 1. Escanea los segmentos seg_*.mp4 en el directorio de búfer con tamaño > 0
         let mut segments = self.scan_segments()?;
@@ -1008,7 +1229,103 @@ impl ReplayEngine {
         Ok(output_path)
     }
 
-    /// Retorna el estado actual del motor de grabación y memoria.
+    /// Guarda un replay del búfer actual tomando los chunks en RAM física y escribiéndolos instantáneamente a MP4 sin recodificar en Windows.
+    #[cfg(target_os = "windows")]
+    pub fn save_clip(&self) -> Result<PathBuf> {
+        let chunks = {
+            let q = self.win_ram_buffer.lock().unwrap();
+            if q.is_empty() {
+                return Err(EngineError::NoSegments);
+            }
+            let dur = self.config().replay.duration_secs;
+            let now = Instant::now();
+            let cutoff = Duration::from_secs((dur + 1) as u64);
+            let list: Vec<Vec<u8>> = q
+                .iter()
+                .filter(|(t, _)| now.duration_since(*t) <= cutoff)
+                .map(|(_, bytes)| bytes.clone())
+                .collect();
+            list
+        };
+
+        if chunks.is_empty() {
+            return Err(EngineError::NoSegments);
+        }
+
+        self.is_saving.store(true, Ordering::SeqCst);
+
+        let config = self.config();
+        if let Err(e) = config.ensure_output_dir() {
+            self.is_saving.store(false, Ordering::SeqCst);
+            return Err(EngineError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )));
+        }
+
+        let timestamp = chrono::Local::now()
+            .format(&config.storage.filename_format)
+            .to_string();
+        let filename = format!("{}.{}", timestamp, config.storage.format);
+        let output_path = config.storage.output_dir.join(filename);
+
+        let mut cmd = Command::new(crate::discovery::resolve_binary("ffmpeg"));
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.args([
+            "-y",
+            "-f",
+            "mpegts",
+            "-i",
+            "pipe:0",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+        ]);
+        cmd.arg(&output_path);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        let mut child = cmd.spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            for chunk in chunks {
+                let _ = stdin.write_all(&chunk);
+            }
+            let _ = stdin.flush();
+        }
+
+        let status = child.wait()?;
+        self.is_saving.store(false, Ordering::SeqCst);
+
+        if !status.success() {
+            return Err(EngineError::FfmpegError(
+                "Error al guardar MP4 desde el buffer MPEG-TS en RAM".into(),
+            ));
+        }
+
+        let _ = notify_rust::Notification::new()
+            .appname("sane-rec")
+            .summary("🎬 Replay Guardado")
+            .body(&format!("Clip guardado en {}", output_path.display()))
+            .icon("video-x-generic")
+            .show();
+
+        play_feedback_sound("screen-capture");
+
+        let current_cfg = Config::load().unwrap_or_else(|_| self.config());
+        if current_cfg.storage.dual_clip {
+            let target_mb = current_cfg.storage.discord_target_mb;
+            crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
+        }
+
+        Ok(output_path)
+    }
+
+    /// Retorna el estado actual del motor de grabación y memoria en Linux.
+    #[cfg(target_os = "linux")]
     pub fn get_status(&self) -> EngineStatus {
         let is_running = self.is_running();
         let is_recording = self.is_recording();
@@ -1027,6 +1344,50 @@ impl ReplayEngine {
             }
             let mb = (total_bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0;
             (secs, mb)
+        } else {
+            (0, 0.0)
+        };
+
+        let recording_elapsed_secs = if is_recording {
+            self.continuous_start_time
+                .lock()
+                .unwrap()
+                .map(|t| t.elapsed().as_secs() as u32)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        EngineStatus {
+            is_running,
+            is_recording,
+            duration_secs: config.replay.duration_secs,
+            current_buffer_secs,
+            recording_elapsed_secs,
+            ram_usage_mb,
+            max_memory_mb: config.replay.max_memory_mb,
+            active_profile: config.profile.active_profile,
+            output_dir: config.storage.output_dir,
+        }
+    }
+
+    /// Retorna el estado actual del motor de grabación y memoria en Windows.
+    #[cfg(target_os = "windows")]
+    pub fn get_status(&self) -> EngineStatus {
+        let is_running = self.is_running();
+        let is_recording = self.is_recording();
+        let config = self.config();
+
+        let (current_buffer_secs, ram_usage_mb) = if is_running {
+            let q = self.win_ram_buffer.lock().unwrap();
+            let total_bytes: usize = q.iter().map(|(_, c)| c.len()).sum();
+            let mb = (total_bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0;
+            let secs = if let (Some(first), Some(last)) = (q.front(), q.back()) {
+                last.0.duration_since(first.0).as_secs() as u32
+            } else {
+                0
+            };
+            (secs.min(config.replay.duration_secs), mb)
         } else {
             (0, 0.0)
         };
@@ -1159,24 +1520,171 @@ impl ReplayEngine {
 impl Drop for ReplayEngine {
     fn drop(&mut self) {
         self.pruner_running.store(false, Ordering::SeqCst);
-        if let Ok(mut guard) = self.replay_process.lock() {
-            if let Some(mut child) = guard.take() {
-                unsafe {
-                    libc::kill(child.id() as i32, libc::SIGINT);
+        self.win_buffer_running.store(false, Ordering::SeqCst);
+
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(mut guard) = self.replay_process.lock() {
+                if let Some(mut child) = guard.take() {
+                    unsafe {
+                        libc::kill(child.id() as i32, libc::SIGINT);
+                    }
+                    let _ = child.wait();
                 }
-                let _ = child.wait();
+            }
+            if let Ok(mut guard) = self.continuous_process.lock() {
+                if let Some(mut child) = guard.take() {
+                    unsafe {
+                        libc::kill(child.id() as i32, libc::SIGINT);
+                    }
+                    let _ = child.wait();
+                }
+            }
+            self.cleanup_audio_modules();
+            let _ = self.clean_buffer();
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(mut guard) = self.replay_process.lock() {
+                if let Some(mut child) = guard.take() {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = stdin.write_all(b"q\n");
+                    }
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+            if let Ok(mut guard) = self.continuous_process.lock() {
+                if let Some(mut child) = guard.take() {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = stdin.write_all(b"q\n");
+                    }
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
             }
         }
-        if let Ok(mut guard) = self.continuous_process.lock() {
-            if let Some(mut child) = guard.take() {
-                unsafe {
-                    libc::kill(child.id() as i32, libc::SIGINT);
-                }
-                let _ = child.wait();
-            }
+    }
+}
+
+/// Aplica los argumentos de entrada y captura de pantalla en Windows (gdigrab nativo/ddagrab).
+#[cfg(target_os = "windows")]
+fn apply_windows_input_args(cmd: &mut Command, config: &Config) {
+    let fps_str = config.video.fps.to_string();
+    let target = config.video.target.trim();
+
+    if target.starts_with("title=") || target.starts_with("window:") {
+        let win_title = target
+            .strip_prefix("title=")
+            .or_else(|| target.strip_prefix("window:"))
+            .unwrap_or(target);
+        cmd.args([
+            "-f",
+            "gdigrab",
+            "-framerate",
+            &fps_str,
+            "-i",
+            &format!("title={}", win_title),
+        ]);
+    } else {
+        cmd.args([
+            "-f",
+            "gdigrab",
+            "-framerate",
+            &fps_str,
+            "-draw_mouse",
+            "1",
+            "-i",
+            "desktop",
+        ]);
+    }
+}
+
+/// Configura los parámetros de codificación de hardware y CPU en Windows según el perfil activo.
+#[cfg(target_os = "windows")]
+fn apply_windows_profile_args(cmd: &mut Command, config: &Config) {
+    let profile = config
+        .profile
+        .active_profile
+        .parse::<EncoderProfile>()
+        .unwrap_or(EncoderProfile::SaneSafe);
+
+    match profile {
+        EncoderProfile::SaneSafe => {
+            cmd.args([
+                "-c:v",
+                "libx264",
+                "-preset",
+                "superfast",
+                "-crf",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+            ]);
         }
-        self.cleanup_audio_modules();
-        let _ = self.clean_buffer();
+        EncoderProfile::AmdHardware => {
+            cmd.args([
+                "-c:v",
+                "h264_amf",
+                "-quality",
+                "speed",
+                "-rc",
+                "cqp",
+                "-qp_i",
+                "22",
+                "-qp_p",
+                "22",
+                "-pix_fmt",
+                "yuv420p",
+            ]);
+        }
+        EncoderProfile::NvidiaHardware => {
+            cmd.args([
+                "-c:v",
+                "h264_nvenc",
+                "-preset",
+                "p4",
+                "-rc",
+                "constqp",
+                "-qp",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+            ]);
+        }
+        EncoderProfile::IntelHardware => {
+            cmd.args([
+                "-c:v",
+                "h264_qsv",
+                "-preset",
+                "veryfast",
+                "-global_quality",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+            ]);
+        }
+        EncoderProfile::Custom(_) => {
+            let codec = if config.video.codec.is_empty() {
+                "libx264"
+            } else {
+                &config.video.codec
+            };
+            let preset = if config.video.preset.is_empty() {
+                "ultrafast"
+            } else {
+                &config.video.preset
+            };
+            let crf_str = config.video.crf.to_string();
+
+            cmd.args([
+                "-c:v", codec, "-preset", preset, "-crf", &crf_str, "-pix_fmt", "yuv420p",
+                "-threads", "2",
+            ]);
+        }
     }
 }
 
@@ -1270,7 +1778,8 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
     }
 }
 
-/// Comprueba si una fuente de audio específica está disponible en PulseAudio / PipeWire.
+/// Comprueba si una fuente de audio específica está disponible en PulseAudio / PipeWire en Linux.
+#[cfg(target_os = "linux")]
 pub fn is_source_available(source_name: &str) -> bool {
     let output = match Command::new("pactl")
         .args(["list", "short", "sources"])
@@ -1286,7 +1795,13 @@ pub fn is_source_available(source_name: &str) -> bool {
     })
 }
 
-/// Obtiene el monitor o nombre del sink de audio por defecto usando pactl.
+#[cfg(not(target_os = "linux"))]
+pub fn is_source_available(source_name: &str) -> bool {
+    !source_name.is_empty()
+}
+
+/// Obtiene el monitor o nombre del sink de audio por defecto usando pactl en Linux o WASAPI en Windows.
+#[cfg(target_os = "linux")]
 pub fn get_default_audio_sink() -> Option<String> {
     let output = Command::new("pactl")
         .arg("get-default-sink")
@@ -1302,10 +1817,13 @@ pub fn get_default_audio_sink() -> Option<String> {
     None
 }
 
-/// Obtiene la fuente de entrada (micrófono) por defecto usando pactl.
-/// Si EasyEffects está activo con su fuente virtual (`easyeffects_source`),
-/// se prioriza para capturar la voz procesada limpia con cancelación de ruido y ecualización,
-/// evitando además intercepciones conflictivas o relinks de WirePlumber/EasyEffects.
+#[cfg(not(target_os = "linux"))]
+pub fn get_default_audio_sink() -> Option<String> {
+    Some("default_output".to_string())
+}
+
+/// Obtiene la fuente de entrada (micrófono) por defecto usando pactl en Linux o WASAPI en Windows.
+#[cfg(target_os = "linux")]
 pub fn get_default_audio_source() -> Option<String> {
     if is_source_available("easyeffects_source") {
         return Some("easyeffects_source".to_string());
@@ -1325,7 +1843,13 @@ pub fn get_default_audio_source() -> Option<String> {
     None
 }
 
+#[cfg(not(target_os = "linux"))]
+pub fn get_default_audio_source() -> Option<String> {
+    Some("default_input".to_string())
+}
+
 /// Reproduce un efecto sonoro de confirmación utilizando el servidor PipeWire/pw-play de forma desacoplada y sin procesos zombi.
+#[cfg(target_os = "linux")]
 pub fn play_feedback_sound(sound_name: &str) {
     let path = format!("/usr/share/sounds/freedesktop/stereo/{}.oga", sound_name);
     if std::path::Path::new(&path).exists() {
@@ -1342,6 +1866,9 @@ pub fn play_feedback_sound(sound_name: &str) {
         });
     }
 }
+
+#[cfg(not(target_os = "linux"))]
+pub fn play_feedback_sound(_sound_name: &str) {}
 
 #[cfg(test)]
 mod tests {

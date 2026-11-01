@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -217,6 +219,10 @@ fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<ipc::IpcCommand>(32);
 
+        // En Windows, escuchar atajos globales F9 y F10
+        #[cfg(target_os = "windows")]
+        sane_rec::ipc::spawn_global_hotkeys_listener();
+
         // Tarea del listener IPC
         let _listener_task = tokio::spawn(async move {
             if let Err(e) = ipc::start_listener(tx).await {
@@ -410,9 +416,25 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_custom_preset(config.video.preset.clone().into());
     ui.set_custom_crf(config.video.crf as i32);
 
+    // Configuración adaptativa de textos de Backend y Driver en la UI
+    #[cfg(target_os = "windows")]
+    {
+        ui.set_backend_title("Windows DXGI".into());
+        ui.set_backend_subtitle("WASAPI • Activo".into());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        ui.set_backend_title("Wayland / niri".into());
+        ui.set_backend_subtitle(format!("PipeWire • {} FPS", config.video.fps).into());
+    }
+
     // Inicializar perfiles de hardware por defecto (~/.config/sane-rec/profiles/)
     sane_rec::profiles_manager::init_default_profiles();
     update_profiles_model(&ui);
+
+    // En Windows, activar escucha global de teclas F9 y F10
+    #[cfg(target_os = "windows")]
+    sane_rec::ipc::spawn_global_hotkeys_listener();
 
     // Cargar salidas de pantalla, ventanas activas y dispositivos de audio descubiertos
     update_screens_model(&ui);
@@ -625,8 +647,22 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 output_dir.join(path_str.as_str())
             };
-            if std::process::Command::new("mpv").arg(&target).spawn().is_err() {
-                let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                let path_arg = target.to_string_lossy().to_string();
+                let _ = std::process::Command::new("cmd")
+                    .args(["/C", "start", "", &path_arg])
+                    .creation_flags(0x08000000)
+                    .spawn();
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                if std::process::Command::new("mpv").arg(&target).spawn().is_err() {
+                    let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+                }
             }
         });
     }
@@ -640,8 +676,22 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 output_dir.clone()
             };
-            if std::process::Command::new("cosmic-files").arg(&target).spawn().is_err() {
-                let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                let path_arg = target.to_string_lossy().to_string();
+                let _ = std::process::Command::new("explorer.exe")
+                    .args(["/select,", &path_arg])
+                    .creation_flags(0x08000000)
+                    .spawn();
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                if std::process::Command::new("cosmic-files").arg(&target).spawn().is_err() {
+                    let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+                }
             }
         });
     }
@@ -649,8 +699,21 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     {
         let output_dir = config.storage.output_dir.clone();
         ui.on_open_output_folder(move || {
-            if std::process::Command::new("cosmic-files").arg(&output_dir).spawn().is_err() {
-                let _ = std::process::Command::new("xdg-open").arg(&output_dir).spawn();
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                let path_arg = output_dir.to_string_lossy().to_string();
+                let _ = std::process::Command::new("explorer.exe")
+                    .arg(&path_arg)
+                    .creation_flags(0x08000000)
+                    .spawn();
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                if std::process::Command::new("cosmic-files").arg(&output_dir).spawn().is_err() {
+                    let _ = std::process::Command::new("xdg-open").arg(&output_dir).spawn();
+                }
             }
         });
     }
@@ -1024,6 +1087,52 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     {
         let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_load_system_profile(move |name| {
+            let Some(ui) = ui_weak.upgrade() else { return; };
+            match sane_rec::profiles_manager::load_profile(name.as_str()) {
+                Ok(profile) => {
+                    ui.set_custom_codec(profile.codec.clone().into());
+                    ui.set_custom_preset(profile.preset.clone().into());
+                    ui.set_custom_crf(profile.crf as i32);
+                    ui.set_max_memory_mb(profile.max_memory_mb as i32);
+                    ui.set_selected_fps(profile.fps as i32);
+                    ui.set_selected_resolution(profile.resolution.clone().into());
+                    ui.set_audio_track_mode(profile.audio_track_mode as i32);
+                    ui.set_active_profile("custom".into());
+
+                    if let Some(ref eng) = engine_clone {
+                        let mut cfg = eng.config();
+                        cfg.video.codec = profile.codec;
+                        cfg.video.preset = profile.preset;
+                        cfg.video.crf = profile.crf;
+                        cfg.video.fps = profile.fps;
+                        cfg.video.scale = profile.resolution;
+                        cfg.replay.max_memory_mb = profile.max_memory_mb as u32;
+                        cfg.profile.active_profile = "custom".to_string();
+                        let _ = cfg.save();
+                        eng.update_config(cfg);
+                    } else if let Ok(mut cfg) = Config::load() {
+                        cfg.video.codec = profile.codec;
+                        cfg.video.preset = profile.preset;
+                        cfg.video.crf = profile.crf;
+                        cfg.video.fps = profile.fps;
+                        cfg.video.scale = profile.resolution;
+                        cfg.replay.max_memory_mb = profile.max_memory_mb as u32;
+                        cfg.profile.active_profile = "custom".to_string();
+                        let _ = cfg.save();
+                    }
+                    show_toast(&ui, "⚙️", &format!("Perfil '{}' cargado correctamente", profile.name));
+                }
+                Err(e) => {
+                    show_toast(&ui, "❌", &format!("Error al cargar perfil: {}", e));
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
         ui.on_save_hardware_profile(move |name| {
             let Some(ui) = ui_weak.upgrade() else { return; };
             let profile_name = if name.trim().is_empty() {
@@ -1316,11 +1425,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             .show();
 
                         sane_rec::engine::play_feedback_sound("message");
+                        copy_file_to_clipboard(&out);
 
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_weak_bg.upgrade() {
                                 update_gallery_model(&ui, &target_dir);
-                                show_toast(&ui, "💬", &format!("Clip Discord listo: {:.1} MB", size_mb));
+                                show_toast(&ui, "💬", &format!("Clip Discord listo: {:.1} MB (Copiado)", size_mb));
                             }
                         });
                     }
@@ -1572,6 +1682,29 @@ fn update_gallery_model(ui: &AppWindow, output_dir: &std::path::Path) {
     }
 }
 
+/// Copia la ruta de un archivo de vídeo al portapapeles del sistema (wl-copy en Linux / Set-Clipboard en Windows).
+#[allow(dead_code)]
+fn copy_file_to_clipboard(path: &std::path::Path) {
+    #[cfg(target_os = "linux")]
+    {
+        let path_str = path.to_string_lossy();
+        let _ = std::process::Command::new("wl-copy")
+            .arg(path_str.as_ref())
+            .spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let path_str = path.to_string_lossy().to_string();
+        let escaped = path_str.replace("'", "''");
+        let ps_cmd = format!("Set-Clipboard -Path '{}'", escaped);
+        let _ = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+            .creation_flags(0x08000000)
+            .spawn();
+    }
+}
+
 /// Actualiza el modelo de perfiles de hardware disponibles en la interfaz.
 fn update_profiles_model(ui: &AppWindow) {
     let profiles = sane_rec::profiles_manager::list_profiles();
@@ -1657,6 +1790,13 @@ mod tests {
         assert_eq!(ui.get_discord_target_mb(), 10);
         ui.set_discord_target_mb(15);
         assert_eq!(ui.get_discord_target_mb(), 15);
+
+        // Verificación de propiedades de Backend multiplataforma
+        assert_eq!(ui.get_backend_title(), "Wayland / niri");
+        ui.set_backend_title("Windows DXGI".into());
+        assert_eq!(ui.get_backend_title(), "Windows DXGI");
+        ui.set_backend_subtitle("WASAPI • Activo".into());
+        assert_eq!(ui.get_backend_subtitle(), "WASAPI • Activo");
 
         let _ = std::fs::remove_dir_all(&empty_dir);
     }

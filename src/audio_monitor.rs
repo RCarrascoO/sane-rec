@@ -22,50 +22,90 @@ impl AudioPeakMonitor {
 
         let mut threads = Vec::new();
 
-        // 1. Hilo de monitoreo para audio del sistema (Sink Monitor)
+        #[cfg(target_os = "linux")]
         {
-            let peak_store = Arc::clone(&system_peak);
-            let is_running = Arc::clone(&running);
-            let device = custom_sink
-                .filter(|s| !s.is_empty() && s != "PipeWire Default Sink")
-                .map(|s| {
-                    if s.ends_with(".monitor") {
-                        s
-                    } else {
-                        format!("{}.monitor", s)
-                    }
-                })
-                .unwrap_or_else(|| "@DEFAULT_MONITOR@".to_string());
+            // 1. Hilo de monitoreo para audio del sistema (Sink Monitor)
+            {
+                let peak_store = Arc::clone(&system_peak);
+                let is_running = Arc::clone(&running);
+                let device = custom_sink
+                    .filter(|s| !s.is_empty() && s != "PipeWire Default Sink")
+                    .map(|s| {
+                        if s.ends_with(".monitor") {
+                            s
+                        } else {
+                            format!("{}.monitor", s)
+                        }
+                    })
+                    .unwrap_or_else(|| "@DEFAULT_MONITOR@".to_string());
 
-            let handle = thread::Builder::new()
-                .name("sane-rec-vu-system".into())
-                .spawn(move || {
-                    run_peak_loop(&device, peak_store, is_running);
-                })
-                .ok();
+                let handle = thread::Builder::new()
+                    .name("sane-rec-vu-system".into())
+                    .spawn(move || {
+                        run_peak_loop(&device, peak_store, is_running);
+                    })
+                    .ok();
 
-            if let Some(h) = handle {
-                threads.push(h);
+                if let Some(h) = handle {
+                    threads.push(h);
+                }
+            }
+
+            // 2. Hilo de monitoreo para micrófono (Source)
+            {
+                let peak_store = Arc::clone(&mic_peak);
+                let is_running = Arc::clone(&running);
+                let device = custom_mic
+                    .filter(|m| !m.is_empty() && m != "Desactivado")
+                    .unwrap_or_else(|| "@DEFAULT_SOURCE@".to_string());
+
+                let handle = thread::Builder::new()
+                    .name("sane-rec-vu-mic".into())
+                    .spawn(move || {
+                        run_peak_loop(&device, peak_store, is_running);
+                    })
+                    .ok();
+
+                if let Some(h) = handle {
+                    threads.push(h);
+                }
             }
         }
 
-        // 2. Hilo de monitoreo para micrófono (Source)
+        #[cfg(target_os = "windows")]
         {
-            let peak_store = Arc::clone(&mic_peak);
-            let is_running = Arc::clone(&running);
-            let device = custom_mic
-                .filter(|m| !m.is_empty() && m != "Desactivado")
-                .unwrap_or_else(|| "@DEFAULT_SOURCE@".to_string());
+            // 1. Hilo de monitoreo para audio del sistema (WASAPI Loopback)
+            {
+                let peak_store = Arc::clone(&system_peak);
+                let is_running = Arc::clone(&running);
+                let dev_sink = custom_sink;
+                let handle = thread::Builder::new()
+                    .name("sane-rec-vu-system".into())
+                    .spawn(move || {
+                        run_cpal_peak_loop(true, dev_sink, peak_store, is_running);
+                    })
+                    .ok();
 
-            let handle = thread::Builder::new()
-                .name("sane-rec-vu-mic".into())
-                .spawn(move || {
-                    run_peak_loop(&device, peak_store, is_running);
-                })
-                .ok();
+                if let Some(h) = handle {
+                    threads.push(h);
+                }
+            }
 
-            if let Some(h) = handle {
-                threads.push(h);
+            // 2. Hilo de monitoreo para micrófono (WASAPI Input)
+            {
+                let peak_store = Arc::clone(&mic_peak);
+                let is_running = Arc::clone(&running);
+                let dev_mic = custom_mic;
+                let handle = thread::Builder::new()
+                    .name("sane-rec-vu-mic".into())
+                    .spawn(move || {
+                        run_cpal_peak_loop(false, dev_mic, peak_store, is_running);
+                    })
+                    .ok();
+
+                if let Some(h) = handle {
+                    threads.push(h);
+                }
             }
         }
 
@@ -94,7 +134,8 @@ impl Drop for AudioPeakMonitor {
     }
 }
 
-/// Bucle continuo que lee muestras PCM de 16-bit de `parec` y calcula el valor pico con suavizado exponencial.
+/// Bucle continuo que lee muestras PCM de 16-bit de `parec` y calcula el valor pico con suavizado exponencial en Linux.
+#[cfg(target_os = "linux")]
 fn run_peak_loop(device: &str, peak_store: Arc<AtomicU32>, running: Arc<AtomicBool>) {
     let mut smoothed: f32 = 0.0;
     let mut buffer = [0u8; 640]; // 320 muestras de 16-bit mono @ 8000Hz = 40ms
@@ -161,5 +202,156 @@ fn run_peak_loop(device: &str, peak_store: Arc<AtomicU32>, running: Arc<AtomicBo
         if running.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(300));
         }
+    }
+}
+
+/// Bucle continuo que lee muestras de audio mediante cpal (WASAPI Loopback/Input) en Windows.
+#[cfg(target_os = "windows")]
+fn run_cpal_peak_loop(
+    is_loopback: bool,
+    device_opt: Option<String>,
+    peak_store: Arc<AtomicU32>,
+    running: Arc<AtomicBool>,
+) {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use std::sync::Mutex;
+
+    let host = cpal::default_host();
+
+    while running.load(Ordering::Relaxed) {
+        let device = if is_loopback {
+            if let Some(ref name) = device_opt {
+                let clean_name = name.strip_prefix("loopback:").unwrap_or(name);
+                if clean_name == "default_output" || clean_name.is_empty() {
+                    host.default_output_device()
+                } else {
+                    host.output_devices()
+                        .ok()
+                        .and_then(|mut devs| devs.find(|d| d.name().map_or(false, |n| n == clean_name)))
+                        .or_else(|| host.default_output_device())
+                }
+            } else {
+                host.default_output_device()
+            }
+        } else {
+            if let Some(ref name) = device_opt {
+                if name == "Desactivado" {
+                    return;
+                }
+                host.input_devices()
+                    .ok()
+                    .and_then(|mut devs| devs.find(|d| d.name().map_or(false, |n| n == name)))
+                    .or_else(|| host.default_input_device())
+            } else {
+                host.default_input_device()
+            }
+        };
+
+        let Some(device) = device else {
+            thread::sleep(Duration::from_millis(1000));
+            continue;
+        };
+
+        let config_res = if is_loopback {
+            device.default_output_config()
+        } else {
+            device.default_input_config()
+        };
+
+        let Ok(config) = config_res else {
+            thread::sleep(Duration::from_millis(1000));
+            continue;
+        };
+
+        let sample_format = config.sample_format();
+        let stream_config = config.into();
+
+        let peak_store_cb = Arc::clone(&peak_store);
+        let smoothed = Arc::new(Mutex::new(0.0f32));
+
+        let err_fn = |_err| {};
+
+        let stream_res = match sample_format {
+            cpal::SampleFormat::F32 => {
+                let peak_store_f32 = Arc::clone(&peak_store_cb);
+                let smoothed_f32 = Arc::clone(&smoothed);
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        let mut max_abs: f32 = 0.0;
+                        for &sample in data {
+                            let abs = sample.abs();
+                            if abs > max_abs {
+                                max_abs = abs;
+                            }
+                        }
+                        if let Ok(mut sm) = smoothed_f32.lock() {
+                            if max_abs > *sm {
+                                *sm = *sm * 0.3 + max_abs * 0.7;
+                            } else {
+                                *sm = *sm * 0.82 + max_abs * 0.18;
+                            }
+                            peak_store_f32.store(
+                                (*sm * 1000.0).clamp(0.0, 1000.0) as u32,
+                                Ordering::Relaxed,
+                            );
+                        }
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            cpal::SampleFormat::I16 => {
+                let peak_store_i16 = Arc::clone(&peak_store_cb);
+                let smoothed_i16 = Arc::clone(&smoothed);
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        let mut max_abs: i16 = 0;
+                        for &sample in data {
+                            let abs = sample.abs();
+                            if abs > max_abs {
+                                max_abs = abs;
+                            }
+                        }
+                        let instant_peak = (max_abs as f32) / 32768.0;
+                        if let Ok(mut sm) = smoothed_i16.lock() {
+                            if instant_peak > *sm {
+                                *sm = *sm * 0.3 + instant_peak * 0.7;
+                            } else {
+                                *sm = *sm * 0.82 + instant_peak * 0.18;
+                            }
+                            peak_store_i16.store(
+                                (*sm * 1000.0).clamp(0.0, 1000.0) as u32,
+                                Ordering::Relaxed,
+                            );
+                        }
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            _ => {
+                thread::sleep(Duration::from_millis(1000));
+                continue;
+            }
+        };
+
+        let Ok(stream) = stream_res else {
+            thread::sleep(Duration::from_millis(1000));
+            continue;
+        };
+
+        if stream.play().is_err() {
+            thread::sleep(Duration::from_millis(1000));
+            continue;
+        }
+
+        while running.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        peak_store.store(0, Ordering::Relaxed);
+        break;
     }
 }
