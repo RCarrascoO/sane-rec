@@ -140,22 +140,11 @@ jobs:
         id: release_notes
         run: |
           RELEASE_TAG="${GITHUB_REF#refs/tags/}"
-          python3 -c "
-import sys, re
-tag = sys.argv[1]
-notes = ''
-try:
-    with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
-        content = f.read()
-    m = re.search(rf'## {re.escape(tag)}\b(.*?)(?=\n## |\Z)', content, re.DOTALL)
-    if m:
-        notes = f'## {tag}\n' + m.group(1).strip()
-except Exception as e:
-    print(f'Warning: could not parse CHANGELOG.md: {e}', file=sys.stderr)
-
-with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as f:
-    f.write(notes + ('\n' if notes else ''))
-" "$RELEASE_TAG"
+          awk -v tag="## ${RELEASE_TAG}" '
+            $0 ~ "^"tag"([[:space:]]|$)" { found=1; print; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md || true
 
       - name: Publish GitHub Release
         env:
