@@ -109,6 +109,7 @@ jobs:
           } else {
               & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\installer.iss
           }
+          Copy-Item "packaging\windows\sane-rec-setup-x64.exe" -Destination ".\sane-rec-setup-x64.exe"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -116,7 +117,7 @@ jobs:
           name: windows-release
           path: |
             sane-rec-windows-x64-portable.zip
-            packaging/windows/sane-rec-setup-x64.exe
+            sane-rec-setup-x64.exe
 
   publish-release:
     name: Publish Release to GitHub
@@ -135,7 +136,9 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*
+          files: |
+            release-assets/**/*
+            release-assets/*
           draft: false
           prerelease: false
           generate_release_notes: true

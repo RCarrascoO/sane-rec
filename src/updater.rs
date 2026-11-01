@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use crate::discovery::new_hidden_command;
 
 const GITHUB_REPO: &str = "RCarrascoO/sane-rec";
 
@@ -39,7 +39,7 @@ pub fn check_for_updates() -> Option<ReleaseInfo> {
     let current_version = env!("CARGO_PKG_VERSION");
     let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
 
-    let output = Command::new("curl")
+    let output = new_hidden_command("curl")
         .args([
             "-s",
             "--connect-timeout",
@@ -106,7 +106,7 @@ pub fn perform_update() -> Result<String, String> {
     let tar_file = tmp_dir.join("release.tar.gz");
 
     // Descarga con curl agregando --fail para rechazar códigos HTTP 4xx/5xx
-    let status = Command::new("curl")
+    let status = new_hidden_command("curl")
         .args([
             "-L",
             "--fail",
@@ -127,7 +127,7 @@ pub fn perform_update() -> Result<String, String> {
     }
 
     // Descomprime con tar
-    let status_tar = Command::new("tar")
+    let status_tar = new_hidden_command("tar")
         .args([
             "-xzf",
             tar_file.to_str().unwrap(),
@@ -180,7 +180,7 @@ pub fn perform_update() -> Result<String, String> {
         })?;
 
     // Asignar permisos de ejecución al staging antes de reemplazar
-    let _ = Command::new("chmod").args(["+x", staged_file.to_str().unwrap()]).status();
+    let _ = new_hidden_command("chmod").args(["+x", staged_file.to_str().unwrap()]).status();
 
     // Reemplazo atómico POSIX
     fs::rename(&staged_file, &target_dest)

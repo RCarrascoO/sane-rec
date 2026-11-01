@@ -24,7 +24,8 @@ import {
     M3VuMeter,
     M3Slider,
     M3Toast,
-    M3InputField
+    M3InputField,
+    M3ShortcutField
 } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
@@ -106,6 +107,7 @@ export component AppWindow inherits Window {
     callback toggle-dual-clip(bool);
     callback set-discord-target-mb(int);
     callback compress-clip-for-discord(string);
+    callback change-output-dir(string);
 
     // -------------------------------------------------------------------------
     // Propiedades públicas para bindings con Rust
@@ -117,7 +119,7 @@ export component AppWindow inherits Window {
     in-out property <bool> is-recording: false;
     in-out property <string> recording-time: "00:00";
     in-out property <string> buffer-status: "Detenido";
-    in-out property <string> output-path: "/mnt/Files/Videos/Replays";
+    in-out property <string> output-path: "";
     in-out property <int> replay-duration: 30;
     in-out property <string> selected-format: "mp4";
     in-out property <bool> dual-clip: false;
@@ -129,17 +131,17 @@ export component AppWindow inherits Window {
     in-out property <bool> is-updating: false;
 
     // Gestor de perfiles de hardware
-    in-out property <[string]> available-profiles-list: ["Sane-Desktop-Polaris", "Notebook-Universal-Safe", "Pavilion-Gaming-Celsius"];
-    in-out property <string> selected-profile-name: "Sane-Desktop-Polaris";
-    in-out property <string> active-system-profile: "Sane-Desktop-Polaris";
+    in-out property <[string]> available-profiles-list: [];
+    in-out property <string> selected-profile-name: "";
+    in-out property <string> active-system-profile: "";
     in-out property <string> backend-title: "Wayland / niri";
     in-out property <string> backend-subtitle: "PipeWire • " + root.selected-fps + " FPS";
 
     // Atajos de teclado y límites
-    in-out property <string> shortcut-save: "Mod+F10";
-    in-out property <string> shortcut-record: "Mod+F9";
-    in-out property <string> custom-save-text: "Mod+F10";
-    in-out property <string> custom-record-text: "Mod+F9";
+    in-out property <string> shortcut-save: "F10";
+    in-out property <string> shortcut-record: "F9";
+    in-out property <string> custom-save-text: "F10";
+    in-out property <string> custom-record-text: "F9";
     in-out property <int> max-memory-mb: 150;
 
     // Configuración interactiva del Perfil Personalizado
@@ -148,17 +150,17 @@ export component AppWindow inherits Window {
     in-out property <int> custom-crf: 23;
 
     // Video y captura
-    in-out property <string> selected-screen: "DVI-D-1";
+    in-out property <string> selected-screen: "";
     in-out property <int> capture-mode: 0; // 0: Monitor, 1: Ventana, 2: Área (slurp)
     in-out property <int> selected-fps: 60;
-    in-out property <string> selected-resolution: "1360x768";
-    in-out property <string> selected-window: "Zen Browser";
+    in-out property <string> selected-resolution: "";
+    in-out property <string> selected-window: "";
 
     // Audio
     in-out property <bool> audio-system: true;
     in-out property <bool> audio-mic: false;
-    in-out property <string> audio-sink: "PipeWire Default Sink";
-    in-out property <string> audio-mic-source: "USB PnP Audio Device";
+    in-out property <string> audio-sink: "Audio del sistema (Predeterminado)";
+    in-out property <string> audio-mic-source: "Micrófono predeterminado";
     in-out property <int> audio-track-mode: 0; // 0: Pista única combinada, 1: Pistas separadas
     in-out property <float> volume-system: 1.0;
     in-out property <float> volume-mic: 0.85;
@@ -182,30 +184,11 @@ export component AppWindow inherits Window {
     in-out property <[ClipEntry]> recent-clips: [];
     in-out property <[ClipEntry]> gallery-clips: [];
 
-    // Modelos dinámicos descubiertos en Wayland / PipeWire
-    in-out property <[OutputEntry]> available-screens: [
-        { name: "DVI-D-1", description: "DVI-D-1 [1360x768 @ 60Hz]", badge: "Principal", resolution: "1360x768" },
-        { name: "HDMI-A-1", description: "HDMI-A-1 [1366x768 @ 60Hz]", badge: "Secundario", resolution: "1366x768" }
-    ];
-
-    in-out property <[WindowEntry]> available-windows: [
-        { id: 1, title: "Zen Browser — Navegador web", app-id: "zen", badge: "Ventana" },
-        { id: 2, title: "Discord — Canal de voz", app-id: "discord", badge: "Ventana" },
-        { id: 3, title: "Counter-Strike 2 — Videojuego", app-id: "cs2", badge: "Juego Fullscreen" },
-        { id: 4, title: "Alacritty — Terminal Wayland", app-id: "alacritty", badge: "Ventana" }
-    ];
-
-    in-out property <[AudioDeviceEntry]> available-sinks: [
-        { name: "PipeWire Default Sink", description: "PipeWire Default Sink (Salida analógica estéreo)", badge: "Por defecto", is-default: true },
-        { name: "HDMI / DisplayPort", description: "Salida digital HDMI / DisplayPort", badge: "Digital", is-default: false }
-    ];
-
-    in-out property <[AudioDeviceEntry]> available-mics: [
-        { name: "USB PnP Audio Device", description: "USB PnP Audio Device (Micrófono USB)", badge: "Conectado", is-default: true },
-        { name: "Webcam C920", description: "Webcam C920 Stereo Microphone", badge: "Webcam", is-default: false },
-        { name: "Front Mic", description: "Entrada analógica frontal (Front Mic)", badge: "Jack 3.5mm", is-default: false },
-        { name: "Desactivado", description: "Desactivado (Solo audio de juego)", badge: "Mudo", is-default: false }
-    ];
+    // Modelos dinámicos descubiertos por el sistema
+    in-out property <[OutputEntry]> available-screens: [];
+    in-out property <[WindowEntry]> available-windows: [];
+    in-out property <[AudioDeviceEntry]> available-sinks: [];
+    in-out property <[AudioDeviceEntry]> available-mics: [];
 
     // =========================================================================
     // 1. Navigation Rail Lateral Izquierdo (M3 Expressive)
@@ -646,7 +629,7 @@ export component AppWindow inherits Window {
                                         }
 
                                         Text {
-                                            text: "Captura directa Wayland vía dmabuf/PipeWire sin sobrecarga de GPU Polaris.";
+                                            text: root.backend-title == "Windows DXGI" ? "Captura acelerada vía Windows Graphics Capture / DXGI Desktop Duplication." : "Captura directa Wayland vía dmabuf/PipeWire sin sobrecarga de GPU.";
                                             font-size: Theme.font-body-small;
                                             color: Theme.on-surface-variant;
                                         }
@@ -1154,7 +1137,7 @@ export component AppWindow inherits Window {
                                 color: Theme.on-surface;
                             }
                             Text {
-                                text: "Configuración de canales de audio del sistema y micrófonos en PipeWire";
+                                text: root.backend-title == "Windows DXGI" ? "Configuración de canales de audio del sistema (WASAPI Loopback) y micrófonos" : "Configuración de canales de audio del sistema y micrófonos en PipeWire";
                                 font-size: 13px;
                                 color: Theme.on-surface-variant;
                             }
@@ -1174,9 +1157,9 @@ export component AppWindow inherits Window {
                             for item in root.available-sinks: M3OptionItem {
                                 text: item.description;
                                 badge-text: item.badge;
-                                is-selected: root.audio-sink == item.name;
+                                is-selected: root.audio-sink == item.name || root.audio-sink == item.description;
                                 clicked => {
-                                    root.audio-sink = item.name;
+                                    root.audio-sink = item.description;
                                     root.sink-dropdown-open = false;
                                     root.select-audio-sink(item.name);
                                 }
@@ -1197,9 +1180,9 @@ export component AppWindow inherits Window {
                             for item in root.available-mics: M3OptionItem {
                                 text: item.description;
                                 badge-text: item.badge;
-                                is-selected: root.audio-mic-source == item.name;
+                                is-selected: root.audio-mic-source == item.name || root.audio-mic-source == item.description;
                                 clicked => {
-                                    root.audio-mic-source = item.name;
+                                    root.audio-mic-source = item.description;
                                     root.audio-mic = item.name != "Desactivado";
                                     root.mic-dropdown-open = false;
                                     root.select-audio-mic(item.name);
@@ -1559,11 +1542,11 @@ export component AppWindow inherits Window {
 
                             // 4. Intel Hardware (QuickSync)
                             M3ProfileTile {
-                                title: "Intel Hardware (QuickSync)";
+                                title: "Intel Hardware (UHD Graphics / Iris / Arc — QuickSync)";
                                 subtitle: "Aceleración por GPU Intel QuickSync Video (iGPU / Arc)";
-                                badge-text: "Experimental";
+                                badge-text: "Recomendado Intel";
                                 icon-name: "bolt";
-                                is-selected: root.active-profile == "intel-qsv";
+                                is-selected: root.active-profile == "intel-qsv" || root.active-profile == "intel-hardware";
                                 clicked => {
                                     root.active-profile = "intel-qsv";
                                     root.select-profile("intel-qsv");
@@ -1616,6 +1599,11 @@ export component AppWindow inherits Window {
                                         font-weight: 700;
                                         color: Theme.on-surface;
                                     }
+                                    Text {
+                                        text: "Códecs por Software (CPU):";
+                                        font-size: Theme.font-label-small;
+                                        color: Theme.on-surface-variant;
+                                    }
                                     HorizontalLayout {
                                         spacing: 8px;
                                         M3PresetChip {
@@ -1642,8 +1630,40 @@ export component AppWindow inherits Window {
                                                 root.set-custom-codec("libvpx-vp9");
                                             }
                                         }
+                                    }
+                                    Text {
+                                        text: "Códecs por Hardware (GPU Acelerada):";
+                                        font-size: Theme.font-label-small;
+                                        color: Theme.on-surface-variant;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
                                         M3PresetChip {
-                                            text: "h264_vaapi";
+                                            text: "h264_qsv (Intel UHD / QuickSync)";
+                                            is-active: root.custom-codec == "h264_qsv";
+                                            clicked => {
+                                                root.custom-codec = "h264_qsv";
+                                                root.set-custom-codec("h264_qsv");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "h264_nvenc (NVIDIA NVENC)";
+                                            is-active: root.custom-codec == "h264_nvenc";
+                                            clicked => {
+                                                root.custom-codec = "h264_nvenc";
+                                                root.set-custom-codec("h264_nvenc");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "h264_amf (AMD AMF)";
+                                            is-active: root.custom-codec == "h264_amf";
+                                            clicked => {
+                                                root.custom-codec = "h264_amf";
+                                                root.set-custom-codec("h264_amf");
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "h264_vaapi (Linux VA-API)";
                                             is-active: root.custom-codec == "h264_vaapi";
                                             clicked => {
                                                 root.custom-codec = "h264_vaapi";
@@ -2047,27 +2067,38 @@ export component AppWindow inherits Window {
                                             height: 42px;
                                             border-radius: Theme.radius-sm;
                                             background: Theme.surface-container-high;
-                                            border-width: 0px;
+                                            border-width: path-input.has-focus ? 1.5px : 0px;
+                                            border-color: path-input.has-focus ? Theme.primary : Colors.transparent;
+
+                                            animate border-color { duration: 150ms; }
 
                                             HorizontalLayout {
                                                 padding-left: 14px;
                                                 padding-right: 14px;
                                                 spacing: 10px;
-                                                alignment: start;
+                                                alignment: center;
 
                                                 M3Icon {
                                                     name: "folder";
                                                     icon-size: 18px;
-                                                    icon-color: Theme.primary;
+                                                    icon-color: path-input.has-focus ? Theme.primary : Theme.on-surface-variant;
                                                     y: (parent.height - self.height) / 2;
                                                 }
 
-                                                Text {
+                                                path-input := TextInput {
+                                                    horizontal-stretch: 1;
                                                     text: root.output-path;
                                                     font-size: Theme.font-body-medium;
                                                     color: Theme.on-surface;
                                                     vertical-alignment: center;
-                                                    overflow: elide;
+                                                    single-line: true;
+                                                    accepted => {
+                                                        root.output-path = self.text;
+                                                        root.change-output-dir(self.text);
+                                                    }
+                                                    edited => {
+                                                        root.output-path = self.text;
+                                                    }
                                                 }
                                             }
                                         }
@@ -2242,14 +2273,14 @@ export component AppWindow inherits Window {
                                 spacing: 16px;
 
                                 Text {
-                                    text: "Atajos de teclado globales (niri / Wayland)";
+                                    text: root.backend-title == "Windows DXGI" ? "Atajos globales en Windows (DirectX / Escritorio)" : "Atajos de teclado globales (niri / Wayland)";
                                     font-size: 15px;
                                     font-weight: 600;
                                     color: Theme.primary;
                                 }
 
                                 Text {
-                                    text: "Selecciona el atajo que te resulte más cómodo. Se actualiza automáticamente en niri sin reiniciar la sesión.";
+                                    text: root.backend-title == "Windows DXGI" ? "Selecciona o presiona el atajo que prefieras. Funciona en juegos y en el escritorio." : "Selecciona el atajo que te resulte más cómodo. Se actualiza automáticamente en niri sin reiniciar la sesión.";
                                     font-size: Theme.font-body-small;
                                     color: Theme.on-surface-variant;
                                 }
@@ -2289,20 +2320,20 @@ export component AppWindow inherits Window {
                                     HorizontalLayout {
                                         spacing: 8px;
                                         M3PresetChip {
-                                            text: "Alt+F10 (Shadowplay)";
-                                            is-active: root.shortcut-save == "Alt+F10";
-                                            clicked => {
-                                                root.shortcut-save = "Alt+F10";
-                                                root.custom-save-text = "Alt+F10";
-                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
-                                            }
-                                        }
-                                        M3PresetChip {
                                             text: "F10 (Directo)";
                                             is-active: root.shortcut-save == "F10";
                                             clicked => {
                                                 root.shortcut-save = "F10";
                                                 root.custom-save-text = "F10";
+                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "Alt+F10 (Shadowplay)";
+                                            is-active: root.shortcut-save == "Alt+F10";
+                                            clicked => {
+                                                root.shortcut-save = "Alt+F10";
+                                                root.custom-save-text = "Alt+F10";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
@@ -2316,24 +2347,23 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                         M3PresetChip {
-                                            text: "Mod+R";
-                                            is-active: root.shortcut-save == "Mod+R";
+                                            text: "Mod+Shift+S";
+                                            is-active: root.shortcut-save == "Mod+Shift+S";
                                             clicked => {
-                                                root.shortcut-save = "Mod+R";
-                                                root.custom-save-text = "Mod+R";
+                                                root.shortcut-save = "Mod+Shift+S";
+                                                root.custom-save-text = "Mod+Shift+S";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
                                     }
 
-                                    // Campo interactivo para atajo personalizado libre
+                                    // Campo interactivo para atajo personalizado libre con auto-captura
                                     HorizontalLayout {
                                         spacing: 10px;
-                                        M3InputField {
+                                        M3ShortcutField {
                                             horizontal-stretch: 1;
-                                            icon-name: "keyboard";
                                             text <=> root.custom-save-text;
-                                            placeholder: "Personalizado (ej. Ctrl+Shift+S, F8, Mod+Print)";
+                                            placeholder: "Presiona una tecla (ej. F10, Alt+F10, Mod+Shift+S)...";
                                             accepted(val) => {
                                                 if val != "" {
                                                     root.shortcut-save = val;
@@ -2391,20 +2421,20 @@ export component AppWindow inherits Window {
                                     HorizontalLayout {
                                         spacing: 8px;
                                         M3PresetChip {
-                                            text: "Alt+F9 (Shadowplay)";
-                                            is-active: root.shortcut-record == "Alt+F9";
-                                            clicked => {
-                                                root.shortcut-record = "Alt+F9";
-                                                root.custom-record-text = "Alt+F9";
-                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
-                                            }
-                                        }
-                                        M3PresetChip {
                                             text: "F9 (Directo)";
                                             is-active: root.shortcut-record == "F9";
                                             clicked => {
                                                 root.shortcut-record = "F9";
                                                 root.custom-record-text = "F9";
+                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            }
+                                        }
+                                        M3PresetChip {
+                                            text: "Alt+F9 (Shadowplay)";
+                                            is-active: root.shortcut-record == "Alt+F9";
+                                            clicked => {
+                                                root.shortcut-record = "Alt+F9";
+                                                root.custom-record-text = "Alt+F9";
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
@@ -2428,14 +2458,13 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    // Campo interactivo para atajo personalizado libre
+                                    // Campo interactivo para atajo personalizado libre con auto-captura
                                     HorizontalLayout {
                                         spacing: 10px;
-                                        M3InputField {
+                                        M3ShortcutField {
                                             horizontal-stretch: 1;
-                                            icon-name: "keyboard";
                                             text <=> root.custom-record-text;
-                                            placeholder: "Personalizado (ej. Ctrl+Shift+R, F9, Mod+Shift+Record)";
+                                            placeholder: "Presiona una tecla (ej. F9, Alt+F9, Mod+Shift+R)...";
                                             accepted(val) => {
                                                 if val != "" {
                                                     root.shortcut-record = val;

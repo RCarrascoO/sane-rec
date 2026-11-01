@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::discovery::{new_hidden_command, resolve_binary};
 use crate::profiles::EncoderProfile;
 
 pub const DEFAULT_SEGMENT_DURATION_SECS: u32 = 1;
@@ -104,6 +105,10 @@ pub struct ReplayEngine {
     win_ram_buffer: Arc<Mutex<std::collections::VecDeque<(Instant, Vec<u8>)>>>,
     #[allow(dead_code)]
     win_buffer_running: Arc<AtomicBool>,
+    #[allow(dead_code)]
+    win_replay_audio_stop: Mutex<Option<Arc<AtomicBool>>>,
+    #[allow(dead_code)]
+    win_continuous_audio_stop: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl ReplayEngine {
@@ -138,6 +143,8 @@ impl ReplayEngine {
             is_saving: Arc::new(AtomicBool::new(false)),
             win_ram_buffer: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             win_buffer_running: Arc::new(AtomicBool::new(false)),
+            win_replay_audio_stop: Mutex::new(None),
+            win_continuous_audio_stop: Mutex::new(None),
         };
 
         // Limpieza automática de segmentos antiguos en RAM al inicializar
@@ -236,7 +243,7 @@ impl ReplayEngine {
 
     /// Carga un módulo pactl y retorna su ID numérico si fue exitoso.
     fn load_pactl_module(args: &[&str]) -> Option<u32> {
-        let output = Command::new("pactl")
+        let output = new_hidden_command("pactl")
             .arg("load-module")
             .args(args)
             .output()
@@ -252,7 +259,7 @@ impl ReplayEngine {
 
     /// Descarga un módulo pactl dado su ID numérico.
     fn unload_pactl_module(id: u32) {
-        let _ = Command::new("pactl")
+        let _ = new_hidden_command("pactl")
             .args(["unload-module", &id.to_string()])
             .output();
     }
@@ -269,7 +276,7 @@ impl ReplayEngine {
 
     /// Limpia cualquier módulo huérfano de sane-rec dejado en PulseAudio / PipeWire por una terminación anómala previa.
     pub fn cleanup_orphaned_audio_modules() {
-        let output = match Command::new("pactl").args(["list", "modules"]).output() {
+        let output = match new_hidden_command("pactl").args(["list", "modules"]).output() {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
             _ => return,
         };
@@ -406,7 +413,7 @@ impl ReplayEngine {
     /// Aplica la ganancia de volumen (en porcentaje) a todos los Sink Inputs de PipeWire identificados por `media.role`.
     pub fn apply_sink_input_volume(role: &str, volume: f32) {
         let percent = (volume * 100.0).round().clamp(0.0, 150.0) as u32;
-        let output = match Command::new("pactl").args(["list", "sink-inputs"]).output() {
+        let output = match new_hidden_command("pactl").args(["list", "sink-inputs"]).output() {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
             _ => return,
         };
@@ -422,7 +429,7 @@ impl ReplayEngine {
                     .ok();
             } else if trimmed.contains(&format!("media.role = \"{}\"", role)) {
                 if let Some(id) = current_id {
-                    let _ = Command::new("pactl")
+                    let _ = new_hidden_command("pactl")
                         .args(["set-sink-input-volume", &id.to_string(), &format!("{}%", percent)])
                         .output();
                     current_id = None;
@@ -493,7 +500,7 @@ impl ReplayEngine {
 
     /// Construye el comando wf-recorder para el búfer rodante en memoria.
     fn build_replay_command(&self, config: &Config) -> Command {
-        let mut cmd = Command::new("wf-recorder");
+        let mut cmd = new_hidden_command("wf-recorder");
         cmd.arg("-y");
 
         // Configuración de destino (monitor o geometría)
@@ -547,7 +554,7 @@ impl ReplayEngine {
 
     /// Construye el comando wf-recorder para la grabación continua directa a disco.
     fn build_continuous_command(&self, config: &Config, output_path: &Path) -> Command {
-        let mut cmd = Command::new("wf-recorder");
+        let mut cmd = new_hidden_command("wf-recorder");
         cmd.arg("-y");
 
         // Destino de captura
@@ -708,13 +715,21 @@ impl ReplayEngine {
         self.win_ram_buffer.lock().unwrap().clear();
 
         let config = self.config();
-        let mut cmd = Command::new(crate::discovery::resolve_binary("ffmpeg"));
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+        let (audio_port, audio_stop) = match start_windows_audio_feeder(&config) {
+            Ok((port, stop)) => (Some(port), Some(stop)),
+            Err(e) => {
+                eprintln!("Aviso: No se pudo iniciar el feeder de audio WASAPI: {}", e);
+                (None, None)
+            }
+        };
+        *self.win_replay_audio_stop.lock().unwrap() = audio_stop;
+
+        let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
         cmd.arg("-y");
 
-        apply_windows_input_args(&mut cmd, &config);
-        apply_windows_profile_args(&mut cmd, &config);
+        apply_windows_input_args(&mut cmd, &config, audio_port);
+        apply_windows_profile_args(&mut cmd, &config, audio_port.is_some());
 
         let fps = config.video.fps.max(15);
         let fps_str = fps.to_string();
@@ -797,6 +812,9 @@ impl ReplayEngine {
     #[cfg(target_os = "windows")]
     pub fn stop_replay(&self) -> Result<()> {
         self.win_buffer_running.store(false, Ordering::SeqCst);
+        if let Some(stop_flag) = self.win_replay_audio_stop.lock().unwrap().take() {
+            stop_flag.store(true, Ordering::SeqCst);
+        }
         let mut guard = self.replay_process.lock().unwrap();
         if let Some(mut child) = guard.take() {
             if let Some(mut stdin) = child.stdin.take() {
@@ -992,13 +1010,20 @@ impl ReplayEngine {
         let filename = format!("{}.{}", timestamp, config.storage.format);
         let output_path = config.storage.output_dir.join(filename);
 
-        let mut cmd = Command::new(crate::discovery::resolve_binary("ffmpeg"));
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let (audio_port, audio_stop) = match start_windows_audio_feeder(&config) {
+            Ok((port, stop)) => (Some(port), Some(stop)),
+            Err(e) => {
+                eprintln!("Aviso: No se pudo iniciar el feeder de audio WASAPI: {}", e);
+                (None, None)
+            }
+        };
+        *self.win_continuous_audio_stop.lock().unwrap() = audio_stop;
+
+        let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
         cmd.arg("-y");
 
-        apply_windows_input_args(&mut cmd, &config);
-        apply_windows_profile_args(&mut cmd, &config);
+        apply_windows_input_args(&mut cmd, &config, audio_port);
+        apply_windows_profile_args(&mut cmd, &config, audio_port.is_some());
 
         cmd.args(["-movflags", "+faststart"]);
         cmd.arg(&output_path);
@@ -1026,6 +1051,9 @@ impl ReplayEngine {
     /// Detiene la grabación continua en Windows enviando 'q' a stdin de ffmpeg y finalizando el archivo MP4 limpiamente.
     #[cfg(target_os = "windows")]
     pub fn stop_continuous_recording(&self) -> Result<PathBuf> {
+        if let Some(stop_flag) = self.win_continuous_audio_stop.lock().unwrap().take() {
+            stop_flag.store(true, Ordering::SeqCst);
+        }
         let mut guard = self.continuous_process.lock().unwrap();
         let mut child = guard.take().ok_or(EngineError::NotRunning)?;
         let output_path = self
@@ -1152,7 +1180,7 @@ impl ReplayEngine {
         let output_path = config.storage.output_dir.join(filename);
 
         // 4. Concatena los segmentos en RAM hacia el archivo staging
-        let concat_res = Command::new("ffmpeg")
+        let concat_res = new_hidden_command(resolve_binary("ffmpeg"))
             .args(["-y", "-f", "concat", "-safe", "0", "-i"])
             .arg(&list_file)
             .args(["-c", "copy"])
@@ -1183,7 +1211,7 @@ impl ReplayEngine {
 
         // 5. Recorta de forma exacta los últimos duration_secs usando -sseof (0 pérdida, ultra-rápido)
         let trim_arg = format!("-{}", duration_secs);
-        let trim_res = Command::new("ffmpeg")
+        let trim_res = new_hidden_command(resolve_binary("ffmpeg"))
             .args(["-y", "-sseof", &trim_arg, "-i"])
             .arg(&staging_file)
             .args(["-c", "copy", "-movflags", "+faststart"])
@@ -1269,9 +1297,7 @@ impl ReplayEngine {
         let filename = format!("{}.{}", timestamp, config.storage.format);
         let output_path = config.storage.output_dir.join(filename);
 
-        let mut cmd = Command::new(crate::discovery::resolve_binary("ffmpeg"));
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
         cmd.args([
             "-y",
             "-f",
@@ -1546,6 +1572,13 @@ impl Drop for ReplayEngine {
 
         #[cfg(target_os = "windows")]
         {
+            if let Some(stop) = self.win_replay_audio_stop.lock().unwrap().take() {
+                stop.store(true, Ordering::SeqCst);
+            }
+            if let Some(stop) = self.win_continuous_audio_stop.lock().unwrap().take() {
+                stop.store(true, Ordering::SeqCst);
+            }
+
             if let Ok(mut guard) = self.replay_process.lock() {
                 if let Some(mut child) = guard.take() {
                     if let Some(mut stdin) = child.stdin.take() {
@@ -1570,12 +1603,329 @@ impl Drop for ReplayEngine {
     }
 }
 
-/// Aplica los argumentos de entrada y captura de pantalla en Windows (gdigrab nativo/ddagrab).
+/// Resampler lineal y conversor de canales / formatos para mezcla de audio WASAPI en Windows.
+pub struct WindowsAudioResampler {
+    from_rate: f64,
+    to_rate: f64,
+    channels: usize,
+    volume: f32,
+    ratio: f64,
+    pos: f64,
+    prev_left: f32,
+    prev_right: f32,
+    curr_channel: usize,
+    curr_frame_left: f32,
+    curr_frame_right: f32,
+}
+
+impl WindowsAudioResampler {
+    pub fn new(sample_rate: u32, channels: usize, volume: f32) -> Self {
+        let from_rate = sample_rate.max(1) as f64;
+        let to_rate = 48000.0;
+        let ratio = from_rate / to_rate;
+        Self {
+            from_rate,
+            to_rate,
+            channels: channels.max(1),
+            volume,
+            ratio,
+            pos: 0.0,
+            prev_left: 0.0,
+            prev_right: 0.0,
+            curr_channel: 0,
+            curr_frame_left: 0.0,
+            curr_frame_right: 0.0,
+        }
+    }
+
+    pub fn push_sample(&mut self, s: f32, out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+        if self.curr_channel == 0 {
+            self.curr_frame_left = s;
+            if self.channels == 1 {
+                self.curr_frame_right = s;
+                self.feed_frame(out);
+            }
+        } else if self.curr_channel == 1 {
+            self.curr_frame_right = s;
+            if self.channels == 2 {
+                self.feed_frame(out);
+            }
+        } else if self.curr_channel == self.channels - 1 {
+            self.feed_frame(out);
+        }
+        self.curr_channel = (self.curr_channel + 1) % self.channels;
+    }
+
+    fn feed_frame(&mut self, out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+        let next_left = self.curr_frame_left;
+        let next_right = self.curr_frame_right;
+
+        if (self.from_rate - self.to_rate).abs() < 1.0 {
+            let mut q = out.lock().unwrap();
+            q.push_back(next_left * self.volume);
+            q.push_back(next_right * self.volume);
+            if q.len() > 192000 {
+                q.drain(..96000);
+            }
+            return;
+        }
+
+        let mut q = out.lock().unwrap();
+        while self.pos < 1.0 {
+            let t = self.pos as f32;
+            let l = (1.0 - t) * self.prev_left + t * next_left;
+            let r = (1.0 - t) * self.prev_right + t * next_right;
+            q.push_back(l * self.volume);
+            q.push_back(r * self.volume);
+            self.pos += self.ratio;
+        }
+        self.pos -= 1.0;
+        self.prev_left = next_left;
+        self.prev_right = next_right;
+
+        if q.len() > 192000 {
+            q.drain(..96000);
+        }
+    }
+
+    pub fn process_f32(&mut self, data: &[f32], out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+        for &s in data {
+            self.push_sample(s, out);
+        }
+    }
+
+    pub fn process_i16(&mut self, data: &[i16], out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+        for &s in data {
+            let f = s as f32 / 32768.0;
+            self.push_sample(f, out);
+        }
+    }
+
+    pub fn process_u16(&mut self, data: &[u16], out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+        for &s in data {
+            let f = (s as f32 - 32768.0) / 32768.0;
+            self.push_sample(f, out);
+        }
+    }
+}
+
+/// Inicia el feeder de audio WASAPI Loopback y Micrófono con cpal transmitiendo PCM crudo estéreo a 48 kHz vía TCP local.
 #[cfg(target_os = "windows")]
-fn apply_windows_input_args(cmd: &mut Command, config: &Config) {
+fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<AtomicBool>)> {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let stop_flag_clone = Arc::clone(&stop_flag);
+
+    let system_buffer = Arc::new(Mutex::new(std::collections::VecDeque::<f32>::new()));
+    let mic_buffer = Arc::new(Mutex::new(std::collections::VecDeque::<f32>::new()));
+
+    let host = cpal::default_host();
+    let mut streams: Vec<cpal::Stream> = Vec::new();
+
+    // 1. WASAPI Loopback (Audio del Sistema)
+    if config.audio.capture_desktop {
+        if let Some(device) = host.default_output_device() {
+            if let Ok(supported_config) = device.default_output_config() {
+                let sample_rate = supported_config.sample_rate().0;
+                let channels = supported_config.channels() as usize;
+                let sample_format = supported_config.sample_format();
+                let stream_config: cpal::StreamConfig = supported_config.into();
+
+                let sys_buf = Arc::clone(&system_buffer);
+                let volume = config.audio.volume_system;
+                let resampler = Arc::new(Mutex::new(WindowsAudioResampler::new(
+                    sample_rate,
+                    channels,
+                    volume,
+                )));
+
+                let r_clone = Arc::clone(&resampler);
+                let buf_clone = Arc::clone(&sys_buf);
+                let err_fn = |err| eprintln!("Aviso en stream WASAPI Loopback: {}", err);
+
+                let stream_res = match sample_format {
+                    cpal::SampleFormat::F32 => device.build_input_stream(
+                        &stream_config,
+                        move |data: &[f32], _| {
+                            if let Ok(mut r) = r_clone.lock() {
+                                r.process_f32(data, &buf_clone);
+                            }
+                        },
+                        err_fn,
+                        None,
+                    ),
+                    cpal::SampleFormat::I16 => device.build_input_stream(
+                        &stream_config,
+                        move |data: &[i16], _| {
+                            if let Ok(mut r) = r_clone.lock() {
+                                r.process_i16(data, &buf_clone);
+                            }
+                        },
+                        err_fn,
+                        None,
+                    ),
+                    cpal::SampleFormat::U16 => device.build_input_stream(
+                        &stream_config,
+                        move |data: &[u16], _| {
+                            if let Ok(mut r) = r_clone.lock() {
+                                r.process_u16(data, &buf_clone);
+                            }
+                        },
+                        err_fn,
+                        None,
+                    ),
+                    _ => Err(cpal::BuildStreamError::StreamConfigNotSupported),
+                };
+
+                if let Ok(stream) = stream_res {
+                    if stream.play().is_ok() {
+                        streams.push(stream);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. WASAPI Input (Micrófono)
+    if config.audio.capture_mic {
+        if let Some(device) = host.default_input_device() {
+            if let Ok(supported_config) = device.default_input_config() {
+                let sample_rate = supported_config.sample_rate().0;
+                let channels = supported_config.channels() as usize;
+                let sample_format = supported_config.sample_format();
+                let stream_config: cpal::StreamConfig = supported_config.into();
+
+                let mic_buf = Arc::clone(&mic_buffer);
+                let volume = config.audio.volume_mic;
+                let resampler = Arc::new(Mutex::new(WindowsAudioResampler::new(
+                    sample_rate,
+                    channels,
+                    volume,
+                )));
+
+                let r_clone = Arc::clone(&resampler);
+                let buf_clone = Arc::clone(&mic_buf);
+                let err_fn = |err| eprintln!("Aviso en stream WASAPI Mic: {}", err);
+
+                let stream_res = match sample_format {
+                    cpal::SampleFormat::F32 => device.build_input_stream(
+                        &stream_config,
+                        move |data: &[f32], _| {
+                            if let Ok(mut r) = r_clone.lock() {
+                                r.process_f32(data, &buf_clone);
+                            }
+                        },
+                        err_fn,
+                        None,
+                    ),
+                    cpal::SampleFormat::I16 => device.build_input_stream(
+                        &stream_config,
+                        move |data: &[i16], _| {
+                            if let Ok(mut r) = r_clone.lock() {
+                                r.process_i16(data, &buf_clone);
+                            }
+                        },
+                        err_fn,
+                        None,
+                    ),
+                    cpal::SampleFormat::U16 => device.build_input_stream(
+                        &stream_config,
+                        move |data: &[u16], _| {
+                            if let Ok(mut r) = r_clone.lock() {
+                                r.process_u16(data, &buf_clone);
+                            }
+                        },
+                        err_fn,
+                        None,
+                    ),
+                    _ => Err(cpal::BuildStreamError::StreamConfigNotSupported),
+                };
+
+                if let Ok(stream) = stream_res {
+                    if stream.play().is_ok() {
+                        streams.push(stream);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Feeder Thread continuo hacia FFmpeg a 48000 Hz estéreo cada 20ms
+    std::thread::Builder::new()
+        .name("sane-rec-win-audio-feeder".into())
+        .spawn(move || {
+            let _streams = streams; // Mantener los streams de audio vivos
+
+            let _ = listener.set_nonblocking(false);
+            let (mut stream, _) = match listener.accept() {
+                Ok(conn) => conn,
+                Err(_) => return,
+            };
+            let _ = stream.set_nodelay(true);
+
+            let mut next_tick = Instant::now() + Duration::from_millis(20);
+            let mut send_buf = vec![0u8; 3840]; // 960 frames * 2 canales * 2 bytes = 3840 bytes
+
+            while !stop_flag_clone.load(Ordering::Relaxed) {
+                {
+                    let mut sys_q = system_buffer.lock().unwrap();
+                    let mut mic_q = mic_buffer.lock().unwrap();
+
+                    let mut offset = 0;
+                    for _ in 0..960 {
+                        let sys_l = sys_q.pop_front().unwrap_or(0.0);
+                        let sys_r = sys_q.pop_front().unwrap_or(0.0);
+                        let mic_l = mic_q.pop_front().unwrap_or(0.0);
+                        let mic_r = mic_q.pop_front().unwrap_or(0.0);
+
+                        let mixed_l = (sys_l + mic_l).clamp(-1.0, 1.0);
+                        let mixed_r = (sys_r + mic_r).clamp(-1.0, 1.0);
+
+                        let s16_l = (mixed_l * 32767.0) as i16;
+                        let s16_r = (mixed_r * 32767.0) as i16;
+
+                        let b_l = s16_l.to_le_bytes();
+                        let b_r = s16_r.to_le_bytes();
+
+                        send_buf[offset] = b_l[0];
+                        send_buf[offset + 1] = b_l[1];
+                        send_buf[offset + 2] = b_r[0];
+                        send_buf[offset + 3] = b_r[1];
+                        offset += 4;
+                    }
+                }
+
+                use std::io::Write;
+                if stream.write_all(&send_buf).is_err() {
+                    break;
+                }
+
+                let now = Instant::now();
+                if next_tick > now {
+                    std::thread::sleep(next_tick - now);
+                }
+                next_tick += Duration::from_millis(20);
+                if next_tick < Instant::now() {
+                    next_tick = Instant::now() + Duration::from_millis(20);
+                }
+            }
+        })
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+    Ok((port, stop_flag))
+}
+
+/// Aplica los argumentos de entrada y captura de pantalla y audio en Windows (gdigrab + audio TCP).
+#[cfg(target_os = "windows")]
+fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Option<u16>) {
     let fps_str = config.video.fps.to_string();
     let target = config.video.target.trim();
 
+    // Input 0: Video
+    cmd.args(["-thread_queue_size", "512"]);
     if target.starts_with("title=") || target.starts_with("window:") {
         let win_title = target
             .strip_prefix("title=")
@@ -1601,11 +1951,28 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config) {
             "desktop",
         ]);
     }
+
+    // Input 1: Audio PCM crudo continuo s16le a 48000 Hz estéreo vía TCP local
+    if let Some(port) = audio_port {
+        let tcp_url = format!("tcp://127.0.0.1:{}", port);
+        cmd.args([
+            "-thread_queue_size",
+            "1024",
+            "-f",
+            "s16le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+            &tcp_url,
+        ]);
+    }
 }
 
 /// Configura los parámetros de codificación de hardware y CPU en Windows según el perfil activo.
 #[cfg(target_os = "windows")]
-fn apply_windows_profile_args(cmd: &mut Command, config: &Config) {
+fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: bool) {
     let profile = config
         .profile
         .active_profile
@@ -1685,6 +2052,22 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config) {
                 "-threads", "2",
             ]);
         }
+    }
+
+    if has_audio {
+        cmd.args([
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ar", "48000",
+            "-ac", "2",
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+        ]);
+    } else {
+        cmd.args([
+            "-an",
+            "-map", "0:v:0",
+        ]);
     }
 }
 
@@ -1781,7 +2164,7 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
 /// Comprueba si una fuente de audio específica está disponible en PulseAudio / PipeWire en Linux.
 #[cfg(target_os = "linux")]
 pub fn is_source_available(source_name: &str) -> bool {
-    let output = match Command::new("pactl")
+    let output = match new_hidden_command("pactl")
         .args(["list", "short", "sources"])
         .output()
     {
@@ -1803,7 +2186,7 @@ pub fn is_source_available(source_name: &str) -> bool {
 /// Obtiene el monitor o nombre del sink de audio por defecto usando pactl en Linux o WASAPI en Windows.
 #[cfg(target_os = "linux")]
 pub fn get_default_audio_sink() -> Option<String> {
-    let output = Command::new("pactl")
+    let output = new_hidden_command("pactl")
         .arg("get-default-sink")
         .output()
         .ok()?;
@@ -1829,7 +2212,7 @@ pub fn get_default_audio_source() -> Option<String> {
         return Some("easyeffects_source".to_string());
     }
 
-    let output = Command::new("pactl")
+    let output = new_hidden_command("pactl")
         .arg("get-default-source")
         .output()
         .ok()?;
@@ -1854,7 +2237,7 @@ pub fn play_feedback_sound(sound_name: &str) {
     let path = format!("/usr/share/sounds/freedesktop/stereo/{}.oga", sound_name);
     if std::path::Path::new(&path).exists() {
         std::thread::spawn(move || {
-            if let Ok(mut child) = Command::new("pw-play")
+            if let Ok(mut child) = new_hidden_command("pw-play")
                 .arg(&path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -1956,7 +2339,7 @@ mod tests {
         let seg0 = buffer_dir.join("seg_00.mp4");
         let seg1 = buffer_dir.join("seg_01.mp4");
 
-        let cmd0 = Command::new("ffmpeg")
+        let cmd0 = new_hidden_command("ffmpeg")
             .args([
                 "-y",
                 "-f",
@@ -1971,7 +2354,7 @@ mod tests {
             .arg(&seg0)
             .output();
 
-        let cmd1 = Command::new("ffmpeg")
+        let cmd1 = new_hidden_command("ffmpeg")
             .args([
                 "-y",
                 "-f",
@@ -2043,19 +2426,19 @@ mod tests {
         let seg1 = buffer_dir.join("seg_01.mp4");
         let seg2 = buffer_dir.join("seg_02.mp4");
 
-        let _ = Command::new("ffmpeg")
+        let _ = new_hidden_command("ffmpeg")
             .args(["-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=30", "-c:v", "libx264", "-preset", "ultrafast"])
             .arg(&seg0)
             .output();
         std::thread::sleep(std::time::Duration::from_millis(15));
 
-        let _ = Command::new("ffmpeg")
+        let _ = new_hidden_command("ffmpeg")
             .args(["-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=30", "-c:v", "libx264", "-preset", "ultrafast"])
             .arg(&seg1)
             .output();
         std::thread::sleep(std::time::Duration::from_millis(15));
 
-        let _ = Command::new("ffmpeg")
+        let _ = new_hidden_command("ffmpeg")
             .args(["-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=160x120:rate=30", "-c:v", "libx264", "-preset", "ultrafast"])
             .arg(&seg2)
             .output();
@@ -2072,5 +2455,39 @@ mod tests {
     #[test]
     fn test_is_source_available_nonexistent() {
         assert!(!super::is_source_available("nonexistent_device_source_xyz_12345"));
+    }
+
+    #[test]
+    fn test_windows_audio_resampler_stereo_48k() {
+        let out = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let mut resampler = WindowsAudioResampler::new(48000, 2, 0.5);
+
+        let input_samples: Vec<f32> = vec![1.0, -1.0, 0.5, -0.5];
+        resampler.process_f32(&input_samples, &out);
+
+        let q = out.lock().unwrap();
+        assert_eq!(q.len(), 4);
+        assert!((q[0] - 0.5).abs() < 1e-4);
+        assert!((q[1] - (-0.5)).abs() < 1e-4);
+        assert!((q[2] - 0.25).abs() < 1e-4);
+        assert!((q[3] - (-0.25)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_windows_audio_resampler_mono_resample_44100() {
+        let out = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let mut resampler = WindowsAudioResampler::new(44100, 1, 1.0);
+
+        // Generar 4410 samples mono a 44100 Hz (0.1 segundos)
+        let mono_samples = vec![0.5f32; 4410];
+        resampler.process_f32(&mono_samples, &out);
+
+        let q = out.lock().unwrap();
+        // 0.1s a 48000 Hz estéreo da aproximadamente 4800 frames * 2 = 9600 samples
+        assert!(q.len() >= 9500 && q.len() <= 9700);
+        // Cada sample resultante debe ser ~0.5 una vez estabilizada la interpolación inicial
+        for &s in q.iter().skip(4) {
+            assert!((s - 0.5).abs() < 0.05);
+        }
     }
 }

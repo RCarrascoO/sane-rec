@@ -163,9 +163,19 @@ pub struct ShortcutsConfig {
 
 impl Default for ShortcutsConfig {
     fn default() -> Self {
-        Self {
-            save_replay: "Mod+F10".to_string(),
-            toggle_record: "Mod+F9".to_string(),
+        #[cfg(target_os = "windows")]
+        {
+            Self {
+                save_replay: "F10".to_string(),
+                toggle_record: "F9".to_string(),
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Self {
+                save_replay: "Mod+Shift+S".to_string(),
+                toggle_record: "Mod+Shift+R".to_string(),
+            }
         }
     }
 }
@@ -395,8 +405,16 @@ mod tests {
         assert_eq!(cfg.storage.discord_target_mb, 10);
 
         assert_eq!(cfg.profile.active_profile, "sane-safe");
-        assert_eq!(cfg.shortcuts.save_replay, "Mod+F10");
-        assert_eq!(cfg.shortcuts.toggle_record, "Mod+F9");
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(cfg.shortcuts.save_replay, "Mod+Shift+S");
+            assert_eq!(cfg.shortcuts.toggle_record, "Mod+Shift+R");
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(cfg.shortcuts.save_replay, "F10");
+            assert_eq!(cfg.shortcuts.toggle_record, "F9");
+        }
     }
 
     #[test]

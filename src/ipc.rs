@@ -336,7 +336,110 @@ pub async fn start_listener(tx: tokio::sync::mpsc::Sender<IpcCommand>) -> Result
     Ok(())
 }
 
-/// Inicia el listener de Hotkeys Globales (F9 y F10) en Windows dentro de juegos DirectX/Vulkan.
+pub const WIN_MOD_ALT: u32 = 0x0001;
+pub const WIN_MOD_CONTROL: u32 = 0x0002;
+pub const WIN_MOD_SHIFT: u32 = 0x0004;
+pub const WIN_MOD_WIN: u32 = 0x0008;
+pub const WIN_MOD_NOREPEAT: u32 = 0x4000;
+
+/// Parsea un string de atajos textual a `(modifiers, vk_code)`.
+/// Soporta cadenas como `"F9"`, `"F10"`, `"Mod+F10"`, `"Alt+F9"`, `"Ctrl+Shift+F10"`, `"Ctrl+F9"`, `"F1"`..`"F12"`, `"A"`..`"Z"`, `"0"`..`"9"`.
+pub fn parse_windows_hotkey(shortcut: &str) -> Option<(u32, u32)> {
+    let s = shortcut.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    let mut modifiers: u32 = WIN_MOD_NOREPEAT;
+    let mut vk_code: Option<u32> = None;
+
+    for part in s.split('+') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let lower = part.to_lowercase();
+        match lower.as_str() {
+            "ctrl" | "control" => modifiers |= WIN_MOD_CONTROL,
+            "shift" => modifiers |= WIN_MOD_SHIFT,
+            "alt" => modifiers |= WIN_MOD_ALT,
+            "mod" | "super" | "win" | "windows" | "logo" => modifiers |= WIN_MOD_WIN,
+            _ => {
+                let code = match lower.as_str() {
+                    "f1" => Some(0x70),
+                    "f2" => Some(0x71),
+                    "f3" => Some(0x72),
+                    "f4" => Some(0x73),
+                    "f5" => Some(0x74),
+                    "f6" => Some(0x75),
+                    "f7" => Some(0x76),
+                    "f8" => Some(0x77),
+                    "f9" => Some(0x78),
+                    "f10" => Some(0x79),
+                    "f11" => Some(0x7A),
+                    "f12" => Some(0x7B),
+                    "space" => Some(0x20),
+                    "enter" | "return" => Some(0x0D),
+                    "esc" | "escape" => Some(0x1B),
+                    "tab" => Some(0x09),
+                    "backspace" | "back" => Some(0x08),
+                    "delete" | "del" => Some(0x2E),
+                    "insert" | "ins" => Some(0x2D),
+                    "home" => Some(0x24),
+                    "end" => Some(0x23),
+                    "pageup" | "pgup" => Some(0x21),
+                    "pagedown" | "pgdn" => Some(0x22),
+                    "printscreen" | "prtscn" | "snapshot" => Some(0x2C),
+                    "pause" => Some(0x13),
+                    "scrolllock" | "scroll" => Some(0x91),
+                    single if single.len() == 1 => {
+                        let ch = single.chars().next().unwrap();
+                        if ch.is_ascii_digit() {
+                            Some(ch as u32)
+                        } else if ch.is_ascii_alphabetic() {
+                            Some(ch.to_ascii_uppercase() as u32)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(c) = code {
+                    vk_code = Some(c);
+                }
+            }
+        }
+    }
+
+    vk_code.map(|vk| (modifiers, vk))
+}
+
+static HOTKEY_CONFIG: std::sync::OnceLock<std::sync::Mutex<(String, String)>> = std::sync::OnceLock::new();
+#[allow(dead_code)]
+static HOTKEY_THREAD_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static HOTKEY_RELOAD_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Notifica y actualiza en caliente los atajos globales de Windows sin necesidad de reiniciar la app.
+pub fn reload_windows_hotkeys(save: &str, record: &str) {
+    let mutex = HOTKEY_CONFIG.get_or_init(|| std::sync::Mutex::new(Default::default()));
+    if let Ok(mut lock) = mutex.lock() {
+        *lock = (save.to_string(), record.to_string());
+    }
+    HOTKEY_RELOAD_FLAG.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    #[cfg(target_os = "windows")]
+    {
+        let tid = HOTKEY_THREAD_ID.load(std::sync::atomic::Ordering::SeqCst);
+        if tid != 0 {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_USER};
+            unsafe {
+                PostThreadMessageW(tid, WM_USER + 101, 0, 0);
+            }
+        }
+    }
+}
+
+/// Inicia el listener de Hotkeys Globales en Windows.
 #[cfg(target_os = "windows")]
 pub fn spawn_global_hotkeys_listener() {
     std::thread::Builder::new()
@@ -350,49 +453,109 @@ pub fn spawn_global_hotkeys_listener() {
 #[cfg(target_os = "windows")]
 fn run_windows_hotkey_loop() {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        RegisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+        RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, TranslateMessage, MSG, WM_HOTKEY,
+        DispatchMessageW, GetMessageW, PeekMessageW, SetTimer, TranslateMessage, MSG, PM_NOREMOVE,
+        WM_HOTKEY, WM_TIMER, WM_USER,
     };
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentThreadId() -> u32;
+    }
+
+    let tid = unsafe { GetCurrentThreadId() };
+    HOTKEY_THREAD_ID.store(tid, std::sync::atomic::Ordering::SeqCst);
+
+    let mut msg: MSG = unsafe { std::mem::zeroed() };
+    unsafe {
+        PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
+        SetTimer(std::ptr::null_mut(), 1, 500, None);
+    }
 
     const VK_F9: u32 = 0x78;
     const VK_F10: u32 = 0x79;
     const HOTKEY_ID_RECORD: i32 = 1;
     const HOTKEY_ID_SAVE: i32 = 2;
-    const HOTKEY_ID_RECORD_CTRL_SHIFT: i32 = 3;
-    const HOTKEY_ID_SAVE_CTRL_SHIFT: i32 = 4;
+    const HOTKEY_ID_FALLBACK_RECORD_F9: i32 = 3;
+    const HOTKEY_ID_FALLBACK_SAVE_F10: i32 = 4;
+    const HOTKEY_ID_FALLBACK_RECORD_CTRL_SHIFT: i32 = 5;
+    const HOTKEY_ID_FALLBACK_SAVE_CTRL_SHIFT: i32 = 6;
+
+    // Leer atajos iniciales desde Config
+    let initial_cfg = crate::config::Config::load().unwrap_or_default();
+    let mut current_save = initial_cfg.shortcuts.save_replay;
+    let mut current_record = initial_cfg.shortcuts.toggle_record;
+
+    if let Some(mutex) = HOTKEY_CONFIG.get() {
+        if let Ok(lock) = mutex.lock() {
+            if !lock.0.is_empty() || !lock.1.is_empty() {
+                current_save = lock.0.clone();
+                current_record = lock.1.clone();
+            }
+        }
+    } else {
+        let _ = HOTKEY_CONFIG.set(std::sync::Mutex::new((current_save.clone(), current_record.clone())));
+    }
 
     unsafe {
-        // F9 y F10 directos
-        RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD, MOD_NOREPEAT, VK_F9);
-        RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE, MOD_NOREPEAT, VK_F10);
+        // Registrar atajos configurados
+        if let Some((mods, vk)) = parse_windows_hotkey(&current_record) {
+            RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD, mods, vk);
+        }
+        if let Some((mods, vk)) = parse_windows_hotkey(&current_save) {
+            RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE, mods, vk);
+        }
 
-        // Ctrl+Shift+F9 y Ctrl+Shift+F10 como respaldo
+        // Registrar atajos de respaldo por si el config contiene atajos reservados de Linux
+        RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_FALLBACK_RECORD_F9, MOD_NOREPEAT, VK_F9);
+        RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_FALLBACK_SAVE_F10, MOD_NOREPEAT, VK_F10);
         RegisterHotKey(
             std::ptr::null_mut(),
-            HOTKEY_ID_RECORD_CTRL_SHIFT,
+            HOTKEY_ID_FALLBACK_RECORD_CTRL_SHIFT,
             MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
             VK_F9,
         );
         RegisterHotKey(
             std::ptr::null_mut(),
-            HOTKEY_ID_SAVE_CTRL_SHIFT,
+            HOTKEY_ID_FALLBACK_SAVE_CTRL_SHIFT,
             MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
             VK_F10,
         );
 
-        let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             if msg.message == WM_HOTKEY {
                 match msg.wParam as i32 {
-                    HOTKEY_ID_RECORD | HOTKEY_ID_RECORD_CTRL_SHIFT => {
+                    HOTKEY_ID_RECORD | HOTKEY_ID_FALLBACK_RECORD_F9 | HOTKEY_ID_FALLBACK_RECORD_CTRL_SHIFT => {
                         let _ = send_command_sync("record_toggle");
                     }
-                    HOTKEY_ID_SAVE | HOTKEY_ID_SAVE_CTRL_SHIFT => {
+                    HOTKEY_ID_SAVE | HOTKEY_ID_FALLBACK_SAVE_F10 | HOTKEY_ID_FALLBACK_SAVE_CTRL_SHIFT => {
                         let _ = send_command_sync("save");
                     }
                     _ => {}
+                }
+            } else if msg.message == (WM_USER + 101) || msg.message == WM_TIMER {
+                if HOTKEY_RELOAD_FLAG.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    if let Some(mutex) = HOTKEY_CONFIG.get() {
+                        if let Ok(lock) = mutex.lock() {
+                            let (new_save, new_record) = lock.clone();
+                            if new_save != current_save || new_record != current_record {
+                                UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD);
+                                UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE);
+
+                                if let Some((mods, vk)) = parse_windows_hotkey(&new_record) {
+                                    RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD, mods, vk);
+                                }
+                                if let Some((mods, vk)) = parse_windows_hotkey(&new_save) {
+                                    RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE, mods, vk);
+                                }
+
+                                current_save = new_save;
+                                current_record = new_record;
+                            }
+                        }
+                    }
                 }
             }
             TranslateMessage(&msg);
@@ -571,5 +734,43 @@ mod tests {
 
         let _ = std::fs::remove_file(&socket_file);
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_parse_windows_hotkey() {
+        // Atajos simples de función
+        assert_eq!(parse_windows_hotkey("F9"), Some((WIN_MOD_NOREPEAT, 0x78)));
+        assert_eq!(parse_windows_hotkey("F10"), Some((WIN_MOD_NOREPEAT, 0x79)));
+        assert_eq!(parse_windows_hotkey("f12"), Some((WIN_MOD_NOREPEAT, 0x7B)));
+
+        // Modificadores combinados
+        assert_eq!(
+            parse_windows_hotkey("Mod+F10"),
+            Some((WIN_MOD_NOREPEAT | WIN_MOD_WIN, 0x79))
+        );
+        assert_eq!(
+            parse_windows_hotkey("Alt+F9"),
+            Some((WIN_MOD_NOREPEAT | WIN_MOD_ALT, 0x78))
+        );
+        assert_eq!(
+            parse_windows_hotkey("Ctrl+Shift+F10"),
+            Some((WIN_MOD_NOREPEAT | WIN_MOD_CONTROL | WIN_MOD_SHIFT, 0x79))
+        );
+        assert_eq!(
+            parse_windows_hotkey("Ctrl+F9"),
+            Some((WIN_MOD_NOREPEAT | WIN_MOD_CONTROL, 0x78))
+        );
+        assert_eq!(
+            parse_windows_hotkey("Ctrl+Shift+R"),
+            Some((WIN_MOD_NOREPEAT | WIN_MOD_CONTROL | WIN_MOD_SHIFT, 0x52))
+        );
+        assert_eq!(
+            parse_windows_hotkey("Alt+0"),
+            Some((WIN_MOD_NOREPEAT | WIN_MOD_ALT, 0x30))
+        );
+
+        // Inválidos
+        assert_eq!(parse_windows_hotkey(""), None);
+        assert_eq!(parse_windows_hotkey("Ctrl+Shift+"), None);
     }
 }

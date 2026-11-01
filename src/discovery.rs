@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -69,18 +68,28 @@ pub fn resolve_binary(name: &str) -> PathBuf {
     }
 }
 
+/// Crea un nuevo proceso Command garantizando que en Windows no se abra ninguna ventana de consola emergente (CMD/conhost).
+pub fn new_hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 /// Detección de hardware y tarjetas gráficas activas en el sistema.
 #[cfg(target_os = "windows")]
 pub fn detect_gpu_info() -> String {
-    use std::os::windows::process::CommandExt;
-    let output = Command::new("powershell")
+    let output = new_hidden_command("powershell")
         .args([
             "-NoProfile",
             "-NonInteractive",
             "-Command",
             "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
         ])
-        .creation_flags(0x08000000)
         .output();
 
     if let Ok(out) = output {
@@ -110,7 +119,7 @@ pub fn detect_gpu_info() -> String {
 #[cfg(target_os = "linux")]
 pub fn get_connected_outputs() -> Vec<OutputInfo> {
     // 1. Intentar con niri msg -j outputs
-    let niri_res = Command::new("niri")
+    let niri_res = new_hidden_command("niri")
         .args(["msg", "-j", "outputs"])
         .output();
 
@@ -118,7 +127,7 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
         if out.status.success() {
             let json_str = String::from_utf8_lossy(&out.stdout);
             // Intentar detectar la pantalla enfocada actualmente
-            let focused_name = Command::new("niri")
+            let focused_name = new_hidden_command("niri")
                 .args(["msg", "-j", "focused-output"])
                 .output()
                 .ok()
@@ -139,7 +148,7 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
     }
 
     // 2. Fallback a wf-recorder -L
-    let wf_res = Command::new("wf-recorder")
+    let wf_res = new_hidden_command("wf-recorder")
         .arg("-L")
         .output();
 
@@ -414,7 +423,7 @@ pub fn parse_wf_recorder_outputs(output_str: &str) -> Vec<OutputInfo> {
 /// Ejecuta `niri msg -j windows` y parsea el array resultante.
 #[cfg(target_os = "linux")]
 pub fn get_open_windows() -> Vec<WindowInfo> {
-    let output = Command::new("niri")
+    let output = new_hidden_command("niri")
         .args(["msg", "-j", "windows"])
         .output();
 
@@ -523,7 +532,7 @@ pub fn parse_niri_windows(json_str: &str) -> Vec<WindowInfo> {
 /// - `microphones`: entradas físicas o virtuales (con clase `Audio/Source`).
 #[cfg(target_os = "linux")]
 pub fn get_audio_devices() -> (Vec<AudioDeviceInfo>, Vec<AudioDeviceInfo>) {
-    let default_sink = Command::new("pactl")
+    let default_sink = new_hidden_command("pactl")
         .arg("get-default-sink")
         .output()
         .ok()
@@ -535,7 +544,7 @@ pub fn get_audio_devices() -> (Vec<AudioDeviceInfo>, Vec<AudioDeviceInfo>) {
             }
         });
 
-    let default_source = Command::new("pactl")
+    let default_source = new_hidden_command("pactl")
         .arg("get-default-source")
         .output()
         .ok()
@@ -547,7 +556,7 @@ pub fn get_audio_devices() -> (Vec<AudioDeviceInfo>, Vec<AudioDeviceInfo>) {
             }
         });
 
-    let output = Command::new("pactl")
+    let output = new_hidden_command("pactl")
         .args(["-f", "json", "list", "sources"])
         .output();
 
@@ -693,7 +702,7 @@ pub fn parse_pactl_sources(
 /// Si cancela (por ejemplo pulsando Esc) o hay error, retorna `None`.
 #[cfg(target_os = "linux")]
 pub fn run_interactive_slurp() -> Option<String> {
-    let output = Command::new("slurp")
+    let output = new_hidden_command("slurp")
         .output()
         .ok()?;
 

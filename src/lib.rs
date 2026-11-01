@@ -17,13 +17,16 @@ pub use compressor::{
 pub use config::{update_niri_shortcuts, Config, ShortcutsConfig};
 pub use discovery::{
     detect_gpu_info, get_audio_devices, get_connected_outputs, get_open_windows, get_recent_clips,
-    resolve_binary, run_interactive_slurp, AudioDeviceInfo, ClipInfo, OutputInfo, WindowInfo,
+    new_hidden_command, resolve_binary, run_interactive_slurp, AudioDeviceInfo, ClipInfo,
+    OutputInfo, WindowInfo,
 };
 pub use engine::{
     get_default_audio_sink, get_default_audio_source, is_source_available, EngineError,
     EngineStatus, ReplayEngine,
 };
-pub use ipc::{IpcCommand, IpcRequest, IpcResponse};
+pub use ipc::{
+    parse_windows_hotkey, reload_windows_hotkeys, IpcCommand, IpcRequest, IpcResponse,
+};
 pub use profiles::EncoderProfile;
 pub use profiles_manager::HardwareProfile;
 pub use updater::{check_for_updates, perform_update, ReleaseInfo};

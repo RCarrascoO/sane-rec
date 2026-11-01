@@ -6,6 +6,7 @@ pub enum EncoderProfile {
     SaneSafe,
     AmdHardware,
     NvidiaHardware,
+    #[serde(alias = "intel-qsv", alias = "intelhardware", alias = "qsv", alias = "h264_qsv")]
     IntelHardware,
     Custom(String),
 }
@@ -72,7 +73,9 @@ impl std::str::FromStr for EncoderProfile {
             "nvidia-hardware" | "nvidiahardware" | "nvidia" | "nvenc" => {
                 EncoderProfile::NvidiaHardware
             }
-            "intel-hardware" | "intelhardware" | "intel" | "qsv" => EncoderProfile::IntelHardware,
+            "intel-qsv" | "intel-hardware" | "intelhardware" | "intel" | "qsv" | "h264_qsv" => {
+                EncoderProfile::IntelHardware
+            }
             _ => EncoderProfile::Custom(s.to_string()),
         })
     }
@@ -165,10 +168,19 @@ mod tests {
         assert_eq!("amd-hardware".parse::<EncoderProfile>().unwrap(), EncoderProfile::AmdHardware);
         assert_eq!("nvidia-hardware".parse::<EncoderProfile>().unwrap(), EncoderProfile::NvidiaHardware);
         assert_eq!("intel-hardware".parse::<EncoderProfile>().unwrap(), EncoderProfile::IntelHardware);
+        assert_eq!("intel-qsv".parse::<EncoderProfile>().unwrap(), EncoderProfile::IntelHardware);
+        assert_eq!("h264_qsv".parse::<EncoderProfile>().unwrap(), EncoderProfile::IntelHardware);
+        assert_eq!("qsv".parse::<EncoderProfile>().unwrap(), EncoderProfile::IntelHardware);
         assert_eq!(
             "x264enc bitrate=3000".parse::<EncoderProfile>().unwrap(),
             EncoderProfile::Custom("x264enc bitrate=3000".to_string())
         );
+
+        // Test serde deserialization with aliases
+        let de_qsv: EncoderProfile = serde_json::from_str(r#""intel-qsv""#).unwrap();
+        assert_eq!(de_qsv, EncoderProfile::IntelHardware);
+        let de_hw: EncoderProfile = serde_json::from_str(r#""intel-hardware""#).unwrap();
+        assert_eq!(de_hw, EncoderProfile::IntelHardware);
     }
 
     #[test]
