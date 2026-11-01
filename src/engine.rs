@@ -1712,8 +1712,6 @@ impl WindowsAudioResampler {
 /// Inicia el feeder de audio WASAPI Loopback y Micrófono con cpal transmitiendo PCM crudo estéreo a 48 kHz vía TCP local.
 #[cfg(target_os = "windows")]
 fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<AtomicBool>)> {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -1721,12 +1719,19 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
 
     let system_buffer = Arc::new(Mutex::new(std::collections::VecDeque::<f32>::new()));
     let mic_buffer = Arc::new(Mutex::new(std::collections::VecDeque::<f32>::new()));
+    let config_clone = config.clone();
 
-    let host = cpal::default_host();
-    let mut streams: Vec<cpal::Stream> = Vec::new();
+    // Feeder Thread continuo hacia FFmpeg a 48000 Hz estéreo cada 20ms
+    std::thread::Builder::new()
+        .name("sane-rec-win-audio-feeder".into())
+        .spawn(move || {
+            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    // 1. WASAPI Loopback (Audio del Sistema)
-    if config.audio.capture_desktop {
+            let host = cpal::default_host();
+            let mut streams: Vec<cpal::Stream> = Vec::new();
+
+            // 1. WASAPI Loopback (Audio del Sistema)
+            if config_clone.audio.capture_desktop {
         if let Some(device) = host.default_output_device() {
             if let Ok(supported_config) = device.default_output_config() {
                 let sample_rate = supported_config.sample_rate().0;
@@ -1735,7 +1740,7 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
                 let stream_config: cpal::StreamConfig = supported_config.into();
 
                 let sys_buf = Arc::clone(&system_buffer);
-                let volume = config.audio.volume_system;
+                let volume = config_clone.audio.volume_system;
                 let resampler = Arc::new(Mutex::new(WindowsAudioResampler::new(
                     sample_rate,
                     channels,
@@ -1790,7 +1795,7 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
     }
 
     // 2. WASAPI Input (Micrófono)
-    if config.audio.capture_mic {
+    if config_clone.audio.capture_mic {
         if let Some(device) = host.default_input_device() {
             if let Ok(supported_config) = device.default_input_config() {
                 let sample_rate = supported_config.sample_rate().0;
@@ -1799,7 +1804,7 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
                 let stream_config: cpal::StreamConfig = supported_config.into();
 
                 let mic_buf = Arc::clone(&mic_buffer);
-                let volume = config.audio.volume_mic;
+                let volume = config_clone.audio.volume_mic;
                 let resampler = Arc::new(Mutex::new(WindowsAudioResampler::new(
                     sample_rate,
                     channels,
@@ -1852,12 +1857,6 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
             }
         }
     }
-
-    // 3. Feeder Thread continuo hacia FFmpeg a 48000 Hz estéreo cada 20ms
-    std::thread::Builder::new()
-        .name("sane-rec-win-audio-feeder".into())
-        .spawn(move || {
-            let _streams = streams; // Mantener los streams de audio vivos
 
             let _ = listener.set_nonblocking(false);
             let (mut stream, _) = match listener.accept() {
