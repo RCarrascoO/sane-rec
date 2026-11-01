@@ -136,15 +136,47 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Extract version notes from CHANGELOG.md
+        id: release_notes
+        run: |
+          RELEASE_TAG="${GITHUB_REF#refs/tags/}"
+          python3 -c "
+import sys, re
+tag = sys.argv[1]
+notes = ''
+try:
+    with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
+        content = f.read()
+    m = re.search(rf'## {re.escape(tag)}\b(.*?)(?=\n## |\Z)', content, re.DOTALL)
+    if m:
+        notes = f'## {tag}\n' + m.group(1).strip()
+except Exception as e:
+    print(f'Warning: could not parse CHANGELOG.md: {e}', file=sys.stderr)
+
+with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as f:
+    f.write(notes + ('\n' if notes else ''))
+" "$RELEASE_TAG"
+
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release-assets/**/*
-            release-assets/*
-          body_path: CHANGELOG.md
-          draft: false
-          prerelease: false
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_TAG="${GITHUB_REF#refs/tags/}"
+          NOTES_FLAG=()
+          if [ -s RELEASE_NOTES.md ]; then
+            NOTES_FLAG=(--notes-file RELEASE_NOTES.md)
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; uploading assets and publishing..."
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber
+            gh release edit "$RELEASE_TAG" --draft=false --latest "${NOTES_FLAG[@]}"
+          else
+            echo "Creating new release $RELEASE_TAG..."
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --title "$RELEASE_TAG" \
+              --draft=false \
+              --latest \
+              --generate-notes \
+              "${NOTES_FLAG[@]}"
+          fi
