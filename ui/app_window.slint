@@ -224,18 +224,15 @@ export component AppWindow inherits Window {
         ScrollView {
             width: 100%;
             height: 100%;
-            viewport-height: content-col.preferred-height + 96px;
+            viewport-width: self.visible-width;
+            viewport-height: content-col.preferred-height + 80px;
 
-            HorizontalLayout {
-                padding-left: Math.floor((parent.width - content-col.width) / 2px) * 1px;
-                padding-right: root.width < 820px ? 12px : 24px;
-                padding-top: root.height < 800px ? 14px : 20px;
-                padding-bottom: 24px;
-
-                content-col := VerticalLayout {
-                    padding-bottom: 64px;
-                    width: Math.floor(Math.min(root.width - rail.width - (root.width < 820px ? 24px : 48px), 1020px) / 1px) * 1px;
-                    spacing: root.height < 800px ? 16px : 20px;
+            content-col := VerticalLayout {
+                x: Math.max(0px, Math.floor((parent.visible-width - self.width) / 2px) * 1px);
+                width: Math.floor(Math.min(root.width - rail.width - (root.width < 820px ? 24px : 48px), 1020px) / 1px) * 1px;
+                padding-top: root.width < 820px ? 16px : 28px;
+                padding-bottom: 80px;
+                spacing: 20px;
 
                     // Banner flotante de auto-actualización disponible (Tonal, cero bordes)
                     if root.has-update: Rectangle {
@@ -305,17 +302,23 @@ export component AppWindow inherits Window {
                             alignment: space-between;
 
                             VerticalLayout {
+                                horizontal-stretch: 1;
+                                min-width: 0px;
                                 spacing: 2px;
                                 Text {
                                     text: "Panel de control";
                                     font-size: 28px;
                                     font-weight: 600;
                                     color: Theme.on-surface;
+                                    overflow: elide;
+                                    min-width: 0px;
                                 }
                                 Text {
                                     text: "Monitor en vivo del búfer de repetición y estado del sistema";
                                     font-size: 13px;
                                     color: Theme.on-surface-variant;
+                                    overflow: elide;
+                                    min-width: 0px;
                                 }
                             }
 
@@ -325,7 +328,7 @@ export component AppWindow inherits Window {
 
                                 M3Button {
                                     y: Math.floor((parent.height - self.height) / 2px) * 1px;
-                                    text: "Guía y novedades";
+                                    text: root.width < 680px ? "Guía" : "Guía y novedades";
                                     icon-name: "lightbulb";
                                     variant: "tonal";
                                     btn-height: 34px;
@@ -1880,31 +1883,37 @@ export component AppWindow inherits Window {
                                     alignment: space-between;
 
                                     VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
                                         spacing: 2px;
                                         Text {
                                             text: "Gestor de perfiles de equipo";
                                             font-size: 15px;
                                             font-weight: 600;
                                             color: Theme.primary;
+                                            overflow: elide;
+                                            min-width: 0px;
                                         }
                                         Text {
                                             text: "Guarda, exporta y carga perfiles optimizados para PCs o laptops específicos (~/.config/sane-rec/profiles/).";
                                             font-size: Theme.font-body-small;
                                             color: Theme.on-surface-variant;
+                                            wrap: word-wrap;
+                                            min-width: 0px;
                                         }
                                     }
 
                                     HorizontalLayout {
                                         spacing: 8px;
                                         M3Button {
-                                            text: "Importar (.toml)";
+                                            text: root.width < 680px ? "Importar" : "Importar (.toml)";
                                             variant: "tonal";
                                             btn-height: 34px;
                                             btn-padding-h: 14px;
                                             clicked => { root.import-hardware-profile(); }
                                         }
                                         M3Button {
-                                            text: "Guardar actual";
+                                            text: root.width < 680px ? "Guardar" : "Guardar actual";
                                             variant: "tonal";
                                             btn-height: 34px;
                                             btn-padding-h: 14px;
@@ -2550,40 +2559,46 @@ export component AppWindow inherits Window {
                             alignment: space-between;
 
                             VerticalLayout {
+                                horizontal-stretch: 1;
+                                min-width: 0px;
                                 spacing: 2px;
                                 Text {
                                     text: "Galería de replays";
                                     font-size: 28px;
                                     font-weight: 600;
                                     color: Theme.on-surface;
+                                    overflow: elide;
+                                    min-width: 0px;
                                 }
                                 Text {
                                     text: "Clips y repeticiones almacenados en " + root.output-path;
                                     font-size: 13px;
                                     color: Theme.on-surface-variant;
+                                    overflow: elide;
+                                    min-width: 0px;
                                 }
                             }
 
                             HorizontalLayout {
-                                spacing: 10px;
+                                spacing: root.width < 640px ? 6px : 10px;
 
                                 M3Button {
-                                    text: "Abrir carpeta";
+                                    text: root.width < 680px ? (root.width < 560px ? "" : "Carpeta") : "Abrir carpeta";
                                     icon-name: "folder";
                                     variant: "tonal";
                                     btn-height: 38px;
-                                    btn-padding-h: 16px;
+                                    btn-padding-h: root.width < 560px ? 10px : 16px;
                                     clicked => {
                                         root.open-output-folder();
                                     }
                                 }
 
                                 M3Button {
-                                    text: "Refrescar";
+                                    text: root.width < 560px ? "" : "Refrescar";
                                     icon-name: "refresh";
                                     variant: "filled";
                                     btn-height: 38px;
-                                    btn-padding-h: 16px;
+                                    btn-padding-h: root.width < 560px ? 10px : 16px;
                                     clicked => {
                                         root.refresh-gallery();
                                     }
@@ -3293,7 +3308,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            // v0.5.0
+                            // v0.5.1
                             M3Card {
                                 content-padding: 18px;
                                 card-background: Theme.surface-container-low;
@@ -3308,11 +3323,13 @@ export component AppWindow inherits Window {
 
                                         Text {
                                             horizontal-stretch: 1;
-                                            text: "v0.5.0 — Nitidez Pixel-Perfect, Borrado de Clips y Guía Interactiva";
+                                            min-width: 0px;
+                                            text: "v0.5.1 — Diseño Compacto Responsivo, Scroll Preciso y Renderizado Skia";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.primary;
                                             vertical-alignment: center;
+                                            wrap: word-wrap;
                                         }
 
                                         Rectangle {
@@ -3335,7 +3352,39 @@ export component AppWindow inherits Window {
 
                                     Text {
                                         horizontal-stretch: 1;
-                                        text: "• Renderizado Pixel-Perfect sin desenfoque subpíxel en modo horizontal y fuentes nativas limpias.\n• Centrado exacto en modo compacto/mini de la barra de navegación lateral y prevención de textos truncados.\n• Nuevo botón 'Borrar' con confirmación en dos pasos en las tarjetas de clips (Panel y Galería).\n• Captura avanzada de atajos de teclado con soporte completo de modificadores (Ctrl, Alt, Shift, Mod) y teclas alfanuméricas.\n• Nueva sección 'Guía' con tutorial interactivo paso a paso, consejos para Minecraft Java (F3+P) y registro de cambios.";
+                                        min-width: 0px;
+                                        text: "• Renderizado nítido Skia en Linux Wayland para textos e iconos con nitidez y antialiasing de alta definición.\n• Diseño responsivo para ventanas compactas (~600–720px): botones compactos e iconos limpios en tarjetas de clips, evitando recortes en los botones 'Carpeta' y 'Borrar'.\n• Prevención de desbordes horizontales en títulos largos de tarjetas de hardware ('Intel Hardware QuickSync') y gestores de perfiles.\n• Corrección del ScrollView: altura de contenido exacta para párrafos multilínea con desplazamiento fluido hasta el final.\n• Elisión y ajuste responsivo de cabeceras en Galería y Panel de control.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.5.0
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 8px;
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "v0.5.0 — Nitidez Pixel-Perfect, Borrado de Clips y Guía Interactiva";
+                                        font-size: Theme.font-title-medium;
+                                        font-weight: 700;
+                                        color: Theme.on-surface;
+                                        wrap: word-wrap;
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "• Auto-actualizador nativo en Windows y Linux: soporte completo en paquetes .zip portables, instaladores .exe y tarballs .tar.gz.\n• Captura optimizada en Minecraft Java sin pausa involuntaria (F3 + P) ni toasts invasivos.\n• Verificación de salud y fallback automático a Sane Safe (CPU x264) si la GPU falla.\n• Nuevo botón 'Borrar' con confirmación en dos pasos en las tarjetas de clips.\n• Nueva sección 'Guía' con tutorial paso a paso y consejos para juegos y laptops.";
                                         font-size: Theme.font-body-medium;
                                         color: Theme.on-surface-variant;
                                         wrap: word-wrap;
@@ -3355,14 +3404,17 @@ export component AppWindow inherits Window {
 
                                     Text {
                                         horizontal-stretch: 1;
+                                        min-width: 0px;
                                         text: "v0.4.1 — Compresión para Discord y Portapapeles Automático";
                                         font-size: Theme.font-title-medium;
                                         font-weight: 700;
                                         color: Theme.on-surface;
+                                        wrap: word-wrap;
                                     }
 
                                     Text {
                                         horizontal-stretch: 1;
+                                        min-width: 0px;
                                         text: "• Modo Doble Clip y botón 'Discord' en cada clip para comprimir automáticamente a menos de 10 MB / 15 MB / 25 MB.\n• Copia automática del archivo MP4 al portapapeles del sistema (Wayland wl-copy / Windows) listo para pegar con Ctrl+V.\n• Mejoras de estabilidad en el auto-actualizador y notificaciones Toast integradas.";
                                         font-size: Theme.font-body-medium;
                                         color: Theme.on-surface-variant;
@@ -3383,14 +3435,17 @@ export component AppWindow inherits Window {
 
                                     Text {
                                         horizontal-stretch: 1;
+                                        min-width: 0px;
                                         text: "v0.4.0 — Rediseño Material Design 3 Expressive y Perfiles de Equipo";
                                         font-size: Theme.font-title-medium;
                                         font-weight: 700;
                                         color: Theme.on-surface;
+                                        wrap: word-wrap;
                                     }
 
                                     Text {
                                         horizontal-stretch: 1;
+                                        min-width: 0px;
                                         text: "• Interfaz renovada con estilo Google Pixel UI (Material You Expressive), elevación tonal y cero bordes exteriores.\n• Gestor de perfiles de hardware importables/exportables (.toml), incluyendo 'Pavilion Gaming - Celsius' y 'Sane Safe'.\n• Soporte multiplataforma mejorado para Linux (Wayland / PipeWire) y Windows (DXGI / WASAPI).";
                                         font-size: Theme.font-body-medium;
                                         color: Theme.on-surface-variant;
@@ -3411,44 +3466,19 @@ export component AppWindow inherits Window {
 
                                     Text {
                                         horizontal-stretch: 1;
+                                        min-width: 0px;
                                         text: "v0.3.0 — Mezclador de Audio en Vivo y Grabación Continua";
                                         font-size: Theme.font-title-medium;
                                         font-weight: 700;
                                         color: Theme.on-surface;
-                                    }
-
-                                    Text {
-                                        horizontal-stretch: 1;
-                                        text: "• Mezclador de audio con medidores VU en tiempo real, control de ganancia hasta 150% y modo de pistas separadas.\n• Grabación continua (F9) independiente del búfer circular de repetición en RAM (F10).\n• Selección interactiva de regiones en Wayland mediante slurp.";
-                                        font-size: Theme.font-body-medium;
-                                        color: Theme.on-surface-variant;
                                         wrap: word-wrap;
                                     }
-                                }
-                            }
-
-                            // Texto adicional de changelog si Rust lo provee
-                            if root.changelog-text != "": M3Card {
-                                content-padding: 18px;
-                                card-background: Theme.surface-container;
-                                card-radius: Theme.radius-xl;
-                                card-border-width: 0px;
-
-                                VerticalLayout {
-                                    spacing: 8px;
 
                                     Text {
                                         horizontal-stretch: 1;
-                                        text: "Registro detallado de la versión";
-                                        font-size: Theme.font-title-small;
-                                        font-weight: 700;
-                                        color: Theme.primary;
-                                    }
-
-                                    Text {
-                                        horizontal-stretch: 1;
-                                        text: root.changelog-text;
-                                        font-size: Theme.font-body-small;
+                                        min-width: 0px;
+                                        text: "• Mezclador de audio con medidores VU en tiempo real, control de ganancia hasta 150% y modo de pistas separadas.\n• Grabación continua (F9) independiente del búfer circular de repetición en RAM (F10).\n• Selección interactiva de regiones en Wayland mediante slurp.";
+                                        font-size: Theme.font-body-medium;
                                         color: Theme.on-surface-variant;
                                         wrap: word-wrap;
                                     }
@@ -3458,7 +3488,6 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-        }
 
         // Banner / Toast flotante de notificación in-app M3 (Cero bordes)
         M3Toast {

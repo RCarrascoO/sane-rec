@@ -1,6 +1,6 @@
 [package]
 name = "sane-rec"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 authors = ["RCarrascoO"]
 description = "Lightweight Material Design 3 Instant Replay & Screen Recorder for Linux and Windows with CPU-first architecture"
@@ -8,7 +8,6 @@ license = "MIT OR Apache-2.0"
 build = "build.rs"
 
 [dependencies]
-slint = "1.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
@@ -18,6 +17,12 @@ notify-rust = "4.11"
 directories = "5.0"
 chrono = "0.4"
 libc = "0.2"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+slint = "1.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+slint = { version = "1.8", features = ["renderer-skia"] }
 
 [build-dependencies]
 slint-build = "1.8"

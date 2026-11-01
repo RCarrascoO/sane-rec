@@ -1,5 +1,12 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.5.1
+- **Diseño Responsivo Compacto**: Adaptación fluida para anchos reducidos (~600–720px) con botones de acción compactos e iconos limpios en tarjetas de clips, evitando recortes en los botones 'Carpeta' y 'Borrar'.
+- **Prevención de Desbordes Horizontales**: Ajuste y elisión en títulos y descripciones largas en perfiles de hardware ('Intel Hardware QuickSync') y en el gestor de perfiles de equipo.
+- **Scroll Preciso**: Corrección del cálculo de altura en párrafos multilínea dentro de `ScrollView`, garantizando desplazamiento fluido hasta el final del contenido en la Guía y registro de novedades.
+- **Renderizado Nítido con Skia**: Activación del backend Skia en Linux Wayland para textos e iconos con nitidez y antialiasing de alta definición.
+- **Cabeceras Adaptables**: Elisión y botones compactos en las cabeceras de la Galería y el Panel de Control.
+
 ## v0.5.0
 - **Auto-Actualizador Nativo en Windows y Linux**: Soporte completo de actualización en 1 clic tanto en paquetes `.zip` portables de Windows (reemplazo en caliente de `sane-rec.exe`) como instaladores `.exe` (`/SILENT`) y tarballs `.tar.gz` de Linux.
 - **Visor de Novedades Integrado**: Visualización de notas de la versión (`CHANGELOG.md`) directamente en la pestaña Sistema.
