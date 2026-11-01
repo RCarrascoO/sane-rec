@@ -451,7 +451,7 @@ pub fn get_open_windows() -> Vec<WindowInfo> {
                         let mut pid: u32 = 0;
                         GetWindowThreadProcessId(hwnd, &mut pid);
                         list.push(WindowInfo {
-                            id: hwnd as u64,
+                            id: hwnd as usize as u64,
                             title,
                             app_id: "windows-app".to_string(),
                             pid,

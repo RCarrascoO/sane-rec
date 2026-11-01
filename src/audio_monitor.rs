@@ -1,5 +1,7 @@
 // sane-rec: Monitor en tiempo real de picos de audio (VU meter) usando parec/PipeWire
+#[cfg(target_os = "linux")]
 use std::io::Read;
+#[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -240,7 +242,7 @@ fn run_cpal_peak_loop(
                 }
                 host.input_devices()
                     .ok()
-                    .and_then(|mut devs| devs.find(|d| d.name().map_or(false, |n| n == name)))
+                    .and_then(|mut devs| devs.find(|d| d.name().map_or(false, |n| n.as_str() == name.as_str())))
                     .or_else(|| host.default_input_device())
             } else {
                 host.default_input_device()

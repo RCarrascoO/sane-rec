@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// Solicitud enviada por el cliente al socket IPC.
@@ -363,25 +365,25 @@ fn run_windows_hotkey_loop() {
 
     unsafe {
         // F9 y F10 directos
-        RegisterHotKey(0, HOTKEY_ID_RECORD, MOD_NOREPEAT, VK_F9);
-        RegisterHotKey(0, HOTKEY_ID_SAVE, MOD_NOREPEAT, VK_F10);
+        RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD, MOD_NOREPEAT, VK_F9);
+        RegisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE, MOD_NOREPEAT, VK_F10);
 
         // Ctrl+Shift+F9 y Ctrl+Shift+F10 como respaldo
         RegisterHotKey(
-            0,
+            std::ptr::null_mut(),
             HOTKEY_ID_RECORD_CTRL_SHIFT,
             MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
             VK_F9,
         );
         RegisterHotKey(
-            0,
+            std::ptr::null_mut(),
             HOTKEY_ID_SAVE_CTRL_SHIFT,
             MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
             VK_F10,
         );
 
         let mut msg: MSG = std::mem::zeroed();
-        while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             if msg.message == WM_HOTKEY {
                 match msg.wParam as i32 {
                     HOTKEY_ID_RECORD | HOTKEY_ID_RECORD_CTRL_SHIFT => {
