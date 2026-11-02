@@ -204,7 +204,7 @@ fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
 
     rt.block_on(async {
         let config = Config::load().unwrap_or_default();
-        let engine = Arc::new(ReplayEngine::new(config)?);
+        let engine = Arc::new(ReplayEngine::new(config.clone())?);
 
         // Inicia el búfer de repetición inmediatamente
         if let Err(e) = engine.start_replay() {
@@ -220,6 +220,15 @@ fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<ipc::IpcCommand>(32);
+
+        let _ = sane_rec::update_niri_shortcuts(
+            &config.shortcuts.save_replay,
+            &config.shortcuts.toggle_record,
+        );
+        sane_rec::ipc::reload_windows_hotkeys(
+            &config.shortcuts.save_replay,
+            &config.shortcuts.toggle_record,
+        );
 
         // En Windows, escuchar atajos globales F9 y F10
         #[cfg(target_os = "windows")]
@@ -447,6 +456,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     // Inicializar perfiles de hardware por defecto (~/.config/sane-rec/profiles/)
     sane_rec::profiles_manager::init_default_profiles();
     update_profiles_model(&ui);
+
+    let _ = sane_rec::update_niri_shortcuts(
+        &config.shortcuts.save_replay,
+        &config.shortcuts.toggle_record,
+    );
+    sane_rec::ipc::reload_windows_hotkeys(
+        &config.shortcuts.save_replay,
+        &config.shortcuts.toggle_record,
+    );
 
     // En Windows, activar escucha global de teclas F9 y F10
     #[cfg(target_os = "windows")]

@@ -521,25 +521,27 @@ fn run_windows_hotkey_loop() {
         let rec_binding = parse_windows_hotkey(&current_record).unwrap_or((MOD_NOREPEAT, VK_F9));
         let save_binding = parse_windows_hotkey(&current_save).unwrap_or((MOD_NOREPEAT, VK_F10));
 
-        RegisterHotKey(
+        let mut rec_registered = RegisterHotKey(
             std::ptr::null_mut(),
             HOTKEY_ID_RECORD,
             rec_binding.0,
             rec_binding.1,
-        );
-        if save_binding != rec_binding {
+        ) != 0;
+
+        let mut save_registered = if save_binding != rec_binding {
             RegisterHotKey(
                 std::ptr::null_mut(),
                 HOTKEY_ID_SAVE,
                 save_binding.0,
                 save_binding.1,
-            );
+            ) != 0
         } else {
             eprintln!(
                 "Aviso: Los atajos de grabar ('{}') y guardar ('{}') colisionan; se omitió el registro duplicado.",
                 current_record, current_save
             );
-        }
+            true
+        };
 
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             if msg.message == WM_HOTKEY {
@@ -559,35 +561,38 @@ fn run_windows_hotkey_loop() {
                             let (new_save, new_record) = lock.clone();
                             UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD);
                             UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE);
-
-                            let rec_b = parse_windows_hotkey(&new_record)
-                                .unwrap_or((MOD_NOREPEAT, VK_F9));
-                            let save_b = parse_windows_hotkey(&new_save)
-                                .unwrap_or((MOD_NOREPEAT, VK_F10));
-
-                            RegisterHotKey(
-                                std::ptr::null_mut(),
-                                HOTKEY_ID_RECORD,
-                                rec_b.0,
-                                rec_b.1,
-                            );
-                            if save_b != rec_b {
-                                RegisterHotKey(
-                                    std::ptr::null_mut(),
-                                    HOTKEY_ID_SAVE,
-                                    save_b.0,
-                                    save_b.1,
-                                );
-                            } else {
-                                eprintln!(
-                                    "Aviso: Los atajos de grabar ('{}') y guardar ('{}') colisionan; se omitió el registro duplicado.",
-                                    new_record, new_save
-                                );
-                            }
-
                             current_save = new_save;
                             current_record = new_record;
+                            rec_registered = false;
+                            save_registered = false;
                         }
+                    }
+                }
+
+                if !rec_registered {
+                    let rec_b = parse_windows_hotkey(&current_record).unwrap_or((MOD_NOREPEAT, VK_F9));
+                    UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD);
+                    rec_registered = RegisterHotKey(
+                        std::ptr::null_mut(),
+                        HOTKEY_ID_RECORD,
+                        rec_b.0,
+                        rec_b.1,
+                    ) != 0;
+                }
+
+                if !save_registered {
+                    let rec_b = parse_windows_hotkey(&current_record).unwrap_or((MOD_NOREPEAT, VK_F9));
+                    let save_b = parse_windows_hotkey(&current_save).unwrap_or((MOD_NOREPEAT, VK_F10));
+                    if save_b != rec_b {
+                        UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE);
+                        save_registered = RegisterHotKey(
+                            std::ptr::null_mut(),
+                            HOTKEY_ID_SAVE,
+                            save_b.0,
+                            save_b.1,
+                        ) != 0;
+                    } else {
+                        save_registered = true;
                     }
                 }
             }

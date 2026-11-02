@@ -1,5 +1,9 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.5.4 - 2026-11-01
+- **Sincronización Automática de Atajos Globales al Inicio (`niri` / `RegisterHotKey`)**: Sincronización y registro inmediato de los atajos configurados (`shortcuts.save_replay` y `shortcuts.toggle_record`) al iniciar tanto en modo daemon (`sane-rec daemon`) como en la interfaz gráfica, eliminando la necesidad de alternar manualmente entre chips de atajo para activarlos.
+- **Auto-Recuperación y Reintento Resiliente en Windows**: Verificación del código de retorno en `RegisterHotKey` con bucle de auto-reintento periódico cada 500ms (`WM_TIMER`) para registrar automáticamente las teclas globales si ocurre una colisión temporal durante el arranque rápido, auto-actualización o cierre del proceso previo.
+
 ## v0.5.3 - 2026-11-01
 - **Captura Individual Multi-Monitor en Windows (`gdigrab` offset & geometry)**: Selección exacta del monitor elegido (`\\.\DISPLAY1`, `\\.\DISPLAY2`, etc.) leyendo coordenadas `dmPosition.x/y` y resolución `dmPelsWidth/Height` vía Win32 `EnumDisplaySettingsExW`, evitando grabar ambas pantallas combinadas.
 - **Fix de Aceleración GPU AMD AMF (`h264_amf` / `hevc_amf`) en Windows y Soporte HEVC GPU**: Eliminados los flags incompatibles `-bf 0` y `-usage ultralowlatency` en el perfil personalizado de Windows que causaban que `h264_amf` fallara al iniciar y cayera silenciosamente a CPU (`libx264`). Añadido soporte nativo para `hevc_amf`, `hevc_vaapi` y `hevc_nvenc` (H.265 acelerado por GPU).

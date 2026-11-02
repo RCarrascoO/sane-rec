@@ -3535,7 +3535,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            // v0.5.3
+                            // v0.5.4
                             M3Card {
                                 content-padding: 18px;
                                 card-background: Theme.surface-container-low;
@@ -3551,7 +3551,7 @@ export component AppWindow inherits Window {
                                         Text {
                                             horizontal-stretch: 1;
                                             min-width: 0px;
-                                            text: "v0.5.3 — Hotfix Multi-Monitor Windows & HEVC/AMF GPU";
+                                            text: "v0.5.4 — Hotfix Sincronización y Auto-Registro de Atajos";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.primary;
@@ -3574,6 +3574,42 @@ export component AppWindow inherits Window {
                                                     vertical-alignment: center;
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "• Sincronización Automática de Atajos al Inicio: sane-rec ahora registra y activa los atajos globales configurados tanto en el daemon como en la GUI al iniciar la app, sin requerir alternar entre teclas para activarlos.\n• Auto-Recuperación Resiliente en Windows: detección de fallo en RegisterHotKey con bucle de auto-reintento periódico en segundo plano si el sistema tiene colisión temporal tras actualizarse o reiniciar.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.5.3
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            min-width: 0px;
+                                            text: "v0.5.3 — Hotfix Multi-Monitor Windows & HEVC/AMF GPU";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.primary;
+                                            vertical-alignment: center;
+                                            wrap: word-wrap;
                                         }
                                     }
 
