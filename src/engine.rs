@@ -2283,9 +2283,9 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                 ]);
             } else if codec.contains("qsv") {
                 let qsv_preset = match config.video.preset.as_str() {
-                    "ultrafast" | "veryfast" => "veryfast",
+                    "ultrafast" => "veryfast",
                     "superfast" | "faster" => "faster",
-                    "veryfast" | "fast" => "fast",
+                    "veryfast" => "fast",
                     "fast" | "medium" => "medium",
                     _ => "veryfast",
                 };

@@ -205,7 +205,7 @@ fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
     rt.block_on(async {
         let mut config = Config::load().unwrap_or_default();
 
-        let out_str = config.storage.output_dir.to_string_lossy();
+        let out_str = config.storage.output_dir.to_string_lossy().to_string();
         if out_str.starts_with("/mnt/Files") && !std::path::Path::new("/mnt/Files").exists() {
             config.storage.output_dir = sane_rec::config::default_output_dir();
             let _ = config.save();
@@ -428,7 +428,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     #[allow(unused_mut)]
     let mut config = Config::load().unwrap_or_default();
 
-    let out_str = config.storage.output_dir.to_string_lossy();
+    let out_str = config.storage.output_dir.to_string_lossy().to_string();
     if out_str.starts_with("/mnt/Files") && !std::path::Path::new("/mnt/Files").exists() {
         config.storage.output_dir = sane_rec::config::default_output_dir();
         let _ = config.save();
