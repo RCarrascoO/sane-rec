@@ -1,5 +1,10 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## [0.5.5] - 2026-11-02 (v0.5.5)
+- **Eliminación del Monitor Hardcodeado `DVI-D-1` y Auto-Detección Inteligente en Wayland**: Eliminada por completo la referencia fija a `DVI-D-1`. El motor ahora auto-detecta dinámicamente el monitor enfocado o activo en el primer arranque para cualquier compositor Wayland (`wf-recorder`), seleccionando la salida correcta (`eDP-1`, `DP-1`, `HDMI-A-1`) y su resolución nativa. Si la configuración hace referencia a un monitor que ya no está conectado, recurre fluidamente al monitor activo sin fallar.
+- **Soporte Nativo para Hyprland (`hyprctl monitors -j`)**: Integración directa con el comando IPC de Hyprland para consultar el array completo de pantallas conectadas, resoluciones nativas, geometría y tasas de refresco con detección precisa del monitor con foco antes del fallback a `wf-recorder -L`.
+- **Ruta de Guardado Estándar Multi-Usuario Portable**: Cuando `/mnt/Files/Videos/Replays` no existe en el sistema, sane-rec conmuta automáticamente a la ruta estándar de videos del usuario (`~/Videos/SaneRec`) usando directivas XDG y `UserDirs`, previniendo errores de permisos o rutas inexistentes en nuevos equipos.
+
 ## v0.5.4 - 2026-11-01
 - **Sincronización Automática de Atajos Globales al Inicio (`niri` / `RegisterHotKey`)**: Sincronización y registro inmediato de los atajos configurados (`shortcuts.save_replay` y `shortcuts.toggle_record`) al iniciar tanto en modo daemon (`sane-rec daemon`) como en la interfaz gráfica, eliminando la necesidad de alternar manualmente entre chips de atajo para activarlos.
 - **Auto-Recuperación y Reintento Resiliente en Windows**: Verificación del código de retorno en `RegisterHotKey` con bucle de auto-reintento periódico cada 500ms (`WM_TIMER`) para registrar automáticamente las teclas globales si ocurre una colisión temporal durante el arranque rápido, auto-actualización o cierre del proceso previo.

@@ -115,7 +115,22 @@ pub fn default_output_dir() -> PathBuf {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        PathBuf::from("/mnt/Files/Videos/Replays")
+        let sane_path = PathBuf::from("/mnt/Files/Videos/Replays");
+        if sane_path.exists() {
+            return sane_path;
+        }
+
+        if let Some(user_dirs) = directories::UserDirs::new() {
+            if let Some(video_dir) = user_dirs.video_dir() {
+                return video_dir.join("SaneRec");
+            }
+        }
+
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join("Videos").join("SaneRec");
+        }
+
+        PathBuf::from("/tmp/SaneRec")
     }
 }
 
@@ -396,7 +411,14 @@ mod tests {
         assert_eq!(cfg.audio.volume_mic, 0.85);
 
         #[cfg(not(target_os = "windows"))]
-        assert_eq!(cfg.storage.output_dir, PathBuf::from("/mnt/Files/Videos/Replays"));
+        {
+            let sane_dir = PathBuf::from("/mnt/Files/Videos/Replays");
+            if sane_dir.exists() {
+                assert_eq!(cfg.storage.output_dir, sane_dir);
+            } else {
+                assert!(cfg.storage.output_dir.to_string_lossy().contains("SaneRec"));
+            }
+        }
         #[cfg(target_os = "windows")]
         assert!(cfg.storage.output_dir.to_string_lossy().contains("SaneRec"));
         assert_eq!(cfg.storage.filename_format, "Replay_%Y-%m-%d_%H-%M-%S");

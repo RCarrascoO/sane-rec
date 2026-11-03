@@ -3535,7 +3535,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            // v0.5.4
+                            // v0.5.5
                             M3Card {
                                 content-padding: 18px;
                                 card-background: Theme.surface-container-low;
@@ -3551,7 +3551,7 @@ export component AppWindow inherits Window {
                                         Text {
                                             horizontal-stretch: 1;
                                             min-width: 0px;
-                                            text: "v0.5.4 — Hotfix Sincronización y Auto-Registro de Atajos";
+                                            text: "v0.5.5 — Hotfix Detección Nativa Wayland y Portabilidad";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.primary;
@@ -3574,6 +3574,42 @@ export component AppWindow inherits Window {
                                                     vertical-alignment: center;
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "• Eliminación de Monitor Hardcodeado: sustituido el valor fijo DVI-D-1 por auto-detección inteligente del monitor enfocado/activo en el primer arranque para cualquier compositor Wayland (Hyprland, Sway, Niri).\n• Soporte Nativo para Hyprland: consulta directa a hyprctl monitors -j para obtener resoluciones nativas, geometría y tasas de refresco exactas.\n• Ruta de Guardado Estándar Portable: fallback automático a ~/Videos/SaneRec cuando no existe la partición /mnt/Files en el sistema.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.5.4
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            min-width: 0px;
+                                            text: "v0.5.4 — Hotfix Sincronización y Auto-Registro de Atajos";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.primary;
+                                            vertical-alignment: center;
+                                            wrap: word-wrap;
                                         }
                                     }
 

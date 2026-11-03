@@ -203,7 +203,36 @@ fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     rt.block_on(async {
-        let config = Config::load().unwrap_or_default();
+        let mut config = Config::load().unwrap_or_default();
+
+        let out_str = config.storage.output_dir.to_string_lossy();
+        if out_str.starts_with("/mnt/Files") && !std::path::Path::new("/mnt/Files").exists() {
+            config.storage.output_dir = sane_rec::config::default_output_dir();
+            let _ = config.save();
+        }
+
+        let detected_outputs = sane_rec::get_connected_outputs();
+        if !detected_outputs.is_empty() {
+            let target = config.video.target.trim();
+            let is_generic = target.is_empty() || target == "portal" || target == "desktop";
+            let is_custom_geom_or_window = target.starts_with("area:")
+                || target.starts_with("geom:")
+                || target.starts_with("window:")
+                || target.starts_with("title=")
+                || (target.contains(',') && target.contains('x'));
+            let matches_existing = detected_outputs.iter().any(|o| o.name == target);
+
+            if is_generic || (!is_custom_geom_or_window && !matches_existing) {
+                if let Some(primary) = detected_outputs.iter().find(|o| o.is_current).or_else(|| detected_outputs.first()) {
+                    config.video.target = primary.name.clone();
+                    if primary.width > 0 && primary.height > 0 {
+                        config.video.scale = format!("{}x{}", primary.width, primary.height);
+                    }
+                    let _ = config.save();
+                }
+            }
+        }
+
         let engine = Arc::new(ReplayEngine::new(config.clone())?);
 
         // Inicia el búfer de repetición inmediatamente
@@ -399,12 +428,39 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     #[allow(unused_mut)]
     let mut config = Config::load().unwrap_or_default();
 
+    let out_str = config.storage.output_dir.to_string_lossy();
+    if out_str.starts_with("/mnt/Files") && !std::path::Path::new("/mnt/Files").exists() {
+        config.storage.output_dir = sane_rec::config::default_output_dir();
+        let _ = config.save();
+    }
+
     #[cfg(target_os = "windows")]
     {
-        let out_str = config.storage.output_dir.to_string_lossy();
         if out_str.starts_with("/mnt/") || out_str.starts_with("/home/") || !config.storage.output_dir.is_absolute() {
             config.storage.output_dir = sane_rec::config::default_output_dir();
             let _ = config.save();
+        }
+    }
+
+    let detected_outputs = sane_rec::get_connected_outputs();
+    if !detected_outputs.is_empty() {
+        let target = config.video.target.trim();
+        let is_generic = target.is_empty() || target == "portal" || target == "desktop";
+        let is_custom_geom_or_window = target.starts_with("area:")
+            || target.starts_with("geom:")
+            || target.starts_with("window:")
+            || target.starts_with("title=")
+            || (target.contains(',') && target.contains('x'));
+        let matches_existing = detected_outputs.iter().any(|o| o.name == target);
+
+        if is_generic || (!is_custom_geom_or_window && !matches_existing) {
+            if let Some(primary) = detected_outputs.iter().find(|o| o.is_current).or_else(|| detected_outputs.first()) {
+                config.video.target = primary.name.clone();
+                if primary.width > 0 && primary.height > 0 {
+                    config.video.scale = format!("{}x{}", primary.width, primary.height);
+                }
+                let _ = config.save();
+            }
         }
     }
 
@@ -425,6 +481,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_dual_clip(config.storage.dual_clip);
     ui.set_discord_target_mb(config.storage.discord_target_mb as i32);
     ui.set_selected_screen(config.video.target.clone().into());
+    ui.set_selected_resolution(config.video.scale.clone().into());
     ui.set_audio_system(config.audio.capture_desktop);
     ui.set_audio_mic(config.audio.capture_mic);
     ui.set_volume_system(config.audio.volume_system);
@@ -449,7 +506,16 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        ui.set_backend_title("Wayland / niri".into());
+        let is_hyprland = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
+            || std::env::var("XDG_CURRENT_DESKTOP")
+                .map(|d| d.to_lowercase().contains("hyprland"))
+                .unwrap_or(false);
+
+        if is_hyprland {
+            ui.set_backend_title("Wayland / Hyprland".into());
+        } else {
+            ui.set_backend_title("Wayland / niri".into());
+        }
         ui.set_backend_subtitle(format!("PipeWire • {} FPS", config.video.fps).into());
     }
 
@@ -1974,7 +2040,7 @@ fn update_screens_model(ui: &AppWindow) {
                 let res = if o.width > 0 && o.height > 0 {
                     format!("{}x{}", o.width, o.height)
                 } else {
-                    "1360x768".to_string()
+                    "1920x1080".to_string()
                 };
                 OutputEntry {
                     name: o.name.into(),

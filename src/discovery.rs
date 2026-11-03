@@ -114,12 +114,21 @@ pub fn detect_gpu_info() -> String {
 
 #[cfg(not(target_os = "windows"))]
 pub fn detect_gpu_info() -> String {
-    "Wayland / niri".to_string()
+    let is_hyprland = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
+        || std::env::var("XDG_CURRENT_DESKTOP")
+            .map(|d| d.to_lowercase().contains("hyprland"))
+            .unwrap_or(false);
+    if is_hyprland {
+        "Wayland / Hyprland".to_string()
+    } else {
+        "Wayland / niri".to_string()
+    }
 }
 
 /// Obtiene las salidas de pantalla conectadas.
 /// Ejecuta `niri msg -j outputs` y parsea el JSON.
-/// Si falla o no se está ejecutando Niri, hace fallback a `wf-recorder -L`.
+/// Si falla o no se está ejecutando Niri, intenta con `hyprctl monitors -j`.
+/// Si también falla, hace fallback a `wf-recorder -L`.
 #[cfg(target_os = "linux")]
 pub fn get_connected_outputs() -> Vec<OutputInfo> {
     // 1. Intentar con niri msg -j outputs
@@ -151,7 +160,21 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
         }
     }
 
-    // 2. Fallback a wf-recorder -L
+    // 2. Intentar con hyprctl monitors -j (Hyprland)
+    let hypr_res = new_hidden_command("hyprctl")
+        .args(["monitors", "-j"])
+        .output();
+    if let Ok(out) = hypr_res {
+        if out.status.success() {
+            let json_str = String::from_utf8_lossy(&out.stdout);
+            let parsed = parse_hyprland_outputs(&json_str);
+            if !parsed.is_empty() {
+                return parsed;
+            }
+        }
+    }
+
+    // 3. Fallback a wf-recorder -L
     let wf_res = new_hidden_command("wf-recorder")
         .arg("-L")
         .output();
@@ -441,6 +464,74 @@ pub fn parse_wf_recorder_outputs(output_str: &str) -> Vec<OutputInfo> {
             }
         }
     }
+    outputs
+}
+
+/// Parsea el JSON devuelto por `hyprctl monitors -j` en Hyprland.
+pub fn parse_hyprland_outputs(json_str: &str) -> Vec<OutputInfo> {
+    let Ok(root) = serde_json::from_str::<Value>(json_str) else {
+        return Vec::new();
+    };
+
+    let Some(list) = root.as_array() else {
+        return Vec::new();
+    };
+
+    let mut outputs = Vec::new();
+
+    for val in list {
+        let name = val
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+
+        let description_val = val.get("description").and_then(|d| d.as_str()).unwrap_or("").trim();
+        let make = val.get("make").and_then(|m| m.as_str()).unwrap_or("").trim();
+        let model = val.get("model").and_then(|m| m.as_str()).unwrap_or("").trim();
+
+        let desc_or_name = if !description_val.is_empty() {
+            description_val.to_string()
+        } else if !make.is_empty() && !model.is_empty() {
+            format!("{} {}", make, model)
+        } else if !model.is_empty() {
+            model.to_string()
+        } else if !make.is_empty() {
+            make.to_string()
+        } else {
+            name.clone()
+        };
+
+        let width = val.get("width").and_then(|w| w.as_u64()).unwrap_or(0) as u32;
+        let height = val.get("height").and_then(|h| h.as_u64()).unwrap_or(0) as u32;
+        let refresh_rate = val.get("refreshRate").and_then(|r| r.as_f64()).unwrap_or(60.0) as f32;
+        let x = val.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let y = val.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let focused = val.get("focused").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        let description = if width > 0 && height > 0 {
+            format!("{} ({}x{} @ {:.0}Hz)", desc_or_name, width, height, refresh_rate)
+        } else {
+            desc_or_name
+        };
+
+        outputs.push(OutputInfo {
+            name,
+            description,
+            width,
+            height,
+            refresh_rate,
+            is_current: focused,
+            x,
+            y,
+        });
+    }
+
+    outputs.sort_by(|a, b| a.name.cmp(&b.name));
     outputs
 }
 
@@ -893,6 +984,65 @@ mod tests {
         assert_eq!(outputs[1].name, "HDMI-A-1");
         assert_eq!(outputs[1].description, "PNP(SAC) - LED MONITOR - HDMI-A-1");
         assert!(!outputs[1].is_current);
+    }
+
+    #[test]
+    fn test_parse_hyprland_outputs() {
+        let hypr_json = r#"[
+            {
+                "id": 0,
+                "name": "DP-1",
+                "description": "Dell Inc. DELL U2720Q 12345678",
+                "make": "Dell Inc.",
+                "model": "DELL U2720Q",
+                "serial": "12345678",
+                "width": 3840,
+                "height": 2160,
+                "refreshRate": 59.997,
+                "x": 0,
+                "y": 0,
+                "activeWorkspace": { "id": 1, "name": "1" },
+                "focused": true
+            },
+            {
+                "id": 1,
+                "name": "eDP-1",
+                "description": "BOE 0x0A36",
+                "make": "BOE",
+                "model": "0x0A36",
+                "serial": "",
+                "width": 1920,
+                "height": 1080,
+                "refreshRate": 144.0,
+                "x": 3840,
+                "y": 0,
+                "activeWorkspace": { "id": 2, "name": "2" },
+                "focused": false
+            }
+        ]"#;
+
+        let outputs = parse_hyprland_outputs(hypr_json);
+        assert_eq!(outputs.len(), 2);
+
+        let dp = outputs.iter().find(|o| o.name == "DP-1").unwrap();
+        assert_eq!(dp.name, "DP-1");
+        assert_eq!(dp.width, 3840);
+        assert_eq!(dp.height, 2160);
+        assert!((dp.refresh_rate - 59.997).abs() < 0.01);
+        assert_eq!(dp.description, "Dell Inc. DELL U2720Q 12345678 (3840x2160 @ 60Hz)");
+        assert!(dp.is_current);
+        assert_eq!(dp.x, 0);
+        assert_eq!(dp.y, 0);
+
+        let edp = outputs.iter().find(|o| o.name == "eDP-1").unwrap();
+        assert_eq!(edp.name, "eDP-1");
+        assert_eq!(edp.width, 1920);
+        assert_eq!(edp.height, 1080);
+        assert!((edp.refresh_rate - 144.0).abs() < 0.01);
+        assert_eq!(edp.description, "BOE 0x0A36 (1920x1080 @ 144Hz)");
+        assert!(!edp.is_current);
+        assert_eq!(edp.x, 3840);
+        assert_eq!(edp.y, 0);
     }
 
     #[test]

@@ -2395,10 +2395,17 @@ fn apply_target_args(cmd: &mut Command, target: &str) {
         cmd.args(["-g", geom]);
     } else if t.contains(',') && t.contains('x') {
         cmd.args(["-g", t]);
-    } else if t.is_empty() || t == "portal" {
-        cmd.args(["-o", "DVI-D-1"]);
     } else {
-        cmd.args(["-o", t]);
+        let outputs = crate::discovery::get_connected_outputs();
+        if !t.is_empty() && t != "portal" && t != "desktop" && !t.starts_with("window:") {
+            if outputs.is_empty() || outputs.iter().any(|o| o.name == t) {
+                cmd.args(["-o", t]);
+            } else if let Some(fallback_out) = outputs.iter().find(|o| o.is_current).or_else(|| outputs.first()) {
+                cmd.args(["-o", &fallback_out.name]);
+            }
+        } else if let Some(default_out) = outputs.iter().find(|o| o.is_current).or_else(|| outputs.first()) {
+            cmd.args(["-o", &default_out.name]);
+        }
     }
 }
 
@@ -2890,5 +2897,35 @@ mod tests {
         let c_idx = args.iter().position(|a| a == "-c").expect("should have -c flag");
         assert_eq!(args[c_idx + 1], "hevc_nvenc");
         assert!(args.contains(&"cq=20".to_string()));
+    }
+
+    #[test]
+    fn test_apply_target_args_geometry_and_fallback() {
+        let mut cmd1 = Command::new("wf-recorder");
+        apply_target_args(&mut cmd1, "area: 100,100 800x600");
+        let args1: Vec<String> = cmd1.get_args().map(|s| s.to_string_lossy().to_string()).collect();
+        assert_eq!(args1, vec!["-g", "100,100 800x600"]);
+
+        let mut cmd2 = Command::new("wf-recorder");
+        apply_target_args(&mut cmd2, "portal");
+        let args2: Vec<String> = cmd2.get_args().map(|s| s.to_string_lossy().to_string()).collect();
+        let outputs = crate::discovery::get_connected_outputs();
+        if !outputs.is_empty() {
+            assert!(args2.contains(&"-o".to_string()));
+            let o_idx = args2.iter().position(|a| a == "-o").unwrap();
+            let selected_name = &args2[o_idx + 1];
+            assert!(outputs.iter().any(|o| &o.name == selected_name));
+        }
+
+        let mut cmd3 = Command::new("wf-recorder");
+        apply_target_args(&mut cmd3, "NONEXISTENT_MONITOR_XYZ");
+        let args3: Vec<String> = cmd3.get_args().map(|s| s.to_string_lossy().to_string()).collect();
+        if !outputs.is_empty() {
+            assert!(args3.contains(&"-o".to_string()));
+            let o_idx = args3.iter().position(|a| a == "-o").unwrap();
+            let selected_name = &args3[o_idx + 1];
+            assert_ne!(selected_name, "NONEXISTENT_MONITOR_XYZ");
+            assert!(outputs.iter().any(|o| &o.name == selected_name));
+        }
     }
 }
