@@ -596,6 +596,123 @@ pub fn get_open_windows() -> Vec<WindowInfo> {
     windows
 }
 
+/// Busca una ventana por título y devuelve las coordenadas (x, y, width, height) actuales de esa ventana o del monitor donde se encuentra.
+#[cfg(target_os = "windows")]
+pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, FindWindowW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+        IsWindowVisible,
+    };
+
+    let title_clean = win_title.trim();
+    if title_clean.is_empty() {
+        return None;
+    }
+
+    let mut wide_title: Vec<u16> = title_clean.encode_utf16().collect();
+    wide_title.push(0);
+
+    let mut target_hwnd = unsafe { FindWindowW(std::ptr::null(), wide_title.as_ptr()) };
+
+    // Si FindWindowW no encuentra la ventana exacta (por diferencias en sufijos o mayúsculas),
+    // buscar mediante EnumWindows
+    if target_hwnd.is_null() {
+        struct SearchContext<'a> {
+            query: &'a str,
+            found_hwnd: HWND,
+        }
+
+        unsafe extern "system" fn search_enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let ctx = &mut *(lparam as *mut SearchContext);
+            if IsWindowVisible(hwnd) != 0 {
+                let len = GetWindowTextLengthW(hwnd);
+                if len > 0 {
+                    let mut buf = vec![0u16; (len + 1) as usize];
+                    GetWindowTextW(hwnd, buf.as_mut_ptr(), len + 1);
+                    let t = String::from_utf16_lossy(&buf[..len as usize]);
+                    if t.eq_ignore_ascii_case(ctx.query)
+                        || t.to_lowercase().contains(&ctx.query.to_lowercase())
+                    {
+                        ctx.found_hwnd = hwnd;
+                        return 0;
+                    }
+                }
+            }
+            1
+        }
+
+        let mut ctx = SearchContext {
+            query: title_clean,
+            found_hwnd: std::ptr::null_mut(),
+        };
+
+        unsafe {
+            EnumWindows(Some(search_enum_cb), &mut ctx as *mut _ as LPARAM);
+        }
+
+        target_hwnd = ctx.found_hwnd;
+    }
+
+    if target_hwnd.is_null() {
+        return None;
+    }
+
+    let mut rect: RECT = unsafe { std::mem::zeroed() };
+    if unsafe { GetWindowRect(target_hwnd, &mut rect) } == 0 {
+        return None;
+    }
+
+    let w = (rect.right - rect.left).max(0) as u32;
+    let h = (rect.bottom - rect.top).max(0) as u32;
+
+    let outputs = get_connected_outputs();
+    let cx = rect.left + (w as i32) / 2;
+    let cy = rect.top + (h as i32) / 2;
+
+    let matched_output = outputs
+        .iter()
+        .find(|o| cx >= o.x && cx < o.x + (o.width as i32) && cy >= o.y && cy < o.y + (o.height as i32))
+        .or_else(|| outputs.iter().find(|o| o.is_current))
+        .or_else(|| outputs.first());
+
+    if let Some(o) = matched_output {
+        let mon_w = (o.width & !1).max(2);
+        let mon_h = (o.height & !1).max(2);
+
+        if w < 64 || h < 64 {
+            return Some((o.x, o.y, mon_w, mon_h));
+        }
+
+        // Intersección de la ventana con el monitor para no exceder los límites del escritorio
+        let x1 = rect.left.max(o.x);
+        let y1 = rect.top.max(o.y);
+        let x2 = rect.right.min(o.x + o.width as i32);
+        let y2 = rect.bottom.min(o.y + o.height as i32);
+
+        let int_w = (x2 - x1).max(0) as u32;
+        let int_h = (y2 - y1).max(0) as u32;
+
+        if int_w < 64 || int_h < 64 {
+            Some((o.x, o.y, mon_w, mon_h))
+        } else {
+            Some((x1, y1, (int_w & !1).max(2), (int_h & !1).max(2)))
+        }
+    } else {
+        if w < 64 || h < 64 {
+            None
+        } else {
+            Some((rect.left, rect.top, (w & !1).max(2), (h & !1).max(2)))
+        }
+    }
+}
+
+/// En sistemas no-Windows, devuelve None.
+#[cfg(not(target_os = "windows"))]
+pub fn get_window_capture_rect(_win_title: &str) -> Option<(i32, i32, u32, u32)> {
+    None
+}
+
 /// Parsea el JSON devuelto por `niri msg -j windows`.
 pub fn parse_niri_windows(json_str: &str) -> Vec<WindowInfo> {
     let Ok(val) = serde_json::from_str::<Value>(json_str) else {
@@ -1280,5 +1397,15 @@ mod tests {
         assert_eq!(clip.name, de.name);
         assert_eq!(clip.path, de.path);
         assert_eq!(clip.size_mb, de.size_mb);
+    }
+
+    #[test]
+    fn test_get_window_capture_rect_smoke() {
+        // En Linux debe retornar None sin panics
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(get_window_capture_rect("Fortnite"), None);
+            assert_eq!(get_window_capture_rect(""), None);
+        }
     }
 }

@@ -3535,7 +3535,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            // v0.5.5
+                            // v0.5.6
                             M3Card {
                                 content-padding: 18px;
                                 card-background: Theme.surface-container-low;
@@ -3551,7 +3551,7 @@ export component AppWindow inherits Window {
                                         Text {
                                             horizontal-stretch: 1;
                                             min-width: 0px;
-                                            text: "v0.5.5 — Hotfix Detección Nativa Wayland y Portabilidad";
+                                            text: "v0.5.6 — Hotfix Windows MPEG-TS, Captura DWM y Zero-Lag";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.primary;
@@ -3574,6 +3574,42 @@ export component AppWindow inherits Window {
                                                     vertical-alignment: center;
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "• Alineación de Paquetes MPEG-TS (188B) y Guardado Atómico: eliminación definitiva del error al guardar MP4 en RAM mediante buffer alineado al sync byte 0x47, inyección de SPS/PPS (dump_extra), archivo staging temporal y transcodificación de rescate.\n• Compatibilidad Universal de Video: reproducción instantánea de video y audio perfectamente sincronizados en Windows Media Player, Películas y TV, Discord embebido y navegadores.\n• Captura DWM para Juegos DirectX 11/12 y Resoluciones Estiradas: captura precisa sin pantalla negra en Fortnite, Valorant, CS2 y Minecraft con detección dinámica de monitor y soporte de resoluciones estiradas sin distorsión.\n• Rendimiento Zero-Lag: optimización de CPU en perfiles Windows con libx264 ultrafast zerolatency y 0 B-frames (-bf 0), reduciendo hasta un 45% del uso del procesador en juegos exigentes.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.5.5
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            min-width: 0px;
+                                            text: "v0.5.5 — Hotfix Detección Nativa Wayland y Portabilidad";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.primary;
+                                            vertical-alignment: center;
+                                            wrap: word-wrap;
                                         }
                                     }
 

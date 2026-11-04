@@ -744,10 +744,12 @@ impl ReplayEngine {
                 &fps_str,
                 "-keyint_min",
                 &fps_str,
+                "-bsf:v",
+                "dump_extra",
                 "-f",
                 "mpegts",
                 "-mpegts_flags",
-                "resend_headers",
+                "+resend_headers+pat_pmt_at_frames",
                 "pipe:1",
             ]);
 
@@ -837,13 +839,28 @@ impl ReplayEngine {
             .name("sane-rec-win-ram-buffer".into())
             .spawn(move || {
                 use std::io::Read;
-                let mut buffer = vec![0u8; 65536];
+                let mut raw_buf = vec![0u8; 65424]; // 348 paquetes MPEG-TS de 188 bytes
+                let mut leftover: Vec<u8> = Vec::with_capacity(376);
                 while running_flag.load(Ordering::Relaxed) {
-                    match stdout.read(&mut buffer) {
+                    match stdout.read(&mut raw_buf) {
                         Ok(0) => break,
                         Ok(n) => {
+                            leftover.extend_from_slice(&raw_buf[..n]);
+                            // Alinear al primer byte de sincronización MPEG-TS (0x47)
+                            if let Some(sync_pos) = leftover.iter().position(|&b| b == 0x47) {
+                                if sync_pos > 0 {
+                                    leftover.drain(..sync_pos);
+                                }
+                            } else {
+                                leftover.clear();
+                                continue;
+                            }
+                            let aligned_len = (leftover.len() / 188) * 188;
+                            if aligned_len == 0 {
+                                continue;
+                            }
+                            let chunk: Vec<u8> = leftover.drain(..aligned_len).collect();
                             let now = Instant::now();
-                            let chunk = buffer[..n].to_vec();
                             if let Ok(mut q) = ram_buf.lock() {
                                 q.push_back((now, chunk));
 
@@ -1434,40 +1451,147 @@ impl ReplayEngine {
         let filename = format!("{}.{}", timestamp, config.storage.format);
         let output_path = config.storage.output_dir.join(filename);
 
-        let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
-        cmd.args([
-            "-y",
-            "-f",
-            "mpegts",
-            "-i",
-            "pipe:0",
-            "-c",
-            "copy",
-            "-movflags",
-            "+faststart",
-        ]);
-        cmd.arg(&output_path);
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_ts = std::env::temp_dir().join(format!(
+            "sane_rec_staging_{}_{}.ts",
+            std::process::id(),
+            unique_id
+        ));
 
-        let mut child = cmd.spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
+        // 1. Escribir los chunks alineados al archivo temporal staging .ts
+        let write_res = (|| -> std::io::Result<()> {
             use std::io::Write;
-            for chunk in chunks {
-                let _ = stdin.write_all(&chunk);
+            let mut f = std::io::BufWriter::new(std::fs::File::create(&temp_ts)?);
+            for chunk in &chunks {
+                f.write_all(chunk)?;
             }
-            let _ = stdin.flush();
+            f.flush()?;
+            Ok(())
+        })();
+
+        if let Err(e) = write_res {
+            let _ = std::fs::remove_file(&temp_ts);
+            self.is_saving.store(false, Ordering::SeqCst);
+            return Err(EngineError::Io(e));
         }
 
-        let status = child.wait()?;
+        // 2. Intento 1: Remuxeo directo (-c:v copy) con resincronización de audio AAC
+        // FFmpeg sobre archivo físico puede hacer seek completo para encontrar el primer IDR keyframe
+        // y descartar paquetes iniciales sin SPS/PPS, garantizando video inmediato en reproductores de Windows y Discord
+        let remux_res = new_hidden_command(resolve_binary("ffmpeg"))
+            .args([
+                "-y",
+                "-fflags",
+                "+genpts+igndts+discardcorrupt",
+                "-err_detect",
+                "ignore_err",
+                "-i",
+            ])
+            .arg(&temp_ts)
+            .args([
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-af",
+                "aresample=async=1:first_pts=0",
+                "-vsync",
+                "vfr",
+                "-avoid_negative_ts",
+                "make_zero",
+                "-movflags",
+                "+faststart",
+            ])
+            .arg(&output_path)
+            .output();
+
+        let copy_succeeded = match remux_res {
+            Ok(ref out) if out.status.success() => {
+                if let Ok(meta) = std::fs::metadata(&output_path) {
+                    meta.len() >= 1024
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+
+        // 3. Fallback infalible: Si -c:v copy falló o devolvió un archivo vacío/corrupto
+        // (ej. cambio dinámico de resolución en mitad de una partida de Fortnite),
+        // recodifica rápidamente en una pasada con libx264 ultrafast garantizando que el clip NUNCA se pierda
+        if !copy_succeeded {
+            eprintln!("Aviso: Remux directo devolvió error o archivo vacío; ejecutando transcodificación de rescate.");
+            let transcode_res = new_hidden_command(resolve_binary("ffmpeg"))
+                .args([
+                    "-y",
+                    "-fflags",
+                    "+genpts+igndts+discardcorrupt",
+                    "-err_detect",
+                    "ignore_err",
+                    "-i",
+                ])
+                .arg(&temp_ts)
+                .args([
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "0:a:0?",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-tune",
+                    "zerolatency",
+                    "-crf",
+                    "23",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-vf",
+                    "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-af",
+                    "aresample=async=1:first_pts=0",
+                    "-vsync",
+                    "vfr",
+                    "-avoid_negative_ts",
+                    "make_zero",
+                    "-movflags",
+                    "+faststart",
+                ])
+                .arg(&output_path)
+                .output();
+
+            let transcode_succeeded = match transcode_res {
+                Ok(ref out) if out.status.success() => {
+                    std::fs::metadata(&output_path).map(|m| m.len() >= 1024).unwrap_or(false)
+                }
+                _ => false,
+            };
+
+            if !transcode_succeeded {
+                let _ = std::fs::remove_file(&temp_ts);
+                self.is_saving.store(false, Ordering::SeqCst);
+                return Err(EngineError::FfmpegError(
+                    "Error al guardar MP4 desde el buffer MPEG-TS en RAM".into(),
+                ));
+            }
+        }
+
+        // 4. Limpieza de archivo staging temporal
+        let _ = std::fs::remove_file(&temp_ts);
         self.is_saving.store(false, Ordering::SeqCst);
-
-        if !status.success() {
-            return Err(EngineError::FfmpegError(
-                "Error al guardar MP4 desde el buffer MPEG-TS en RAM".into(),
-            ));
-        }
 
         #[cfg(not(target_os = "windows"))]
         let _ = notify_rust::Notification::new()
@@ -2069,6 +2193,27 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
             .or_else(|| outputs.iter().find(|o| o.is_current))
             .or_else(|| outputs.first());
 
+        if outputs.len() == 1 {
+            if let Some(o) = matched_output {
+                if o.x == 0 && o.y == 0 {
+                    // Si la pantalla tiene 1 solo monitor en el origen, no forzamos -offset ni -video_size fijo;
+                    // gdigrab capturará automáticamente el escritorio completo adaptándose en vivo
+                    // a resoluciones estiradas/personalizadas (ej. 1440x1080 o 1280x960 en Fortnite) sin pantalla negra.
+                    cmd.args([
+                        "-f",
+                        "gdigrab",
+                        "-framerate",
+                        &fps_str,
+                        "-draw_mouse",
+                        "1",
+                        "-i",
+                        "desktop",
+                    ]);
+                    return;
+                }
+            }
+        }
+
         if let Some(o) = matched_output {
             if o.width > 0 && o.height > 0 {
                 let w = (o.width & !1).max(2);
@@ -2105,34 +2250,51 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
         ]);
     };
 
-    // Input 0: Video
-    cmd.args(["-thread_queue_size", "512"]);
+    // Input 0: Video (baja latencia y búfer ágil para 60 FPS en resoluciones altas)
+    cmd.args([
+        "-probesize",
+        "32M",
+        "-analyzeduration",
+        "0",
+        "-fflags",
+        "nobuffer",
+        "-thread_queue_size",
+        "512",
+    ]);
+
     if target.starts_with("title=") || target.starts_with("window:") {
         let win_title = target
             .strip_prefix("title=")
             .or_else(|| target.strip_prefix("window:"))
             .unwrap_or(target)
             .trim();
-        let lower_title = win_title.to_lowercase();
-        // Capturar mediante el compositor DWM (`desktop`) si la ventana es `windows-app` (legacy)
-        // o un juego OpenGL/LWJGL como Minecraft Java, evitando frame congelado en el menú ESC.
-        if win_title.is_empty()
-            || win_title == "windows-app"
-            || lower_title.contains("minecraft")
-            || lower_title.contains("javaw")
-        {
-            apply_desktop_capture(cmd, target);
+
+        // Para capturar juegos DirectX 11 / DirectX 12 / Vulkan / OpenGL (Fortnite, Valorant, CS2, Minecraft, etc.)
+        // sin pantalla negra ni congelamiento, obtenemos la geometría de la ventana en vivo y capturamos
+        // a través del compositor DWM de Windows (-i desktop con offset y video_size exactos recortados a la ventana).
+        if let Some((x, y, w, h)) = crate::discovery::get_window_capture_rect(win_title) {
+            if w >= 64 && h >= 64 {
+                cmd.args([
+                    "-f",
+                    "gdigrab",
+                    "-framerate",
+                    &fps_str,
+                    "-offset_x",
+                    &x.to_string(),
+                    "-offset_y",
+                    &y.to_string(),
+                    "-video_size",
+                    &format!("{}x{}", w, h),
+                    "-draw_mouse",
+                    "1",
+                    "-i",
+                    "desktop",
+                ]);
+            } else {
+                apply_desktop_capture(cmd, "desktop");
+            }
         } else {
-            cmd.args([
-                "-f",
-                "gdigrab",
-                "-framerate",
-                &fps_str,
-                "-draw_mouse",
-                "1",
-                "-i",
-                &format!("title={}", win_title),
-            ]);
+            apply_desktop_capture(cmd, "desktop");
         }
     } else {
         apply_desktop_capture(cmd, target);
@@ -2165,15 +2327,28 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
         .parse::<EncoderProfile>()
         .unwrap_or(EncoderProfile::SaneSafe);
 
+    // Garantizar dimensiones pares truncadas para que ningún codificador (GPU o CPU)
+    // falle por resoluciones impares en ventanas o pantallas estiradas
+    let scale_filter = if !config.video.scale.is_empty() && config.video.scale != "none" {
+        format!("scale={}:flags=bicubic,scale=trunc(iw/2)*2:trunc(ih/2)*2", config.video.scale)
+    } else {
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2".to_string()
+    };
+    cmd.args(["-vf", &scale_filter]);
+
     match profile {
         EncoderProfile::SaneSafe => {
             cmd.args([
                 "-c:v",
                 "libx264",
                 "-preset",
-                "superfast",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
                 "-crf",
                 "23",
+                "-bf",
+                "0",
                 "-pix_fmt",
                 "yuv420p",
             ]);
@@ -2199,11 +2374,13 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                 "-c:v",
                 "h264_nvenc",
                 "-preset",
-                "p4",
+                "p2",
                 "-rc",
                 "constqp",
                 "-qp",
                 "23",
+                "-bf",
+                "0",
                 "-pix_fmt",
                 "yuv420p",
             ]);
@@ -2825,6 +3002,44 @@ mod tests {
     #[test]
     fn test_is_source_available_nonexistent() {
         assert!(!super::is_source_available("nonexistent_device_source_xyz_12345"));
+    }
+
+    #[test]
+    fn test_mpegts_packet_alignment_simulation() {
+        // Simular buffer entrante desalineado: 10 bytes de basura + 2 paquetes de 188 bytes + 50 bytes parciales
+        let mut raw = Vec::new();
+        raw.extend_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99]); // 10 bytes basura
+
+        let mut packet1 = vec![0x12u8; 188];
+        packet1[0] = 0x47; // Sync byte
+        raw.extend_from_slice(&packet1);
+
+        let mut packet2 = vec![0x34u8; 188];
+        packet2[0] = 0x47; // Sync byte
+        raw.extend_from_slice(&packet2);
+
+        let mut partial = vec![0x56u8; 50];
+        partial[0] = 0x47; // Inicio del tercer paquete
+        raw.extend_from_slice(&partial);
+
+        let mut leftover = Vec::new();
+        leftover.extend_from_slice(&raw);
+
+        // Algoritmo de alineación implementado en el hilo de captura
+        if let Some(sync_pos) = leftover.iter().position(|&b| b == 0x47) {
+            if sync_pos > 0 {
+                leftover.drain(..sync_pos);
+            }
+        }
+        let aligned_len = (leftover.len() / 188) * 188;
+        assert_eq!(aligned_len, 376); // 2 paquetes completos
+
+        let chunk: Vec<u8> = leftover.drain(..aligned_len).collect();
+        assert_eq!(chunk.len(), 376);
+        assert_eq!(chunk[0], 0x47);
+        assert_eq!(chunk[188], 0x47);
+        assert_eq!(leftover.len(), 50);
+        assert_eq!(leftover[0], 0x47);
     }
 
     #[test]
