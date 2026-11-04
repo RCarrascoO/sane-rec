@@ -1505,7 +1505,7 @@ impl ReplayEngine {
                 "-af",
                 "aresample=async=1:first_pts=0",
                 "-vsync",
-                "vfr",
+                "passthrough",
                 "-avoid_negative_ts",
                 "make_zero",
                 "-movflags",
@@ -1556,15 +1556,17 @@ impl ReplayEngine {
                     "-pix_fmt",
                     "yuv420p",
                     "-vf",
-                    "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                    "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'",
                     "-c:a",
                     "aac",
                     "-b:a",
                     "192k",
                     "-af",
                     "aresample=async=1:first_pts=0",
+                    "-r",
+                    &config.video.fps.max(15).to_string(),
                     "-vsync",
-                    "vfr",
+                    "cfr",
                     "-avoid_negative_ts",
                     "make_zero",
                     "-movflags",
@@ -2318,6 +2320,21 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
     }
 }
 
+/// Genera el filtro de video de Windows optimizado para resoluciones estiradas competitivas
+/// (1440x1080, 1280x960 en Fortnite/CS2/Valorant) aplicando setdar=16/9 y escalado fast_bilinear.
+#[cfg(any(target_os = "windows", test))]
+pub fn build_windows_scale_filter(scale: &str) -> String {
+    if !scale.is_empty() && scale != "none" {
+        let target_scale = scale.replace('x', ":");
+        format!(
+            "scale={}:flags=fast_bilinear,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'",
+            target_scale
+        )
+    } else {
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'".to_string()
+    }
+}
+
 /// Configura los parámetros de codificación de hardware y CPU en Windows según el perfil activo.
 #[cfg(target_os = "windows")]
 fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: bool) {
@@ -2327,14 +2344,14 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
         .parse::<EncoderProfile>()
         .unwrap_or(EncoderProfile::SaneSafe);
 
-    // Garantizar dimensiones pares truncadas para que ningún codificador (GPU o CPU)
-    // falle por resoluciones impares en ventanas o pantallas estiradas
-    let scale_filter = if !config.video.scale.is_empty() && config.video.scale != "none" {
-        format!("scale={}:flags=bicubic,scale=trunc(iw/2)*2:trunc(ih/2)*2", config.video.scale)
-    } else {
-        "scale=trunc(iw/2)*2:trunc(ih/2)*2".to_string()
-    };
-    cmd.args(["-vf", &scale_filter]);
+    // Si el monitor no es vertical (iw >= ih), aplicamos setdar=16/9 para que las resoluciones
+    // estiradas competitivas (ej. 1440x1080, 1280x960 en Fortnite/CS2/Valorant) se guarden en 16:9
+    // pantalla completa tal como las ve el jugador y no comprimidas en 4:3.
+    // Además usamos fast_bilinear para escalado sin penalización de FPS.
+    let scale_filter = build_windows_scale_filter(&config.video.scale);
+    let fps = config.video.fps.max(15);
+    let fps_str = fps.to_string();
+    cmd.args(["-vf", &scale_filter, "-r", &fps_str, "-vsync", "cfr"]);
 
     match profile {
         EncoderProfile::SaneSafe => {
@@ -2540,8 +2557,6 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     "0",
                     "-pix_fmt",
                     "yuv420p",
-                    "-threads",
-                    "2",
                 ]);
             }
         }
@@ -3142,5 +3157,32 @@ mod tests {
             assert_ne!(selected_name, "NONEXISTENT_MONITOR_XYZ");
             assert!(outputs.iter().any(|o| &o.name == selected_name));
         }
+    }
+
+    #[test]
+    fn test_windows_scale_filter_stretched_res() {
+        let f_native = build_windows_scale_filter("none");
+        assert_eq!(
+            f_native,
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'"
+        );
+
+        let f_empty = build_windows_scale_filter("");
+        assert_eq!(
+            f_empty,
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'"
+        );
+
+        let f_1080p = build_windows_scale_filter("1920x1080");
+        assert_eq!(
+            f_1080p,
+            "scale=1920:1080:flags=fast_bilinear,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'"
+        );
+
+        let f_stretched = build_windows_scale_filter("1440x1080");
+        assert_eq!(
+            f_stretched,
+            "scale=1440:1080:flags=fast_bilinear,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'"
+        );
     }
 }

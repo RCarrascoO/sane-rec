@@ -88,6 +88,7 @@ export component AppWindow inherits Window {
     callback select-audio-sink(string);
     callback select-audio-mic(string);
     callback select-replay-duration(int);
+    callback select-fps(int);
     callback update-shortcuts(string, string);
     callback set-custom-codec(string);
     callback set-custom-preset(string);
@@ -888,7 +889,7 @@ export component AppWindow inherits Window {
                                 clicked => {
                                     root.selected-screen = item.name;
                                     root.selected-resolution = item.resolution;
-                                    root.select-screen(item.name, item.resolution);
+                                    root.select-screen(item.name, "none");
                                 }
                             }
                         }
@@ -1027,14 +1028,14 @@ export component AppWindow inherits Window {
                                                 horizontal-stretch: 1;
                                                 text: "60 FPS (Fluidez recomendada)";
                                                 is-selected: root.selected-fps == 60;
-                                                clicked => { root.selected-fps = 60; }
+                                                clicked => { root.selected-fps = 60; root.select-fps(60); }
                                             }
 
                                             M3SegmentItem {
                                                 horizontal-stretch: 1;
                                                 text: "30 FPS (Ahorro de CPU)";
                                                 is-selected: root.selected-fps == 30;
-                                                clicked => { root.selected-fps = 30; }
+                                                clicked => { root.selected-fps = 30; root.select-fps(30); }
                                             }
                                         }
                                     }
@@ -3535,7 +3536,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            // v0.5.6
+                            // v0.5.7
                             M3Card {
                                 content-padding: 18px;
                                 card-background: Theme.surface-container-low;
@@ -3551,7 +3552,7 @@ export component AppWindow inherits Window {
                                         Text {
                                             horizontal-stretch: 1;
                                             min-width: 0px;
-                                            text: "v0.5.6 — Hotfix Windows MPEG-TS, Captura DWM y Zero-Lag";
+                                            text: "v0.5.7 — Stretched Res 16:9, 60 FPS CFR y Selector en Vivo";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.primary;
@@ -3574,6 +3575,42 @@ export component AppWindow inherits Window {
                                                     vertical-alignment: center;
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "• Estirado Automático 16:9 para Resoluciones Competitivas: soporte nativo con setdar=16/9 para resoluciones estiradas (1440x1080, 1280x960, etc.) en Fortnite, CS2 y Valorant, eliminando barras negras y mostrando el clip tal como se ve en pantalla.\n• Captura y Codificación Fluida a 60 FPS Constantes: implementación de -vsync cfr con filtro fast_bilinear y remoción del límite de hilos en CPU (libx264) para clips fluidos sin pérdida de cuadros en Windows.\n• Selector de FPS en Vivo y Selección de Pantalla Nativa: conexión en tiempo real del selector 30/60 FPS con reinicio inmediato del búfer y preservación de escala nativa sin reescalados forzados al seleccionar monitores.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.5.6
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            min-width: 0px;
+                                            text: "v0.5.6 — Hotfix Windows MPEG-TS, Captura DWM y Zero-Lag";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.primary;
+                                            vertical-alignment: center;
+                                            wrap: word-wrap;
                                         }
                                     }
 

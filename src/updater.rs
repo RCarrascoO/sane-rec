@@ -473,6 +473,7 @@ mod tests {
     #[test]
     fn test_embedded_changelog_and_cleaning() {
         let raw = get_embedded_changelog();
+        assert!(raw.contains("v0.5.7") || raw.contains("[0.5.7]"));
         assert!(raw.contains("v0.5.6") || raw.contains("[0.5.6]"));
         assert!(raw.contains("v0.5.5") || raw.contains("[0.5.5]"));
         assert!(raw.contains("v0.5.4"));
@@ -481,6 +482,7 @@ mod tests {
         assert!(raw.contains("v0.5.1"));
         assert!(raw.contains("v0.5.0"));
         let cleaned = clean_changelog_markdown(raw);
+        assert!(cleaned.contains("v0.5.7") || cleaned.contains("[0.5.7]"));
         assert!(cleaned.contains("v0.5.6") || cleaned.contains("[0.5.6]"));
         assert!(cleaned.contains("v0.5.5") || cleaned.contains("[0.5.5]"));
         assert!(cleaned.contains("▸ v0.5.4"));

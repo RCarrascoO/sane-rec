@@ -225,9 +225,7 @@ fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
             if is_generic || (!is_custom_geom_or_window && !matches_existing) {
                 if let Some(primary) = detected_outputs.iter().find(|o| o.is_current).or_else(|| detected_outputs.first()) {
                     config.video.target = primary.name.clone();
-                    if primary.width > 0 && primary.height > 0 {
-                        config.video.scale = format!("{}x{}", primary.width, primary.height);
-                    }
+                    config.video.scale = "none".to_string();
                     let _ = config.save();
                 }
             }
@@ -406,6 +404,23 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
                 cmd.error("Duración inválida");
             }
         }
+        action if action.starts_with("set_fps:") => {
+            let fps_str = action.trim_start_matches("set_fps:").trim();
+            if let Ok(fps) = fps_str.parse::<u32>() {
+                let was_running = engine.is_running();
+                let mut cfg = engine.config();
+                cfg.video.fps = fps;
+                let _ = cfg.save();
+                engine.update_config(cfg);
+                if was_running {
+                    let _ = engine.stop_replay();
+                    let _ = engine.start_replay();
+                }
+                cmd.ok(format!("Tasa de refresco fijada a {} FPS", fps));
+            } else {
+                cmd.error("Tasa de FPS inválida");
+            }
+        }
         action if action.starts_with("set_max_memory:") => {
             let ram_str = action.trim_start_matches("set_max_memory:").trim();
             if let Ok(ram) = ram_str.parse::<u32>() {
@@ -456,9 +471,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         if is_generic || (!is_custom_geom_or_window && !matches_existing) {
             if let Some(primary) = detected_outputs.iter().find(|o| o.is_current).or_else(|| detected_outputs.first()) {
                 config.video.target = primary.name.clone();
-                if primary.width > 0 && primary.height > 0 {
-                    config.video.scale = format!("{}x{}", primary.width, primary.height);
-                }
+                config.video.scale = "none".to_string();
                 let _ = config.save();
             }
         }
@@ -477,11 +490,21 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             .into(),
     );
     ui.set_replay_duration(config.replay.duration_secs as i32);
+    ui.set_selected_fps(config.video.fps as i32);
     ui.set_selected_format(config.storage.format.clone().into());
     ui.set_dual_clip(config.storage.dual_clip);
     ui.set_discord_target_mb(config.storage.discord_target_mb as i32);
     ui.set_selected_screen(config.video.target.clone().into());
-    ui.set_selected_resolution(config.video.scale.clone().into());
+    let initial_resolution = if config.video.scale.is_empty() || config.video.scale == "none" {
+        detected_outputs
+            .iter()
+            .find(|o| o.name == config.video.target)
+            .map(|o| format!("{}x{}", o.width, o.height))
+            .unwrap_or_else(|| "Nativa (100%)".to_string())
+    } else {
+        config.video.scale.clone()
+    };
+    ui.set_selected_resolution(initial_resolution.into());
     ui.set_audio_system(config.audio.capture_desktop);
     ui.set_audio_mic(config.audio.capture_mic);
     ui.set_volume_system(config.audio.volume_system);
@@ -1232,6 +1255,35 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
             if let Some(ui) = ui_weak.upgrade() {
                 show_toast(&ui, "memory", &format!("Búfer de repetición fijado a {}s", d));
+            }
+        });
+    }
+
+    // Callback select-fps
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        ui.on_select_fps(move |fps| {
+            let fps_val = fps as u32;
+            if daemon_running {
+                let _ = ipc::send_command_sync(&format!("set_fps:{}", fps_val));
+            } else if let Some(ref eng) = engine_clone {
+                let was_running = eng.is_running();
+                let mut cfg = eng.config();
+                cfg.video.fps = fps_val;
+                let _ = cfg.save();
+                eng.update_config(cfg);
+                if was_running {
+                    let _ = eng.stop_replay();
+                    let _ = eng.start_replay();
+                }
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.video.fps = fps_val;
+                let _ = cfg.save();
+            }
+
+            if let Some(ui) = ui_weak.upgrade() {
+                show_toast(&ui, "speed", &format!("Tasa de refresco fijada a {} FPS", fps_val));
             }
         });
     }
