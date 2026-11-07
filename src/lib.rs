@@ -14,7 +14,10 @@ pub use compressor::{
     compress_to_target_size, get_discord_clip_path, get_video_duration_secs,
     spawn_discord_compression,
 };
-pub use config::{update_niri_shortcuts, Config, ShortcutsConfig};
+pub use config::{
+    init_default_themes, list_community_themes, load_community_theme, parse_hex_color, themes_dir,
+    update_niri_shortcuts, CommunityTheme, Config, ShortcutsConfig, UiConfig,
+};
 pub use discovery::{
     delete_clip, detect_gpu_info, get_audio_devices, get_connected_outputs, get_open_windows,
     get_recent_clips, new_hidden_command, parse_hyprland_outputs, resolve_binary,

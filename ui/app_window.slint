@@ -1,6 +1,7 @@
 // sane-rec: Material Design 3 (Google Pixel UI - Android 15/16 Material You Expressive)
 // Main Window with Navigation Rail and Tonal Elevation (Zero Outer Borders)
 import { Theme, M3Theme } from "theme.slint";
+export { Theme }
 import {
     M3Icon,
     M3Card,
@@ -25,7 +26,8 @@ import {
     M3Slider,
     M3Toast,
     M3InputField,
-    M3ShortcutField
+    M3ShortcutField,
+    M3CollapsibleCard
 } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
@@ -110,10 +112,16 @@ export component AppWindow inherits Window {
     callback compress-clip-for-discord(string);
     callback change-output-dir(string);
     callback delete-clip(string);
+    callback select-theme(string);
+    callback select-community-theme(string);
 
     // -------------------------------------------------------------------------
     // Propiedades públicas para bindings con Rust
     // -------------------------------------------------------------------------
+    in-out property <string> active-theme: "dark";
+    in-out property <[string]> community-themes-list: [];
+    in-out property <string> selected-community-theme: "";
+    in-out property <bool> custom-section-expanded: false;
     in-out property <int> active-view: 0; // 0: Panel, 1: Fuentes, 2: Audio, 3: Ajustes, 4: Galería, 5: Guía
     in-out property <int> guide-subtab: 0; // 0: Tutorial paso a paso, 1: Changelog / Novedades
     in-out property <string> changelog-text: "";
@@ -137,6 +145,7 @@ export component AppWindow inherits Window {
     in-out property <bool> is-updating: false;
 
     // Gestor de perfiles de hardware
+    in property <bool> is-windows: false;
     in-out property <[string]> available-profiles-list: [];
     in-out property <string> selected-profile-name: "";
     in-out property <string> active-system-profile: "";
@@ -196,6 +205,53 @@ export component AppWindow inherits Window {
     in-out property <[AudioDeviceEntry]> available-sinks: [];
     in-out property <[AudioDeviceEntry]> available-mics: [];
 
+    // Fondo de Ventana para Minecraft (textura de tierra pixel-art)
+    if Theme.is-minecraft: Image {
+        width: 100%;
+        height: 100%;
+        source: @image-url("../assets/mc_dirt_bg.png");
+        image-rendering: pixelated;
+        image-fit: cover;
+    }
+
+    // Fondo de Ventana para Liquid Glass (gradiente atmosférico y orbes de luz reactivos)
+    if Theme.is-glass: Rectangle {
+        width: 100%;
+        height: 100%;
+        clip: true;
+        background: @linear-gradient(135deg, #060B19 0%, #0F1E3D 45%, #1A103C 100%);
+
+        // Orbe 1: Cian / Azul brillante
+        Rectangle {
+            x: 140px;
+            y: -60px;
+            width: 420px;
+            height: 420px;
+            border-radius: 999px;
+            background: #0A84FF33;
+        }
+
+        // Orbe 2: Violeta / Púrpura profundo
+        Rectangle {
+            x: parent.width - 360px;
+            y: parent.height - 340px;
+            width: 440px;
+            height: 440px;
+            border-radius: 999px;
+            background: #5E5CE630;
+        }
+
+        // Orbe 3: Celeste resplandeciente central
+        Rectangle {
+            x: parent.width * 0.42;
+            y: parent.height * 0.28;
+            width: 320px;
+            height: 320px;
+            border-radius: 999px;
+            background: #00D4FF28;
+        }
+    }
+
     // =========================================================================
     // 1. Navigation Rail Lateral Izquierdo (M3 Expressive)
     // Sin línea divisoria con el contenido, descansando en Theme.surface
@@ -218,7 +274,7 @@ export component AppWindow inherits Window {
         y: 0px;
         width: parent.width - rail.width;
         height: parent.height;
-        background: Theme.surface;
+        background: (Theme.is-minecraft || Theme.is-glass) ? transparent : Theme.surface;
         border-width: 0px;
         clip: true;
 
@@ -231,7 +287,7 @@ export component AppWindow inherits Window {
             content-col := VerticalLayout {
                 x: Math.max(0px, Math.floor((parent.visible-width - self.width) / 2px) * 1px);
                 width: Math.floor(Math.min(root.width - rail.width - (root.width < 820px ? 24px : 48px), 1020px) / 1px) * 1px;
-                padding-top: root.width < 820px ? 16px : 28px;
+                padding-top: root.width < 820px ? 20px : 32px;
                 padding-bottom: 80px;
                 spacing: 20px;
 
@@ -296,6 +352,8 @@ export component AppWindow inherits Window {
                     // VISTA 0: DASHBOARD (Panel de control)
                     // ---------------------------------------------------------
                     if root.active-view == 0: VerticalLayout {
+                        padding-top: 16px;
+                        padding-bottom: 24px;
                         spacing: 20px;
 
                         // Header Dashboard (Sentence case)
@@ -574,7 +632,7 @@ export component AppWindow inherits Window {
                                 icon-name: "memory";
                                 value: root.ram-usage;
                                 label: "Consumo RAM (máx: " + root.max-memory-mb + " MB)";
-                                badge-text: root.backend-title == "Windows DXGI" ? "RAM Ring" : "dmabuf";
+                                badge-text: root.is-windows || root.backend-title == "Windows DXGI" ? "RAM Ring" : "dmabuf";
                             }
                         }
 
@@ -620,7 +678,7 @@ export component AppWindow inherits Window {
                                     icon-name: "memory";
                                     value: root.ram-usage;
                                     label: "Consumo RAM (máx: " + root.max-memory-mb + " MB)";
-                                    badge-text: root.backend-title == "Windows DXGI" ? "RAM Ring" : "dmabuf";
+                                    badge-text: root.is-windows || root.backend-title == "Windows DXGI" ? "RAM Ring" : "dmabuf";
                                 }
                             }
                         }
@@ -664,7 +722,7 @@ export component AppWindow inherits Window {
                                         spacing: 2px;
 
                                         Text {
-                                            text: "Fuente activa: " + root.selected-screen + " • " + root.selected-fps + " FPS • " + (root.active-profile == "sane-safe" ? "Sane Safe (CPU)" : (root.backend-title == "Windows DXGI" ? "Hardware GPU (AMF/NVENC)" : "Hardware VA-API"));
+                                            text: "Fuente activa: " + root.selected-screen + " • " + root.selected-fps + " FPS • " + (root.active-profile == "sane-safe" ? "Sane Safe (CPU)" : (root.is-windows || root.backend-title == "Windows DXGI" ? "Hardware GPU (AMF/NVENC)" : "Hardware VA-API"));
                                             font-size: Theme.font-title-small;
                                             font-weight: 700;
                                             color: Theme.on-surface;
@@ -672,7 +730,7 @@ export component AppWindow inherits Window {
                                         }
 
                                         Text {
-                                            text: root.backend-title == "Windows DXGI" ? "Captura acelerada vía Windows Graphics Capture / DXGI Desktop Duplication." : "Captura directa Wayland vía dmabuf/PipeWire sin sobrecarga de GPU.";
+                                            text: root.is-windows || root.backend-title == "Windows DXGI" ? "Captura acelerada vía Windows Graphics Capture / DXGI Desktop Duplication." : "Captura directa Wayland vía dmabuf/PipeWire sin sobrecarga de GPU.";
                                             font-size: Theme.font-body-small;
                                             color: Theme.on-surface-variant;
                                             overflow: elide;
@@ -688,6 +746,59 @@ export component AppWindow inherits Window {
                                     btn-padding-h: 16px;
                                     clicked => {
                                         root.active-view = 1;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Submenú desplegable: Opciones Rápidas de Captura (FPS y Resolución)
+                        M3CollapsibleCard {
+                            title: "Opciones rápidas de captura (FPS y resolución)";
+                            subtitle: "Ajusta la fluidez y escala de video directamente desde el panel principal";
+                            badge-text: root.selected-fps + " FPS • " + root.selected-resolution;
+                            icon-name: "tune";
+                            expanded: false;
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                M3PresetChip {
+                                    text: "60 FPS";
+                                    is-active: root.selected-fps == 60;
+                                    clicked => {
+                                        root.selected-fps = 60;
+                                        root.select-fps(60);
+                                    }
+                                }
+                                M3PresetChip {
+                                    text: "30 FPS";
+                                    is-active: root.selected-fps == 30;
+                                    clicked => {
+                                        root.selected-fps = 30;
+                                        root.select-fps(30);
+                                    }
+                                }
+                                M3PresetChip {
+                                    text: "Nativa (100%)";
+                                    is-active: root.selected-resolution == "Nativa (100%)" || root.selected-resolution == "none";
+                                    clicked => {
+                                        root.selected-resolution = "Nativa (100%)";
+                                        root.select-screen(root.selected-screen, "none");
+                                    }
+                                }
+                                M3PresetChip {
+                                    text: "1080p";
+                                    is-active: root.selected-resolution == "1920x1080";
+                                    clicked => {
+                                        root.selected-resolution = "1920x1080";
+                                        root.select-screen(root.selected-screen, "1920x1080");
+                                    }
+                                }
+                                M3PresetChip {
+                                    text: "720p";
+                                    is-active: root.selected-resolution == "1280x720";
+                                    clicked => {
+                                        root.selected-resolution = "1280x720";
+                                        root.select-screen(root.selected-screen, "1280x720");
                                     }
                                 }
                             }
@@ -798,6 +909,8 @@ export component AppWindow inherits Window {
                     // VISTA 1: FUENTES DE VIDEO (Sentence case)
                     // ---------------------------------------------------------
                     if root.active-view == 1: VerticalLayout {
+                        padding-top: 16px;
+                        padding-bottom: 24px;
                         spacing: 20px;
 
                         // Header Fuentes
@@ -859,7 +972,7 @@ export component AppWindow inherits Window {
                                             clicked => { root.capture-mode = 1; }
                                         }
 
-                                        M3SegmentItem {
+                                        if !root.is-windows: M3SegmentItem {
                                             horizontal-stretch: 1;
                                             icon-name: "slurp";
                                             text: "Área (slurp)";
@@ -876,7 +989,7 @@ export component AppWindow inherits Window {
                             spacing: 12px;
 
                             Text {
-                                text: root.backend-title == "Windows DXGI" ? "Monitores detectados (Windows Display)" : "Monitores detectados (Wayland)";
+                                text: root.is-windows || root.backend-title == "Windows DXGI" ? "Monitores detectados (Windows Display)" : "Monitores detectados (Wayland)";
                                 font-size: 15px;
                                 font-weight: 600;
                                 color: Theme.primary;
@@ -888,7 +1001,7 @@ export component AppWindow inherits Window {
                                 is-selected: root.selected-screen == item.name;
                                 clicked => {
                                     root.selected-screen = item.name;
-                                    root.selected-resolution = item.resolution;
+                                    root.selected-resolution = "Nativa (100%)";
                                     root.select-screen(item.name, "none");
                                 }
                             }
@@ -932,7 +1045,7 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        if root.capture-mode == 2: M3Card {
+                        if !root.is-windows && root.capture-mode == 2: M3Card {
                             content-padding: 24px;
                             card-background: Theme.surface-container-low;
                             card-radius: Theme.radius-xl;
@@ -1174,6 +1287,8 @@ export component AppWindow inherits Window {
                     // VISTA 2: MEZCLADOR DE AUDIO (Sentence case, sliders M3)
                     // ---------------------------------------------------------
                     if root.active-view == 2: VerticalLayout {
+                        padding-top: 16px;
+                        padding-bottom: 24px;
                         spacing: 20px;
 
                         // Header Audio
@@ -1186,7 +1301,7 @@ export component AppWindow inherits Window {
                                 color: Theme.on-surface;
                             }
                             Text {
-                                text: root.backend-title == "Windows DXGI" ? "Configuración de canales de audio del sistema (WASAPI Loopback) y micrófonos" : "Configuración de canales de audio del sistema y micrófonos en PipeWire";
+                                text: root.is-windows || root.backend-title == "Windows DXGI" ? "Configuración de canales de audio del sistema (WASAPI Loopback) y micrófonos" : "Configuración de canales de audio del sistema y micrófonos en PipeWire";
                                 font-size: 13px;
                                 color: Theme.on-surface-variant;
                             }
@@ -1520,6 +1635,8 @@ export component AppWindow inherits Window {
                     // VISTA 3: AJUSTES Y PRESETS (Sentence case, Android Settings list items)
                     // ---------------------------------------------------------
                     if root.active-view == 3: VerticalLayout {
+                        padding-top: 16px;
+                        padding-bottom: 24px;
                         spacing: 20px;
 
                         // Header Ajustes
@@ -1532,9 +1649,129 @@ export component AppWindow inherits Window {
                                 color: Theme.on-surface;
                             }
                             Text {
-                                text: "Perfiles de codificador, buffers y directorios de almacenamiento";
+                                text: "Apariencia visual, perfiles de codificador, buffers y almacenamiento";
                                 font-size: 13px;
                                 color: Theme.on-surface-variant;
+                            }
+                        }
+
+                        // Sección Destacada: Apariencia y Tema Visual
+                        M3Card {
+                            content-padding: 18px;
+                            card-background: Theme.surface-container-low;
+                            card-radius: Theme.radius-xl;
+                            card-border-width: 0px;
+
+                            VerticalLayout {
+                                spacing: 14px;
+
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    Text {
+                                        text: "Apariencia y tema visual";
+                                        font-size: 15px;
+                                        font-weight: 600;
+                                        color: Theme.primary;
+                                    }
+                                    Text {
+                                        text: "Personaliza la estética de sane-rec en tiempo real o carga temas TOML de la comunidad";
+                                        font-size: Theme.font-body-small;
+                                        color: Theme.on-surface-variant;
+                                    }
+                                }
+
+                                // Fila 1 de Temas Integrados
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    M3PresetChip {
+                                        text: "Sane Dark";
+                                        is-active: root.active-theme == "dark";
+                                        clicked => {
+                                            root.active-theme = "dark";
+                                            Theme.active-theme = "dark";
+                                            root.select-theme("dark");
+                                        }
+                                    }
+                                    M3PresetChip {
+                                        text: "Sane Light";
+                                        is-active: root.active-theme == "light";
+                                        clicked => {
+                                            root.active-theme = "light";
+                                            Theme.active-theme = "light";
+                                            root.select-theme("light");
+                                        }
+                                    }
+                                    M3PresetChip {
+                                        text: "OLED Pitch Black";
+                                        is-active: root.active-theme == "oled";
+                                        clicked => {
+                                            root.active-theme = "oled";
+                                            Theme.active-theme = "oled";
+                                            root.select-theme("oled");
+                                        }
+                                    }
+                                }
+
+                                // Fila 2 de Temas Especiales y Comunidad
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    M3PresetChip {
+                                        text: "Minecraft";
+                                        is-active: root.active-theme == "minecraft";
+                                        clicked => {
+                                            root.active-theme = "minecraft";
+                                            Theme.active-theme = "minecraft";
+                                            root.select-theme("minecraft");
+                                        }
+                                    }
+                                    M3PresetChip {
+                                        text: "Liquid Glass (iOS)";
+                                        is-active: root.active-theme == "liquid-glass";
+                                        clicked => {
+                                            root.active-theme = "liquid-glass";
+                                            Theme.active-theme = "liquid-glass";
+                                            root.select-theme("liquid-glass");
+                                        }
+                                    }
+                                    M3PresetChip {
+                                        text: "Temas de la Comunidad";
+                                        is-active: root.active-theme == "custom";
+                                        clicked => {
+                                            root.active-theme = "custom";
+                                            Theme.active-theme = "custom";
+                                            root.select-theme("custom");
+                                        }
+                                    }
+                                }
+
+                                if root.active-theme == "custom": VerticalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: root.is-windows
+                                            ? "Temas comunitarios detectados (%APPDATA%\\sane-rec\\themes\\*.toml):"
+                                            : "Temas comunitarios detectados (~/.config/sane-rec/themes/*.toml):";
+                                        font-size: Theme.font-label-medium;
+                                        font-weight: 700;
+                                        color: Theme.on-surface;
+                                    }
+                                    Flickable {
+                                        height: 40px;
+                                        community-themes-row := HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            for t-name in root.community-themes-list: M3PresetChip {
+                                                text: t-name;
+                                                is-active: root.selected-community-theme == t-name;
+                                                clicked => {
+                                                    root.selected-community-theme = t-name;
+                                                    root.active-theme = "custom";
+                                                    Theme.active-theme = "custom";
+                                                    root.select-community-theme(t-name);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -1552,25 +1789,27 @@ export component AppWindow inherits Window {
                             // 1. Sane Safe (CPU x264)
                             M3ProfileTile {
                                 title: "Sane Safe (CPU x264)";
-                                subtitle: "Codificación por CPU sin riesgo de GPU freeze • Ideal Polaris / Linux";
+                                subtitle: root.is-windows ? "Codificación universal por CPU sin riesgo de cuelgues de driver" : "Codificación por CPU sin riesgo de GPU freeze • Ideal Polaris / Linux";
                                 badge-text: "Recomendado / Estable";
                                 icon-name: "shield";
                                 is-selected: root.active-profile == "sane-safe";
                                 clicked => {
                                     root.active-profile = "sane-safe";
+                                    root.custom-section-expanded = false;
                                     root.select-profile("sane-safe");
                                 }
                             }
 
-                            // 2. AMD Hardware (VA-API)
+                            // 2. AMD Hardware (VA-API / AMF)
                             M3ProfileTile {
-                                title: "AMD Hardware (VA-API Zero B-Frames)";
-                                subtitle: "Captura directa DMA-BUF + VCE/VCN (-b 0) • ~3% CPU • Estable en RX 570/580 Polaris y RDNA";
-                                badge-text: "Zero B-Frames • ~3% CPU";
+                                title: root.is-windows ? "AMD Hardware (AMF / VCE)" : "AMD Hardware (VA-API Zero B-Frames)";
+                                subtitle: root.is-windows ? "Aceleración por hardware AMD Radeon (AMF DirectX) • Bajo uso de CPU" : "Captura directa DMA-BUF + VCE/VCN (-b 0) • ~3% CPU • Estable en RX 570/580 Polaris y RDNA";
+                                badge-text: root.is-windows ? "AMD Radeon AMF" : "Zero B-Frames • ~3% CPU";
                                 icon-name: "bolt";
                                 is-selected: root.active-profile == "amd-vaapi";
                                 clicked => {
                                     root.active-profile = "amd-vaapi";
+                                    root.custom-section-expanded = false;
                                     root.select-profile("amd-vaapi");
                                 }
                             }
@@ -1584,6 +1823,7 @@ export component AppWindow inherits Window {
                                 is-selected: root.active-profile == "nvidia-nvenc";
                                 clicked => {
                                     root.active-profile = "nvidia-nvenc";
+                                    root.custom-section-expanded = false;
                                     root.select-profile("nvidia-nvenc");
                                 }
                             }
@@ -1597,6 +1837,7 @@ export component AppWindow inherits Window {
                                 is-selected: root.active-profile == "intel-qsv" || root.active-profile == "intel-hardware";
                                 clicked => {
                                     root.active-profile = "intel-qsv";
+                                    root.custom-section-expanded = false;
                                     root.select-profile("intel-qsv");
                                 }
                             }
@@ -1610,33 +1851,113 @@ export component AppWindow inherits Window {
                                 is-selected: root.active-profile == "custom";
                                 clicked => {
                                     root.active-profile = "custom";
+                                    root.custom-section-expanded = true;
                                     root.select-profile("custom");
                                 }
                             }
                         }
 
-                        // Parámetros interactivos del Modo Personalizado (Cero bordes)
-                        if root.active-profile == "custom": M3Card {
-                            content-padding: 18px;
-                            card-background: Theme.surface-container-low;
-                            card-radius: Theme.radius-xl;
-                            card-border-width: 0px;
+                        // Submenú Desplegable 1: Perfiles de Hardware y Comunidad (.toml)
+                        M3CollapsibleCard {
+                            title: "Perfiles de hardware y comunidad (.toml)";
+                            subtitle: root.is-windows
+                                ? "Guarda, exporta y carga presets de equipo (%APPDATA%\\sane-rec\\profiles\\)"
+                                : "Guarda, exporta y carga presets de equipo (~/.config/sane-rec/profiles/)";
+                            badge-text: root.selected-profile-name != "" ? root.selected-profile-name : "Presets .toml";
+                            icon-name: "folder";
+                            expanded: false;
+
+                            VerticalLayout {
+                                spacing: 12px;
+
+                                Text {
+                                    text: "Perfiles guardados en el sistema (desliza o haz clic para seleccionar):";
+                                    font-size: Theme.font-label-medium;
+                                    font-weight: 700;
+                                    color: Theme.on-surface;
+                                }
+
+                                // Lista vertical escroleable limpia de perfiles (100% legible sin cortarse jamás)
+                                ScrollView {
+                                    height: 156px;
+                                    profiles-list-col := VerticalLayout {
+                                        spacing: 6px;
+                                        for p-name in root.available-profiles-list: M3OptionItem {
+                                            text: p-name;
+                                            badge-text: (root.selected-profile-name == p-name || root.active-system-profile == p-name) ? "Activo" : "Preset .toml";
+                                            is-selected: root.selected-profile-name == p-name || root.active-system-profile == p-name;
+                                            clicked => {
+                                                root.selected-profile-name = p-name;
+                                                root.active-system-profile = p-name;
+                                                root.load-hardware-profile(p-name);
+                                                root.load-system-profile(p-name);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Botones de acción en 2 filas limpias para no desbordar nunca en monitores pequeños
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    M3Button {
+                                        horizontal-stretch: 1;
+                                        text: root.selected-profile-name != "" ? ("Cargar '" + root.selected-profile-name + "'") : "Selecciona un perfil";
+                                        variant: "filled";
+                                        btn-height: 36px;
+                                        btn-padding-h: 14px;
+                                        enabled: root.selected-profile-name != "";
+                                        clicked => {
+                                            root.load-hardware-profile(root.selected-profile-name);
+                                        }
+                                    }
+                                    M3Button {
+                                        text: "Guardar actual";
+                                        variant: "tonal";
+                                        btn-height: 36px;
+                                        btn-padding-h: 14px;
+                                        clicked => {
+                                            root.save-hardware-profile(root.selected-profile-name);
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    M3Button {
+                                        horizontal-stretch: 1;
+                                        text: "Importar (.toml)";
+                                        variant: "tonal";
+                                        btn-height: 36px;
+                                        btn-padding-h: 14px;
+                                        clicked => {
+                                            root.import-hardware-profile();
+                                        }
+                                    }
+                                    M3Button {
+                                        horizontal-stretch: 1;
+                                        text: "Exportar perfil...";
+                                        variant: "outlined";
+                                        btn-height: 36px;
+                                        btn-padding-h: 14px;
+                                        enabled: root.selected-profile-name != "";
+                                        clicked => {
+                                            root.export-hardware-profile(root.selected-profile-name);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Submenú Desplegable 2: Ajustes Avanzados de Codificación (Modo Custom)
+                        if root.active-profile == "custom": M3CollapsibleCard {
+                            title: "Ajustes avanzados de codificación (Modo Custom)";
+                            subtitle: "Códecs CPU/GPU, presets de velocidad, calidad CRF/QP y límite de RAM";
+                            badge-text: root.custom-codec + " • CRF " + root.custom-crf;
+                            icon-name: "tune";
+                            expanded <=> root.custom-section-expanded;
 
                             VerticalLayout {
                                 spacing: 16px;
-
-                                Text {
-                                    text: "Parámetros del perfil personalizado";
-                                    font-size: 15px;
-                                    font-weight: 600;
-                                    color: Theme.primary;
-                                }
-
-                                Text {
-                                    text: "Configura el codificador, compresión y límites de memoria en vivo sin editar archivos.";
-                                    font-size: Theme.font-body-small;
-                                    color: Theme.on-surface-variant;
-                                }
 
                                 // 1. Códec de Video
                                 VerticalLayout {
@@ -1652,30 +1973,34 @@ export component AppWindow inherits Window {
                                         font-size: Theme.font-label-small;
                                         color: Theme.on-surface-variant;
                                     }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        M3PresetChip {
-                                            text: "libx264 (H.264)";
-                                            is-active: root.custom-codec == "libx264";
-                                            clicked => {
-                                                root.custom-codec = "libx264";
-                                                root.set-custom-codec("libx264");
+                                    Flickable {
+                                        height: 38px;
+                                        cpu-codecs-row := HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            M3PresetChip {
+                                                text: "libx264 (H.264)";
+                                                is-active: root.custom-codec == "libx264";
+                                                clicked => {
+                                                    root.custom-codec = "libx264";
+                                                    root.set-custom-codec("libx264");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "libx265 (HEVC • CPU)";
-                                            is-active: root.custom-codec == "libx265";
-                                            clicked => {
-                                                root.custom-codec = "libx265";
-                                                root.set-custom-codec("libx265");
+                                            M3PresetChip {
+                                                text: "libx265 (HEVC • CPU)";
+                                                is-active: root.custom-codec == "libx265";
+                                                clicked => {
+                                                    root.custom-codec = "libx265";
+                                                    root.set-custom-codec("libx265");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "libvpx-vp9";
-                                            is-active: root.custom-codec == "libvpx-vp9";
-                                            clicked => {
-                                                root.custom-codec = "libvpx-vp9";
-                                                root.set-custom-codec("libvpx-vp9");
+                                            M3PresetChip {
+                                                text: "libvpx-vp9";
+                                                is-active: root.custom-codec == "libvpx-vp9";
+                                                clicked => {
+                                                    root.custom-codec = "libvpx-vp9";
+                                                    root.set-custom-codec("libvpx-vp9");
+                                                }
                                             }
                                         }
                                     }
@@ -1686,60 +2011,80 @@ export component AppWindow inherits Window {
                                     }
                                     VerticalLayout {
                                         spacing: 8px;
-                                        HorizontalLayout {
-                                            spacing: 8px;
-                                            M3PresetChip {
-                                                 text: "h264_vaapi (Linux VA-API • Zero B-Frames)";
-                                                is-active: root.custom-codec == "h264_vaapi";
-                                                clicked => {
-                                                    root.custom-codec = "h264_vaapi";
-                                                    root.set-custom-codec("h264_vaapi");
+                                        Flickable {
+                                            height: 38px;
+                                            gpu-row-1 := HorizontalLayout {
+                                                spacing: 8px;
+                                                alignment: start;
+                                                if !root.is-windows: M3PresetChip {
+                                                    text: "h264_vaapi (Linux VA-API • Zero B-Frames)";
+                                                    is-active: root.custom-codec == "h264_vaapi";
+                                                    clicked => {
+                                                        root.custom-codec = "h264_vaapi";
+                                                        root.set-custom-codec("h264_vaapi");
+                                                    }
                                                 }
-                                            }
-                                            M3PresetChip {
-                                                text: "h264_amf (AMD AMF Windows)";
-                                                is-active: root.custom-codec == "h264_amf";
-                                                clicked => {
-                                                    root.custom-codec = "h264_amf";
-                                                    root.set-custom-codec("h264_amf");
-                                                }
-                                            }
-                                        }
-                                        HorizontalLayout {
-                                            spacing: 8px;
-                                            M3PresetChip {
-                                                text: "h264_nvenc (NVIDIA NVENC)";
-                                                is-active: root.custom-codec == "h264_nvenc";
-                                                clicked => {
-                                                    root.custom-codec = "h264_nvenc";
-                                                    root.set-custom-codec("h264_nvenc");
-                                                }
-                                            }
-                                            M3PresetChip {
-                                                text: "h264_qsv (Intel QuickSync)";
-                                                is-active: root.custom-codec == "h264_qsv";
-                                                clicked => {
-                                                    root.custom-codec = "h264_qsv";
-                                                    root.set-custom-codec("h264_qsv");
+                                                if root.is-windows: M3PresetChip {
+                                                    text: "h264_amf (AMD AMF)";
+                                                    is-active: root.custom-codec == "h264_amf";
+                                                    clicked => {
+                                                        root.custom-codec = "h264_amf";
+                                                        root.set-custom-codec("h264_amf");
+                                                    }
                                                 }
                                             }
                                         }
-                                        HorizontalLayout {
-                                            spacing: 8px;
-                                            M3PresetChip {
-                                                text: "hevc_amf / vaapi (HEVC GPU AMD)";
-                                                is-active: root.custom-codec == "hevc_amf" || root.custom-codec == "hevc_vaapi";
-                                                clicked => {
-                                                    root.custom-codec = root.backend-title == "Windows DXGI" ? "hevc_amf" : "hevc_vaapi";
-                                                    root.set-custom-codec(root.custom-codec);
+                                        Flickable {
+                                            height: 38px;
+                                            gpu-row-2 := HorizontalLayout {
+                                                spacing: 8px;
+                                                alignment: start;
+                                                M3PresetChip {
+                                                    text: "h264_nvenc (NVIDIA NVENC)";
+                                                    is-active: root.custom-codec == "h264_nvenc";
+                                                    clicked => {
+                                                        root.custom-codec = "h264_nvenc";
+                                                        root.set-custom-codec("h264_nvenc");
+                                                    }
+                                                }
+                                                M3PresetChip {
+                                                    text: "h264_qsv (Intel QuickSync)";
+                                                    is-active: root.custom-codec == "h264_qsv";
+                                                    clicked => {
+                                                        root.custom-codec = "h264_qsv";
+                                                        root.set-custom-codec("h264_qsv");
+                                                    }
                                                 }
                                             }
-                                            M3PresetChip {
-                                                text: "hevc_nvenc (HEVC GPU NVIDIA)";
-                                                is-active: root.custom-codec == "hevc_nvenc";
-                                                clicked => {
-                                                    root.custom-codec = "hevc_nvenc";
-                                                    root.set-custom-codec("hevc_nvenc");
+                                        }
+                                        Flickable {
+                                            height: 38px;
+                                            gpu-row-3 := HorizontalLayout {
+                                                spacing: 8px;
+                                                alignment: start;
+                                                if !root.is-windows: M3PresetChip {
+                                                    text: "hevc_vaapi (HEVC GPU AMD VA-API)";
+                                                    is-active: root.custom-codec == "hevc_vaapi";
+                                                    clicked => {
+                                                        root.custom-codec = "hevc_vaapi";
+                                                        root.set-custom-codec("hevc_vaapi");
+                                                    }
+                                                }
+                                                if root.is-windows: M3PresetChip {
+                                                    text: "hevc_amf (HEVC GPU AMD AMF)";
+                                                    is-active: root.custom-codec == "hevc_amf";
+                                                    clicked => {
+                                                        root.custom-codec = "hevc_amf";
+                                                        root.set-custom-codec("hevc_amf");
+                                                    }
+                                                }
+                                                M3PresetChip {
+                                                    text: "hevc_nvenc (HEVC GPU NVIDIA)";
+                                                    is-active: root.custom-codec == "hevc_nvenc";
+                                                    clicked => {
+                                                        root.custom-codec = "hevc_nvenc";
+                                                        root.set-custom-codec("hevc_nvenc");
+                                                    }
                                                 }
                                             }
                                         }
@@ -1747,7 +2092,7 @@ export component AppWindow inherits Window {
                                 }
 
                                 // 2. Preset CPU / GPU / VP9 según el códec activo
-                                if root.custom-codec == "h264_vaapi" || root.custom-codec == "hevc_vaapi": VerticalLayout {
+                                if !root.is-windows && (root.custom-codec == "h264_vaapi" || root.custom-codec == "hevc_vaapi"): VerticalLayout {
                                     spacing: 8px;
                                     Text {
                                         text: "Velocidad de codificación (Motor físico VCE / VA-API):";
@@ -1780,44 +2125,48 @@ export component AppWindow inherits Window {
                                         font-weight: 700;
                                         color: Theme.on-surface;
                                     }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        M3PresetChip {
-                                            text: "p1 (Máx FPS)";
-                                            is-active: root.custom-preset == "ultrafast" || root.custom-preset == "p1";
-                                            clicked => {
-                                                root.custom-preset = "ultrafast";
-                                                root.set-custom-preset("ultrafast");
+                                    Flickable {
+                                        height: 38px;
+                                        nvenc-presets-row := HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            M3PresetChip {
+                                                text: "p1 (Máx FPS)";
+                                                is-active: root.custom-preset == "ultrafast" || root.custom-preset == "p1";
+                                                clicked => {
+                                                    root.custom-preset = "ultrafast";
+                                                    root.set-custom-preset("ultrafast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "p2 (Súper rápido)";
-                                            is-active: root.custom-preset == "superfast" || root.custom-preset == "p2";
-                                            clicked => {
-                                                root.custom-preset = "superfast";
-                                                root.set-custom-preset("superfast");
+                                            M3PresetChip {
+                                                text: "p2 (Súper rápido)";
+                                                is-active: root.custom-preset == "superfast" || root.custom-preset == "p2";
+                                                clicked => {
+                                                    root.custom-preset = "superfast";
+                                                    root.set-custom-preset("superfast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "p3 (Rápido)";
-                                            is-active: root.custom-preset == "veryfast" || root.custom-preset == "p3";
-                                            clicked => {
-                                                root.custom-preset = "veryfast";
-                                                root.set-custom-preset("veryfast");
+                                            M3PresetChip {
+                                                text: "p3 (Rápido)";
+                                                is-active: root.custom-preset == "veryfast" || root.custom-preset == "p3";
+                                                clicked => {
+                                                    root.custom-preset = "veryfast";
+                                                    root.set-custom-preset("veryfast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "p4 (Equilibrado)";
-                                            is-active: root.custom-preset == "fast" || root.custom-preset == "p4";
-                                            clicked => {
-                                                root.custom-preset = "fast";
-                                                root.set-custom-preset("fast");
+                                            M3PresetChip {
+                                                text: "p4 (Equilibrado)";
+                                                is-active: root.custom-preset == "fast" || root.custom-preset == "p4";
+                                                clicked => {
+                                                    root.custom-preset = "fast";
+                                                    root.set-custom-preset("fast");
+                                                }
                                             }
                                         }
                                     }
                                 }
 
-                                if root.custom-codec == "h264_amf" || root.custom-codec == "hevc_amf": VerticalLayout {
+                                if root.is-windows && (root.custom-codec == "h264_amf" || root.custom-codec == "hevc_amf"): VerticalLayout {
                                     spacing: 8px;
                                     Text {
                                         text: "Perfil de hardware AMD AMF:";
@@ -1825,30 +2174,34 @@ export component AppWindow inherits Window {
                                         font-weight: 700;
                                         color: Theme.on-surface;
                                     }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        M3PresetChip {
-                                            text: "speed (Velocidad)";
-                                            is-active: root.custom-preset == "ultrafast" || root.custom-preset == "speed";
-                                            clicked => {
-                                                root.custom-preset = "ultrafast";
-                                                root.set-custom-preset("ultrafast");
+                                    Flickable {
+                                        height: 38px;
+                                        amf-presets-row := HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            M3PresetChip {
+                                                text: "speed (Velocidad)";
+                                                is-active: root.custom-preset == "ultrafast" || root.custom-preset == "speed";
+                                                clicked => {
+                                                    root.custom-preset = "ultrafast";
+                                                    root.set-custom-preset("ultrafast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "balanced (Equilibrado)";
-                                            is-active: root.custom-preset == "veryfast" || root.custom-preset == "balanced";
-                                            clicked => {
-                                                root.custom-preset = "veryfast";
-                                                root.set-custom-preset("veryfast");
+                                            M3PresetChip {
+                                                text: "balanced (Equilibrado)";
+                                                is-active: root.custom-preset == "veryfast" || root.custom-preset == "balanced";
+                                                clicked => {
+                                                    root.custom-preset = "veryfast";
+                                                    root.set-custom-preset("veryfast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "quality (Calidad)";
-                                            is-active: root.custom-preset == "fast" || root.custom-preset == "quality";
-                                            clicked => {
-                                                root.custom-preset = "fast";
-                                                root.set-custom-preset("fast");
+                                            M3PresetChip {
+                                                text: "quality (Calidad)";
+                                                is-active: root.custom-preset == "fast" || root.custom-preset == "quality";
+                                                clicked => {
+                                                    root.custom-preset = "fast";
+                                                    root.set-custom-preset("fast");
+                                                }
                                             }
                                         }
                                     }
@@ -1862,38 +2215,42 @@ export component AppWindow inherits Window {
                                         font-weight: 700;
                                         color: Theme.on-surface;
                                     }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        M3PresetChip {
-                                            text: "veryfast (TU7)";
-                                            is-active: root.custom-preset == "ultrafast" || root.custom-preset == "veryfast";
-                                            clicked => {
-                                                root.custom-preset = "ultrafast";
-                                                root.set-custom-preset("ultrafast");
+                                    Flickable {
+                                        height: 38px;
+                                        qsv-presets-row := HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            M3PresetChip {
+                                                text: "veryfast (TU7)";
+                                                is-active: root.custom-preset == "ultrafast" || root.custom-preset == "veryfast";
+                                                clicked => {
+                                                    root.custom-preset = "ultrafast";
+                                                    root.set-custom-preset("ultrafast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "faster (TU6)";
-                                            is-active: root.custom-preset == "superfast" || root.custom-preset == "faster";
-                                            clicked => {
-                                                root.custom-preset = "superfast";
-                                                root.set-custom-preset("superfast");
+                                            M3PresetChip {
+                                                text: "faster (TU6)";
+                                                is-active: root.custom-preset == "superfast" || root.custom-preset == "faster";
+                                                clicked => {
+                                                    root.custom-preset = "superfast";
+                                                    root.set-custom-preset("superfast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "fast (TU4)";
-                                            is-active: root.custom-preset == "veryfast" || root.custom-preset == "fast";
-                                            clicked => {
-                                                root.custom-preset = "veryfast";
-                                                root.set-custom-preset("veryfast");
+                                            M3PresetChip {
+                                                text: "fast (TU4)";
+                                                is-active: root.custom-preset == "veryfast" || root.custom-preset == "fast";
+                                                clicked => {
+                                                    root.custom-preset = "veryfast";
+                                                    root.set-custom-preset("veryfast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "medium (TU3)";
-                                            is-active: root.custom-preset == "fast" || root.custom-preset == "medium";
-                                            clicked => {
-                                                root.custom-preset = "fast";
-                                                root.set-custom-preset("fast");
+                                            M3PresetChip {
+                                                text: "medium (TU3)";
+                                                is-active: root.custom-preset == "fast" || root.custom-preset == "medium";
+                                                clicked => {
+                                                    root.custom-preset = "fast";
+                                                    root.set-custom-preset("fast");
+                                                }
                                             }
                                         }
                                     }
@@ -1907,38 +2264,42 @@ export component AppWindow inherits Window {
                                         font-weight: 700;
                                         color: Theme.on-surface;
                                     }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        M3PresetChip {
-                                            text: "CPU-8 (Ultra rápido)";
-                                            is-active: root.custom-preset == "ultrafast" || root.custom-preset == "8";
-                                            clicked => {
-                                                root.custom-preset = "ultrafast";
-                                                root.set-custom-preset("ultrafast");
+                                    Flickable {
+                                        height: 38px;
+                                        vp9-presets-row := HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            M3PresetChip {
+                                                text: "CPU-8 (Ultra rápido)";
+                                                is-active: root.custom-preset == "ultrafast" || root.custom-preset == "8";
+                                                clicked => {
+                                                    root.custom-preset = "ultrafast";
+                                                    root.set-custom-preset("ultrafast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "CPU-7 (Súper rápido)";
-                                            is-active: root.custom-preset == "superfast" || root.custom-preset == "7";
-                                            clicked => {
-                                                root.custom-preset = "superfast";
-                                                root.set-custom-preset("superfast");
+                                            M3PresetChip {
+                                                text: "CPU-7 (Súper rápido)";
+                                                is-active: root.custom-preset == "superfast" || root.custom-preset == "7";
+                                                clicked => {
+                                                    root.custom-preset = "superfast";
+                                                    root.set-custom-preset("superfast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "CPU-6 (Rápido)";
-                                            is-active: root.custom-preset == "veryfast" || root.custom-preset == "6";
-                                            clicked => {
-                                                root.custom-preset = "veryfast";
-                                                root.set-custom-preset("veryfast");
+                                            M3PresetChip {
+                                                text: "CPU-6 (Rápido)";
+                                                is-active: root.custom-preset == "veryfast" || root.custom-preset == "6";
+                                                clicked => {
+                                                    root.custom-preset = "veryfast";
+                                                    root.set-custom-preset("veryfast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "CPU-5 (Equilibrado)";
-                                            is-active: root.custom-preset == "fast" || root.custom-preset == "5";
-                                            clicked => {
-                                                root.custom-preset = "fast";
-                                                root.set-custom-preset("fast");
+                                            M3PresetChip {
+                                                text: "CPU-5 (Equilibrado)";
+                                                is-active: root.custom-preset == "fast" || root.custom-preset == "5";
+                                                clicked => {
+                                                    root.custom-preset = "fast";
+                                                    root.set-custom-preset("fast");
+                                                }
                                             }
                                         }
                                     }
@@ -1952,38 +2313,42 @@ export component AppWindow inherits Window {
                                         font-weight: 700;
                                         color: Theme.on-surface;
                                     }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        M3PresetChip {
-                                            text: "ultrafast";
-                                            is-active: root.custom-preset == "ultrafast";
-                                            clicked => {
-                                                root.custom-preset = "ultrafast";
-                                                root.set-custom-preset("ultrafast");
+                                    Flickable {
+                                        height: 38px;
+                                        cpu-presets-row := HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            M3PresetChip {
+                                                text: "ultrafast";
+                                                is-active: root.custom-preset == "ultrafast";
+                                                clicked => {
+                                                    root.custom-preset = "ultrafast";
+                                                    root.set-custom-preset("ultrafast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "superfast";
-                                            is-active: root.custom-preset == "superfast";
-                                            clicked => {
-                                                root.custom-preset = "superfast";
-                                                root.set-custom-preset("superfast");
+                                            M3PresetChip {
+                                                text: "superfast";
+                                                is-active: root.custom-preset == "superfast";
+                                                clicked => {
+                                                    root.custom-preset = "superfast";
+                                                    root.set-custom-preset("superfast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "veryfast";
-                                            is-active: root.custom-preset == "veryfast";
-                                            clicked => {
-                                                root.custom-preset = "veryfast";
-                                                root.set-custom-preset("veryfast");
+                                            M3PresetChip {
+                                                text: "veryfast";
+                                                is-active: root.custom-preset == "veryfast";
+                                                clicked => {
+                                                    root.custom-preset = "veryfast";
+                                                    root.set-custom-preset("veryfast");
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "fast";
-                                            is-active: root.custom-preset == "fast";
-                                            clicked => {
-                                                root.custom-preset = "fast";
-                                                root.set-custom-preset("fast");
+                                            M3PresetChip {
+                                                text: "fast";
+                                                is-active: root.custom-preset == "fast";
+                                                clicked => {
+                                                    root.custom-preset = "fast";
+                                                    root.set-custom-preset("fast");
+                                                }
                                             }
                                         }
                                     }
@@ -1998,38 +2363,42 @@ export component AppWindow inherits Window {
                                         font-weight: 700;
                                         color: Theme.on-surface;
                                     }
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        M3PresetChip {
-                                            text: "18 (Ultra)";
-                                            is-active: root.custom-crf <= 18;
-                                            clicked => {
-                                                root.custom-crf = 18;
-                                                root.set-custom-crf(18);
+                                    Flickable {
+                                        height: 38px;
+                                        crf-row := HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            M3PresetChip {
+                                                text: "18 (Ultra)";
+                                                is-active: root.custom-crf <= 18;
+                                                clicked => {
+                                                    root.custom-crf = 18;
+                                                    root.set-custom-crf(18);
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "21 (Alta)";
-                                            is-active: root.custom-crf > 18 && root.custom-crf <= 21;
-                                            clicked => {
-                                                root.custom-crf = 21;
-                                                root.set-custom-crf(21);
+                                            M3PresetChip {
+                                                text: "21 (Alta)";
+                                                is-active: root.custom-crf > 18 && root.custom-crf <= 21;
+                                                clicked => {
+                                                    root.custom-crf = 21;
+                                                    root.set-custom-crf(21);
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "23 (Equilibrada)";
-                                            is-active: root.custom-crf > 21 && root.custom-crf <= 25;
-                                            clicked => {
-                                                root.custom-crf = 23;
-                                                root.set-custom-crf(23);
+                                            M3PresetChip {
+                                                text: "23 (Equilibrada)";
+                                                is-active: root.custom-crf > 21 && root.custom-crf <= 25;
+                                                clicked => {
+                                                    root.custom-crf = 23;
+                                                    root.set-custom-crf(23);
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "28 (Bajo peso)";
-                                            is-active: root.custom-crf > 25;
-                                            clicked => {
-                                                root.custom-crf = 28;
-                                                root.set-custom-crf(28);
+                                            M3PresetChip {
+                                                text: "28 (Bajo peso)";
+                                                is-active: root.custom-crf > 25;
+                                                clicked => {
+                                                    root.custom-crf = 28;
+                                                    root.set-custom-crf(28);
+                                                }
                                             }
                                         }
                                     }
@@ -2097,114 +2466,6 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Gestor de Perfiles de Hardware de Equipos
-                        M3Card {
-                            content-padding: 18px;
-                            card-background: Theme.surface-container-low;
-                            card-radius: Theme.radius-xl;
-                            card-border-width: 0px;
-
-                            VerticalLayout {
-                                spacing: 14px;
-
-                                HorizontalLayout {
-                                    alignment: space-between;
-
-                                    VerticalLayout {
-                                        horizontal-stretch: 1;
-                                        min-width: 0px;
-                                        spacing: 2px;
-                                        Text {
-                                            text: "Gestor de perfiles de equipo";
-                                            font-size: 15px;
-                                            font-weight: 600;
-                                            color: Theme.primary;
-                                            overflow: elide;
-                                            min-width: 0px;
-                                        }
-                                        Text {
-                                            text: "Guarda, exporta y carga perfiles optimizados para PCs o laptops específicos (~/.config/sane-rec/profiles/).";
-                                            font-size: Theme.font-body-small;
-                                            color: Theme.on-surface-variant;
-                                            wrap: word-wrap;
-                                            min-width: 0px;
-                                        }
-                                    }
-
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        M3Button {
-                                            text: root.width < 680px ? "Importar" : "Importar (.toml)";
-                                            variant: "tonal";
-                                            btn-height: 34px;
-                                            btn-padding-h: 14px;
-                                            clicked => { root.import-hardware-profile(); }
-                                        }
-                                        M3Button {
-                                            text: root.width < 680px ? "Guardar" : "Guardar actual";
-                                            variant: "tonal";
-                                            btn-height: 34px;
-                                            btn-padding-h: 14px;
-                                            clicked => { root.save-hardware-profile(root.selected-profile-name); }
-                                        }
-                                    }
-                                }
-
-                                // Selector de perfiles disponibles
-                                VerticalLayout {
-                                    spacing: 8px;
-                                    Text {
-                                        text: "Perfiles guardados en el sistema:";
-                                        font-size: Theme.font-label-medium;
-                                        font-weight: 700;
-                                        color: Theme.on-surface;
-                                    }
-
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        for p-name in root.available-profiles-list: M3PresetChip {
-                                            text: p-name;
-                                            is-active: root.selected-profile-name == p-name || root.active-system-profile == p-name;
-                                            clicked => {
-                                                root.selected-profile-name = p-name;
-                                                root.active-system-profile = p-name;
-                                                root.load-hardware-profile(p-name);
-                                                root.load-system-profile(p-name);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Acciones sobre el perfil seleccionado (Outlined button con borde sutil Theme.outline-variant)
-                                HorizontalLayout {
-                                    spacing: 12px;
-                                    alignment: start;
-
-                                    M3Button {
-                                        text: root.selected-profile-name != "" ? ("Cargar '" + root.selected-profile-name + "'") : "Selecciona un perfil";
-                                        variant: "filled";
-                                        btn-height: 36px;
-                                        btn-padding-h: 16px;
-                                        enabled: root.selected-profile-name != "";
-                                        clicked => {
-                                            root.load-hardware-profile(root.selected-profile-name);
-                                        }
-                                    }
-
-                                    M3Button {
-                                        text: "Exportar para compartir...";
-                                        variant: "outlined";
-                                        btn-height: 36px;
-                                        btn-padding-h: 16px;
-                                        enabled: root.selected-profile-name != "";
-                                        clicked => {
-                                            root.export-hardware-profile(root.selected-profile-name);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
                         // Duración del Búfer de Repetición (Slider M3)
                         M3Card {
                             content-padding: 18px;
@@ -2246,60 +2507,64 @@ export component AppWindow inherits Window {
                                 }
 
                                 // Chips de Presets rápidos
-                                HorizontalLayout {
-                                    spacing: 8px;
+                                Flickable {
+                                    height: 38px;
+                                    dur-chips-row := HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
 
-                                    M3PresetChip {
-                                        text: "15s";
-                                        is-active: root.replay-duration == 15;
-                                        clicked => {
-                                            root.replay-duration = 15;
-                                            root.select-replay-duration(15);
+                                        M3PresetChip {
+                                            text: "15s";
+                                            is-active: root.replay-duration == 15;
+                                            clicked => {
+                                                root.replay-duration = 15;
+                                                root.select-replay-duration(15);
+                                            }
                                         }
-                                    }
 
-                                    M3PresetChip {
-                                        text: "30s";
-                                        is-active: root.replay-duration == 30;
-                                        clicked => {
-                                            root.replay-duration = 30;
-                                            root.select-replay-duration(30);
+                                        M3PresetChip {
+                                            text: "30s";
+                                            is-active: root.replay-duration == 30;
+                                            clicked => {
+                                                root.replay-duration = 30;
+                                                root.select-replay-duration(30);
+                                            }
                                         }
-                                    }
 
-                                    M3PresetChip {
-                                        text: "45s";
-                                        is-active: root.replay-duration == 45;
-                                        clicked => {
-                                            root.replay-duration = 45;
-                                            root.select-replay-duration(45);
+                                        M3PresetChip {
+                                            text: "45s";
+                                            is-active: root.replay-duration == 45;
+                                            clicked => {
+                                                root.replay-duration = 45;
+                                                root.select-replay-duration(45);
+                                            }
                                         }
-                                    }
 
-                                    M3PresetChip {
-                                        text: "60s";
-                                        is-active: root.replay-duration == 60;
-                                        clicked => {
-                                            root.replay-duration = 60;
-                                            root.select-replay-duration(60);
+                                        M3PresetChip {
+                                            text: "60s";
+                                            is-active: root.replay-duration == 60;
+                                            clicked => {
+                                                root.replay-duration = 60;
+                                                root.select-replay-duration(60);
+                                            }
                                         }
-                                    }
 
-                                    M3PresetChip {
-                                        text: "90s";
-                                        is-active: root.replay-duration == 90;
-                                        clicked => {
-                                            root.replay-duration = 90;
-                                            root.select-replay-duration(90);
+                                        M3PresetChip {
+                                            text: "90s";
+                                            is-active: root.replay-duration == 90;
+                                            clicked => {
+                                                root.replay-duration = 90;
+                                                root.select-replay-duration(90);
+                                            }
                                         }
-                                    }
 
-                                    M3PresetChip {
-                                        text: "120s";
-                                        is-active: root.replay-duration == 120;
-                                        clicked => {
-                                            root.replay-duration = 120;
-                                            root.select-replay-duration(120);
+                                        M3PresetChip {
+                                            text: "120s";
+                                            is-active: root.replay-duration == 120;
+                                            clicked => {
+                                                root.replay-duration = 120;
+                                                root.select-replay-duration(120);
+                                            }
                                         }
                                     }
                                 }
@@ -2316,22 +2581,16 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // Almacenamiento y Formato
-                        M3Card {
-                            content-padding: 18px;
-                            card-background: Theme.surface-container-low;
-                            card-radius: Theme.radius-xl;
-                            card-border-width: 0px;
+                        // Submenú Desplegable 3: Compresor Automático para Discord y Formato de Archivo
+                        M3CollapsibleCard {
+                            title: "Compresor automático para Discord y almacenamiento";
+                            subtitle: "Carpeta de salida, contenedor (.mp4 / .mkv) y modo doble clip ligero";
+                            badge-text: "." + root.selected-format + (root.dual-clip ? (" • Discord " + root.discord-target-mb + "MB") : "");
+                            icon-name: "folder";
+                            expanded: false;
 
                             VerticalLayout {
                                 spacing: 18px;
-
-                                Text {
-                                    text: "Almacenamiento y formato";
-                                    font-size: 15px;
-                                    font-weight: 600;
-                                    color: Theme.primary;
-                                }
 
                                 // Carpeta
                                 VerticalLayout {
@@ -2384,6 +2643,17 @@ export component AppWindow inherits Window {
                                                         root.output-path = self.text;
                                                     }
                                                 }
+                                            }
+                                        }
+
+                                        M3Button {
+                                            text: "Guardar ruta";
+                                            variant: "filled";
+                                            btn-height: 42px;
+                                            btn-padding-h: 16px;
+                                            clicked => {
+                                                root.output-path = path-input.text;
+                                                root.change-output-dir(path-input.text);
                                             }
                                         }
 
@@ -2456,7 +2726,7 @@ export component AppWindow inherits Window {
                                             }
 
                                             Text {
-                                                text: "Genera automáticamente en segundo plano una segunda versión optimizada para compartir en Discord sin exceder el límite de peso.";
+                                                text: "Genera automáticamente en segundo plano una segunda versión optimizada solo para clips de replay.";
                                                 font-size: Theme.font-body-small;
                                                 color: Theme.on-surface-variant;
                                                 wrap: word-wrap;
@@ -2513,61 +2783,21 @@ export component AppWindow inherits Window {
                                                 }
                                             }
                                         }
-
-                                        Rectangle {
-                                            height: 36px;
-                                            border-radius: Theme.radius-sm;
-                                            background: Theme.surface-container-highest;
-                                            border-width: 0px;
-
-                                            HorizontalLayout {
-                                                padding-left: 12px;
-                                                padding-right: 12px;
-                                                spacing: 8px;
-
-                                                M3Icon {
-                                                    name: "lightbulb";
-                                                    icon-size: 16px;
-                                                    icon-color: Theme.primary;
-                                                    y: Math.floor((parent.height - self.height) / 2px) * 1px;
-                                                }
-
-                                                Text {
-                                                    text: "Se guardarán el archivo original (" + root.selected-format + ") y la copia ligera (<nombre>_discord." + root.selected-format + ")";
-                                                    font-size: 12px;
-                                                    color: Theme.on-surface-variant;
-                                                    vertical-alignment: center;
-                                                    overflow: elide;
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             }
                         }
 
-                        // Selector interactivo de Atajos de Teclado (Sentence case, cero bordes)
-                        M3Card {
-                            content-padding: 18px;
-                            card-background: Theme.surface-container-low;
-                            card-radius: Theme.radius-xl;
-                            card-border-width: 0px;
+                        // Submenú Desplegable 4: Atajos de Teclado Globales (Keybinds)
+                        M3CollapsibleCard {
+                            title: root.is-windows ? "Atajos de teclado globales (Windows)" : "Atajos de teclado globales (Keybinds)";
+                            subtitle: "Configura las teclas rápidas para guardar replays y alternar grabaciones";
+                            badge-text: root.shortcut-save + " / " + root.shortcut-record;
+                            icon-name: "keyboard";
+                            expanded: false;
 
                             VerticalLayout {
                                 spacing: 16px;
-
-                                Text {
-                                    text: root.backend-title == "Windows DXGI" ? "Atajos globales en Windows (DirectX / Escritorio)" : "Atajos de teclado globales (niri / Wayland)";
-                                    font-size: 15px;
-                                    font-weight: 600;
-                                    color: Theme.primary;
-                                }
-
-                                Text {
-                                    text: root.backend-title == "Windows DXGI" ? "Selecciona o presiona el atajo que prefieras. Funciona en juegos y en el escritorio." : "Selecciona el atajo que te resulte más cómodo. Se actualiza automáticamente en niri sin reiniciar la sesión.";
-                                    font-size: Theme.font-body-small;
-                                    color: Theme.on-surface-variant;
-                                }
 
                                 // Atajo Guardar Replay
                                 VerticalLayout {
@@ -2622,15 +2852,15 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                         M3PresetChip {
-                                            text: "Mod+F10";
-                                            is-active: root.shortcut-save == "Mod+F10";
+                                            text: root.is-windows ? "Ctrl+Shift+S" : "Mod+F10";
+                                            is-active: root.shortcut-save == (root.is-windows ? "Ctrl+Shift+S" : "Mod+F10");
                                             clicked => {
-                                                root.shortcut-save = "Mod+F10";
-                                                root.custom-save-text = "Mod+F10";
+                                                root.shortcut-save = root.is-windows ? "Ctrl+Shift+S" : "Mod+F10";
+                                                root.custom-save-text = root.shortcut-save;
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
-                                        M3PresetChip {
+                                        if !root.is-windows: M3PresetChip {
                                             text: "Mod+Shift+S";
                                             is-active: root.shortcut-save == "Mod+Shift+S";
                                             clicked => {
@@ -2647,7 +2877,7 @@ export component AppWindow inherits Window {
                                         M3ShortcutField {
                                             horizontal-stretch: 1;
                                             text <=> root.custom-save-text;
-                                            placeholder: "Presiona una tecla (ej. F10, Alt+F10, Mod+Shift+S)...";
+                                            placeholder: "Presiona una tecla (ej. F10, Alt+F10)...";
                                             accepted(val) => {
                                                 if val != "" {
                                                     root.shortcut-save = val;
@@ -2724,15 +2954,15 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                         M3PresetChip {
-                                            text: "Mod+F9";
-                                            is-active: root.shortcut-record == "Mod+F9";
+                                            text: root.is-windows ? "Ctrl+Shift+R" : "Mod+F9";
+                                            is-active: root.shortcut-record == (root.is-windows ? "Ctrl+Shift+R" : "Mod+F9");
                                             clicked => {
-                                                root.shortcut-record = "Mod+F9";
-                                                root.custom-record-text = "Mod+F9";
+                                                root.shortcut-record = root.is-windows ? "Ctrl+Shift+R" : "Mod+F9";
+                                                root.custom-record-text = root.shortcut-record;
                                                 root.update-shortcuts(root.shortcut-save, root.shortcut-record);
                                             }
                                         }
-                                        M3PresetChip {
+                                        if !root.is-windows: M3PresetChip {
                                             text: "Mod+Shift+R";
                                             is-active: root.shortcut-record == "Mod+Shift+R";
                                             clicked => {
@@ -2749,7 +2979,7 @@ export component AppWindow inherits Window {
                                         M3ShortcutField {
                                             horizontal-stretch: 1;
                                             text <=> root.custom-record-text;
-                                            placeholder: "Presiona una tecla (ej. F9, Alt+F9, Mod+Shift+R)...";
+                                            placeholder: "Presiona una tecla (ej. F9, Alt+F9)...";
                                             accepted(val) => {
                                                 if val != "" {
                                                     root.shortcut-record = val;
@@ -2780,6 +3010,8 @@ export component AppWindow inherits Window {
                     // VISTA 4: GALERÍA DE REPLAYS (Sentence case, cero bordes)
                     // ---------------------------------------------------------
                     if root.active-view == 4: VerticalLayout {
+                        padding-top: 16px;
+                        padding-bottom: 24px;
                         spacing: 20px;
 
                         // Header Galería
@@ -2956,6 +3188,8 @@ export component AppWindow inherits Window {
                     // VISTA 5: GUÍA DE USO Y NOVEDADES (Sentence case, cero bordes)
                     // ---------------------------------------------------------
                     if root.active-view == 5: VerticalLayout {
+                        padding-top: 16px;
+                        padding-bottom: 24px;
                         spacing: 20px;
 
                         // Header Guía
@@ -3005,6 +3239,8 @@ export component AppWindow inherits Window {
 
                         // SUBTAB 0: TUTORIAL INTERACTIVO & ANIMADO
                         if root.guide-subtab == 0: VerticalLayout {
+                            padding-top: 16px;
+                            padding-bottom: 24px;
                             spacing: 18px;
 
                             // Recorrido visual interactivo animado (Walkthrough Strip)
@@ -3246,7 +3482,7 @@ export component AppWindow inherits Window {
                                             Text {
                                                 horizontal-stretch: 1;
                                                 text: root.tutorial-step == 0 ? "Puedes elegir entre 15 y 120 segundos de repetición en Ajustes según la memoria que desees asignar." :
-                                                      root.tutorial-step == 1 ? "Compatible con PipeWire / dmabuf en Wayland y DXGI Desktop Duplication en Windows con impacto casi nulo en FPS." :
+                                                      root.tutorial-step == 1 ? (root.is-windows || root.backend-title == "Windows DXGI" ? "Compatible con DXGI Desktop Duplication en Windows con impacto casi nulo en FPS." : "Compatible con PipeWire / dmabuf en Wayland con impacto casi nulo en FPS.") :
                                                       root.tutorial-step == 2 ? "También puedes iniciar grabaciones largas completas con " + root.shortcut-record + " cuando quieras grabar una partida entera." :
                                                       "Activa el 'Modo doble clip' en Ajustes o usa el botón 'Discord' en la Galería para copiar el archivo directo al portapapeles.";
                                                 font-size: Theme.font-body-small;
@@ -3332,7 +3568,7 @@ export component AppWindow inherits Window {
 
                                     Text {
                                         horizontal-stretch: 1;
-                                        text: "Activa el interruptor 'Daemon replay' en el Panel de control para iniciar el búfer circular en memoria RAM. A diferencia de otros grabadores tradicionales, sane-rec mantiene los segmentos de video exclusivamente en memoria volátil sin realizar escrituras constantes en tu disco SSD/NVMe, evitando su desgaste. Cuando ocurra un momento destacado, presiona el atajo global (F10 o Mod+Shift+S) y los últimos 30 a 120 segundos se volcarán al disco instantáneamente.";
+                                        text: "Activa el interruptor 'Daemon replay' en el Panel de control para iniciar el búfer circular en memoria RAM. A diferencia de otros grabadores tradicionales, sane-rec mantiene los segmentos de video exclusivamente en memoria volátil sin realizar escrituras constantes en tu disco SSD/NVMe, evitando su desgaste. Cuando ocurra un momento destacado, presiona el atajo global (" + root.shortcut-save + ") y los últimos " + root.replay-duration + " segundos se volcarán al disco instantáneamente.";
                                         font-size: Theme.font-body-medium;
                                         color: Theme.on-surface-variant;
                                         wrap: word-wrap;
@@ -3472,7 +3708,7 @@ export component AppWindow inherits Window {
 
                                         Text {
                                             horizontal-stretch: 1;
-                                            text: "Paso 4: Optimización para Juegos y Hardware (Polaris VA-API, Minecraft y Laptops)";
+                                            text: root.is-windows || root.backend-title == "Windows DXGI" ? "Paso 4: Optimización para Juegos y Hardware (Minecraft, GPU y Laptops)" : "Paso 4: Optimización para Juegos y Hardware (Polaris VA-API, Minecraft y Laptops)";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.on-surface;
@@ -3482,7 +3718,7 @@ export component AppWindow inherits Window {
 
                                     Text {
                                         horizontal-stretch: 1;
-                                        text: "• AMD Polaris VA-API Zero B-Frames (-b 0): Gracias a la desactivación estricta de B-frames y captura directa DMA-BUF, las gráficas AMD Radeon RX 470/480/570/580 (Polaris VCE 3.4) ahora graban fluidamente por aceleración de hardware en Linux Wayland a 60 FPS con solo ~3% de uso de CPU y 0 cuelgues del kernel ('ring vce0 timeout').\n• Minecraft Java sin pausa automática: Para capturar Minecraft Java sin que se abra el menú de pausa (ESC) al interactuar con otra ventana o superposición, presiona el atajo F3 + P dentro de Minecraft (desactiva la pausa al perder foco) o utiliza el modo de captura de Monitor Completo en sane-rec.\n• Perfiles 'Sane Safe (CPU)' y 'Pavilion Gaming - Celsius': Diseñados para mantener 0% de carga en el codificador de la GPU dedicada, evitando conflictos con overlays como MSI Afterburner / RivaTuner y manteniendo temperaturas óptimas en laptops gaming.";
+                                        text: root.is-windows || root.backend-title == "Windows DXGI" ? "• Aceleración por Hardware Direct3D / AMF / NVENC: En Windows, sane-rec utiliza captura acelerada y codificación directa por GPU con soporte para resoluciones estiradas y bajo consumo de CPU.\n• Minecraft Java sin pausa automática: Para capturar Minecraft Java sin que se abra el menú de pausa (ESC) al interactuar con otra ventana o superposición, presiona el atajo F3 + P dentro de Minecraft (desactiva la pausa al perder foco) o utiliza el modo de captura de Monitor Completo en sane-rec.\n• Perfil 'Sane Safe (CPU)': Diseñado para codificar por CPU sin sobrecargar la tarjeta de video, evitando conflictos con overlays como MSI Afterburner / RivaTuner y manteniendo temperaturas estables en laptops gaming." : "• AMD Polaris VA-API Zero B-Frames (-b 0): Gracias a la desactivación estricta de B-frames y captura directa DMA-BUF, las gráficas AMD Radeon RX 470/480/570/580 (Polaris VCE 3.4) ahora graban fluidamente por aceleración de hardware en Linux Wayland a 60 FPS con solo ~3% de uso de CPU y 0 cuelgues del kernel ('ring vce0 timeout').\n• Minecraft Java sin pausa automática: Para capturar Minecraft Java sin que se abra el menú de pausa (ESC) al interactuar con otra ventana o superposición, presiona el atajo F3 + P dentro de Minecraft (desactiva la pausa al perder foco) o utiliza el modo de captura de Monitor Completo en sane-rec.\n• Perfiles 'Sane Safe (CPU)' y 'Pavilion Gaming - Celsius': Diseñados para mantener 0% de carga en el codificador de la GPU dedicada, evitando conflictos con overlays como MSI Afterburner / RivaTuner y manteniendo temperaturas óptimas en laptops gaming.";
                                         font-size: Theme.font-body-medium;
                                         color: Theme.on-surface-variant;
                                         wrap: word-wrap;
@@ -3493,6 +3729,8 @@ export component AppWindow inherits Window {
 
                         // SUBTAB 1: CHANGELOG / NOVEDADES
                         if root.guide-subtab == 1: VerticalLayout {
+                            padding-top: 16px;
+                            padding-bottom: 24px;
                             spacing: 16px;
 
                             // Banner destacado si hay una actualización disponible con notas de versión
@@ -3536,7 +3774,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            // v0.5.7
+                            // v0.6.0 (Actual / Destacado)
                             M3Card {
                                 content-padding: 18px;
                                 card-background: Theme.surface-container-low;
@@ -3552,7 +3790,7 @@ export component AppWindow inherits Window {
                                         Text {
                                             horizontal-stretch: 1;
                                             min-width: 0px;
-                                            text: "v0.5.7 — Stretched Res 16:9, 60 FPS CFR y Selector en Vivo";
+                                            text: "v0.6.0 — Motor de Temas, Submenús Desplegables y Estabilidad Total";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.primary;
@@ -3581,7 +3819,43 @@ export component AppWindow inherits Window {
                                     Text {
                                         horizontal-stretch: 1;
                                         min-width: 0px;
-                                        text: "• Estirado Automático 16:9 para Resoluciones Competitivas: soporte nativo con setdar=16/9 para resoluciones estiradas (1440x1080, 1280x960, etc.) en Fortnite, CS2 y Valorant, eliminando barras negras y mostrando el clip tal como se ve en pantalla.\n• Captura y Codificación Fluida a 60 FPS Constantes: implementación de -vsync cfr con filtro fast_bilinear y remoción del límite de hilos en CPU (libx264) para clips fluidos sin pérdida de cuadros en Windows.\n• Selector de FPS en Vivo y Selección de Pantalla Nativa: conexión en tiempo real del selector 30/60 FPS con reinicio inmediato del búfer y preservación de escala nativa sin reescalados forzados al seleccionar monitores.";
+                                        text: "• Motor de Temas Reactivo en vivo: Sane Dark, Sane Light, OLED Pitch Black, Minecraft Edition (con texturas pixel-art reales y bisel 3D) y Liquid Glass (iOS / Aero) (con refracción especular y orbes de luz), más soporte de Temas de la Comunidad (.toml).\n• Interfaz ergonómica con submenús desplegables (M3CollapsibleCard) y soporte completo para monitores compactos sin recortes visuales.\n• Arranque instantáneo (<100ms), desacople del compresor Discord de grabaciones continuas, streaming directo RAM→FFmpeg sin %TEMP% en Windows, segmentos .ts en Linux sin errores moov atom y sincronización caliente Daemon↔GUI con cero procesos zombies.";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.5.7
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            min-width: 0px;
+                                            text: "v0.5.7 — Búfer Circular MPEG-TS Alineado a 188 Bytes y Selector FPS en Vivo";
+                                            font-size: Theme.font-title-medium;
+                                            font-weight: 700;
+                                            color: Theme.primary;
+                                            vertical-alignment: center;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "• Alineación estricta a paquetes MPEG-TS (0x47) y cabeceras PAT/PMT/IDR en RAM, selector rápido de 30/60/120 FPS y mejoras de captura de ventanas.\n• Estirado Automático 16:9 para Resoluciones Competitivas: soporte nativo con setdar=16/9 para resoluciones estiradas en Fortnite, CS2 y Valorant, eliminando barras negras.\n• Captura y Codificación Fluida a 60 FPS Constantes: implementación de -vsync cfr con filtro fast_bilinear para clips fluidos sin pérdida de cuadros en Windows.";
                                         font-size: Theme.font-body-medium;
                                         color: Theme.on-surface-variant;
                                         wrap: word-wrap;

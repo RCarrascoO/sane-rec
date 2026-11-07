@@ -189,9 +189,9 @@ mod tests {
 
     #[test]
     fn test_build_video_pipeline_sane_safe() {
-        let pipeline = build_video_pipeline(&EncoderProfile::SaneSafe, Some("DVI-D-1"), 60);
+        let pipeline = build_video_pipeline(&EncoderProfile::SaneSafe, None, 60);
 
-        assert!(pipeline.contains("pipewiresrc target-object=DVI-D-1 do-timestamp=true"));
+        assert!(pipeline.contains("pipewiresrc do-timestamp=true"));
         assert!(pipeline.contains("video/x-raw,framerate=60/1"));
         assert!(pipeline.contains("videoconvert"));
         assert!(pipeline.contains("x264enc speed-preset=ultrafast tune=zerolatency key-int-max=60 bframes=0"));

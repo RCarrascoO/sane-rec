@@ -47,7 +47,7 @@ jobs:
           cp -r profiles/*.toml "${PACKAGE_DIR}/profiles/"
           cp assets/sane-rec.desktop "${PACKAGE_DIR}/assets/"
           cp assets/sane-rec.svg "${PACKAGE_DIR}/assets/"
-          cp assets/sane-rec.png "${PACKAGE_DIR}/assets/"
+          cp assets/*.png "${PACKAGE_DIR}/assets/"
           tar -czf "${PACKAGE_DIR}.tar.gz" "${PACKAGE_DIR}"
           sha256sum "${PACKAGE_DIR}.tar.gz" > "${PACKAGE_DIR}.tar.gz.sha256"
 

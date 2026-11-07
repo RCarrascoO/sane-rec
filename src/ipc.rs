@@ -214,8 +214,22 @@ pub fn send_command_sync(action: &str) -> Result<IpcResponse> {
 #[cfg(target_os = "windows")]
 pub fn send_command_sync(action: &str) -> Result<IpcResponse> {
     use std::io::{BufRead, BufReader, Write};
+    use std::net::SocketAddr;
+    use std::time::Duration;
 
-    let mut stream = std::net::TcpStream::connect("127.0.0.1:45892")?;
+    let (conn_timeout, rw_timeout) = if action == "status" {
+        (Duration::from_millis(500), Duration::from_millis(1500))
+    } else {
+        (Duration::from_millis(1500), Duration::from_secs(5))
+    };
+
+    let addr: SocketAddr = "127.0.0.1:45892".parse().map_err(|e| {
+        IpcError::Custom(format!("Invalid socket address: {}", e))
+    })?;
+    let mut stream = std::net::TcpStream::connect_timeout(&addr, conn_timeout)?;
+    let _ = stream.set_read_timeout(Some(rw_timeout));
+    let _ = stream.set_write_timeout(Some(rw_timeout));
+
     let req = IpcRequest {
         action: action.to_string(),
     };
@@ -242,8 +256,18 @@ pub fn send_command_sync(action: &str) -> Result<IpcResponse> {
 pub fn send_command_sync_at(path: &Path, action: &str) -> Result<IpcResponse> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    let (_conn_timeout, rw_timeout) = if action == "status" {
+        (Duration::from_millis(500), Duration::from_millis(1500))
+    } else {
+        (Duration::from_millis(1500), Duration::from_secs(5))
+    };
 
     let mut stream = UnixStream::connect(path)?;
+    let _ = stream.set_read_timeout(Some(rw_timeout));
+    let _ = stream.set_write_timeout(Some(rw_timeout));
+
     let req = IpcRequest {
         action: action.to_string(),
     };
@@ -439,7 +463,9 @@ pub fn parse_windows_hotkey(shortcut: &str) -> Option<(u32, u32)> {
 static HOTKEY_CONFIG: std::sync::OnceLock<std::sync::Mutex<(String, String)>> = std::sync::OnceLock::new();
 #[allow(dead_code)]
 static HOTKEY_THREAD_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-static HOTKEY_RELOAD_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[allow(dead_code)]
+static HOTKEY_LISTENER_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static HOTKEYS_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Notifica y actualiza en caliente los atajos globales de Windows sin necesidad de reiniciar la app.
 pub fn reload_windows_hotkeys(save: &str, record: &str) {
@@ -447,7 +473,12 @@ pub fn reload_windows_hotkeys(save: &str, record: &str) {
     if let Ok(mut lock) = mutex.lock() {
         *lock = (save.to_string(), record.to_string());
     }
-    HOTKEY_RELOAD_FLAG.store(true, std::sync::atomic::Ordering::SeqCst);
+    mark_hotkeys_dirty();
+}
+
+/// Marca los atajos de Windows como modificados/sucios para forzar su reinscripción.
+pub fn mark_hotkeys_dirty() {
+    HOTKEYS_DIRTY.store(true, std::sync::atomic::Ordering::SeqCst);
 
     #[cfg(target_os = "windows")]
     {
@@ -464,16 +495,30 @@ pub fn reload_windows_hotkeys(save: &str, record: &str) {
 /// Inicia el listener de Hotkeys Globales en Windows.
 #[cfg(target_os = "windows")]
 pub fn spawn_global_hotkeys_listener() {
-    std::thread::Builder::new()
+    use std::sync::atomic::Ordering;
+
+    if HOTKEY_LISTENER_ACTIVE
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+
+    if std::thread::Builder::new()
         .name("sane-rec-win-hotkeys".into())
         .spawn(move || {
             run_windows_hotkey_loop();
+            HOTKEY_LISTENER_ACTIVE.store(false, Ordering::SeqCst);
         })
-        .ok();
+        .is_err()
+    {
+        HOTKEY_LISTENER_ACTIVE.store(false, Ordering::SeqCst);
+    }
 }
 
 #[cfg(target_os = "windows")]
 fn run_windows_hotkey_loop() {
+    use std::sync::atomic::Ordering;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         RegisterHotKey, UnregisterHotKey, MOD_NOREPEAT,
     };
@@ -488,7 +533,7 @@ fn run_windows_hotkey_loop() {
     }
 
     let tid = unsafe { GetCurrentThreadId() };
-    HOTKEY_THREAD_ID.store(tid, std::sync::atomic::Ordering::SeqCst);
+    HOTKEY_THREAD_ID.store(tid, Ordering::SeqCst);
 
     let mut msg: MSG = unsafe { std::mem::zeroed() };
     unsafe {
@@ -521,79 +566,95 @@ fn run_windows_hotkey_loop() {
         let rec_binding = parse_windows_hotkey(&current_record).unwrap_or((MOD_NOREPEAT, VK_F9));
         let save_binding = parse_windows_hotkey(&current_save).unwrap_or((MOD_NOREPEAT, VK_F10));
 
-        let mut rec_registered = RegisterHotKey(
+        let ok_rec = RegisterHotKey(
             std::ptr::null_mut(),
             HOTKEY_ID_RECORD,
             rec_binding.0,
             rec_binding.1,
-        ) != 0;
+        );
 
-        let mut save_registered = if save_binding != rec_binding {
+        let ok_save = if save_binding != rec_binding {
             RegisterHotKey(
                 std::ptr::null_mut(),
                 HOTKEY_ID_SAVE,
                 save_binding.0,
                 save_binding.1,
-            ) != 0
+            )
         } else {
             eprintln!(
                 "Aviso: Los atajos de grabar ('{}') y guardar ('{}') colisionan; se omitió el registro duplicado.",
                 current_record, current_save
             );
-            true
+            1
         };
+
+        let mut hotkeys_registered: bool = (ok_rec != 0) && (ok_save != 0);
+        let mut last_trigger = std::time::Instant::now() - std::time::Duration::from_secs(1);
 
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             if msg.message == WM_HOTKEY {
-                match msg.wParam as i32 {
-                    HOTKEY_ID_RECORD => {
-                        let _ = send_command_sync("record_toggle");
+                if last_trigger.elapsed() >= std::time::Duration::from_millis(350) {
+                    last_trigger = std::time::Instant::now();
+                    match msg.wParam as i32 {
+                        HOTKEY_ID_RECORD => {
+                            std::thread::spawn(|| {
+                                let _ = send_command_sync("record_toggle");
+                            });
+                        }
+                        HOTKEY_ID_SAVE => {
+                            std::thread::spawn(|| {
+                                let _ = send_command_sync("save");
+                            });
+                        }
+                        _ => {}
                     }
-                    HOTKEY_ID_SAVE => {
-                        let _ = send_command_sync("save");
-                    }
-                    _ => {}
                 }
             } else if msg.message == (WM_USER + 101) || msg.message == WM_TIMER {
-                if HOTKEY_RELOAD_FLAG.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let dirty = HOTKEYS_DIRTY.swap(false, Ordering::SeqCst);
+                let (new_save, new_rec) = if dirty {
                     if let Some(mutex) = HOTKEY_CONFIG.get() {
                         if let Ok(lock) = mutex.lock() {
-                            let (new_save, new_record) = lock.clone();
-                            UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD);
-                            UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE);
-                            current_save = new_save;
-                            current_record = new_record;
-                            rec_registered = false;
-                            save_registered = false;
+                            lock.clone()
+                        } else {
+                            (current_save.clone(), current_record.clone())
                         }
+                    } else {
+                        (current_save.clone(), current_record.clone())
                     }
-                }
+                } else {
+                    (current_save.clone(), current_record.clone())
+                };
 
-                if !rec_registered {
-                    let rec_b = parse_windows_hotkey(&current_record).unwrap_or((MOD_NOREPEAT, VK_F9));
+                let changed = (new_save != current_save) || (new_rec != current_record);
+
+                if changed || dirty || !hotkeys_registered {
                     UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_RECORD);
-                    rec_registered = RegisterHotKey(
+                    UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE);
+                    current_save = new_save;
+                    current_record = new_rec;
+
+                    let rec_b = parse_windows_hotkey(&current_record).unwrap_or((MOD_NOREPEAT, VK_F9));
+                    let save_b = parse_windows_hotkey(&current_save).unwrap_or((MOD_NOREPEAT, VK_F10));
+
+                    let ok_rec = RegisterHotKey(
                         std::ptr::null_mut(),
                         HOTKEY_ID_RECORD,
                         rec_b.0,
                         rec_b.1,
-                    ) != 0;
-                }
+                    );
 
-                if !save_registered {
-                    let rec_b = parse_windows_hotkey(&current_record).unwrap_or((MOD_NOREPEAT, VK_F9));
-                    let save_b = parse_windows_hotkey(&current_save).unwrap_or((MOD_NOREPEAT, VK_F10));
-                    if save_b != rec_b {
-                        UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID_SAVE);
-                        save_registered = RegisterHotKey(
+                    let ok_save = if save_b != rec_b {
+                        RegisterHotKey(
                             std::ptr::null_mut(),
                             HOTKEY_ID_SAVE,
                             save_b.0,
                             save_b.1,
-                        ) != 0;
+                        )
                     } else {
-                        save_registered = true;
-                    }
+                        1
+                    };
+
+                    hotkeys_registered = (ok_rec != 0) && (ok_save != 0);
                 }
             }
             TranslateMessage(&msg);

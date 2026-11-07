@@ -260,28 +260,22 @@ pub fn perform_update() -> Result<String, String> {
             find_binary_recursive(&tmp_dir)?
         };
 
-        let current_exe = std::env::current_exe().unwrap_or_else(|_| {
-            if let Some(user_dirs) = directories::BaseDirs::new() {
-                user_dirs
-                    .home_dir()
-                    .join(".local")
-                    .join("bin")
-                    .join("sane-rec")
-            } else {
-                PathBuf::from("/home/sane/.local/bin/sane-rec")
-            }
-        });
+        let fallback_path = || {
+            directories::BaseDirs::new()
+                .and_then(|b| {
+                    b.executable_dir()
+                        .map(|p| p.join("sane-rec"))
+                        .or_else(|| Some(b.home_dir().join(".local/bin/sane-rec")))
+                })
+                .unwrap_or_else(|| PathBuf::from("sane-rec"))
+        };
+
+        let current_exe = std::env::current_exe().unwrap_or_else(|_| fallback_path());
 
         let target_dest = if current_exe.exists() {
             current_exe
-        } else if let Some(user_dirs) = directories::BaseDirs::new() {
-            user_dirs
-                .home_dir()
-                .join(".local")
-                .join("bin")
-                .join("sane-rec")
         } else {
-            PathBuf::from("/home/sane/.local/bin/sane-rec")
+            fallback_path()
         };
 
         let dest_dir = target_dest.parent().unwrap_or_else(|| Path::new("."));

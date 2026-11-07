@@ -2,26 +2,142 @@
 // Google Pixel UI - Android 15/16 Material You Expressive Dark Theme
 
 export global Theme {
-    // Superficies (Elevación tonal en lugar de bordes)
-    out property <color> surface: #141218;                  // Fondo principal de la ventana y Navigation Rail
-    out property <color> surface-dim: #141218;
-    out property <color> surface-container-lowest: #0F0D13;
-    out property <color> surface-container-low: #1D1B20;    // Tarjetas de sección grandes
-    out property <color> surface-container: #211F26;        // Tarjetas estándar (Métricas, filas de lista)
-    out property <color> surface-container-high: #2B2930;   // Contenedores interactivos / Hover
-    out property <color> surface-container-highest: #36343B;// Sliders inactivos, badges secundarios
+    // Selector de tema activo
+    in-out property <string> active-theme: "dark";
+    out property <bool> is-minecraft: root.active-theme == "minecraft";
+    out property <bool> is-glass: root.active-theme == "liquid-glass";
 
-    // Primarios (Acentos principales, switches, sliders activos, CTA)
-    out property <color> primary: #D0BCFF;
-    out property <color> on-primary: #381E72;
-    out property <color> primary-container: #4F378B;
-    out property <color> on-primary-container: #EADDFF;
+    // Propiedades inyectables para temas comunitarios ("custom")
+    in-out property <color> custom-surface: #141218;
+    in-out property <color> custom-surface-container: #211F26;
+    in-out property <color> custom-primary: #D0BCFF;
+    in-out property <color> custom-on-primary: #381E72;
+    in-out property <color> custom-on-surface: #E6E0E9;
+    in-out property <color> custom-outline: #938F99;
+    in-out property <float> custom-radius-scale: 1.0;
 
-    // Secundarios (Navigation Rail pill activa, botones tonales)
-    out property <color> secondary: #CCC2DC;
-    out property <color> on-secondary: #332D41;
-    out property <color> secondary-container: #4A4458;
-    out property <color> on-secondary-container: #E8DEF8;
+    // Superficies (Elevación tonal reactiva)
+    out property <color> surface:
+        root.active-theme == "light" ? #FEF7FF :
+        root.active-theme == "oled" ? #000000 :
+        root.active-theme == "minecraft" ? #1E1E1F :
+        root.active-theme == "liquid-glass" ? #0D1117 :
+        root.active-theme == "custom" ? root.custom-surface :
+        #141218;
+
+    out property <color> surface-dim:
+        root.active-theme == "light" ? #DED8E1 :
+        root.active-theme == "oled" ? #000000 :
+        root.active-theme == "minecraft" ? #181819 :
+        root.active-theme == "liquid-glass" ? #090C10 :
+        root.active-theme == "custom" ? root.custom-surface.darker(0.08) :
+        #141218;
+
+    out property <color> surface-container-lowest:
+        root.active-theme == "light" ? #FFFFFF :
+        root.active-theme == "oled" ? #000000 :
+        root.active-theme == "minecraft" ? #141415 :
+        root.active-theme == "liquid-glass" ? #080B10 :
+        root.active-theme == "custom" ? root.custom-surface.darker(0.18) :
+        #0F0D13;
+
+    out property <color> surface-container-low:
+        root.active-theme == "light" ? #F7F2FA :
+        root.active-theme == "oled" ? #050507 :
+        root.active-theme == "minecraft" ? #262728 :
+        root.active-theme == "liquid-glass" ? #161B26CC :
+        root.active-theme == "custom" ? root.custom-surface-container.darker(0.08) :
+        #1D1B20;
+
+    out property <color> surface-container:
+        root.active-theme == "light" ? #F3EDF7 :
+        root.active-theme == "oled" ? #0A0A0E :
+        root.active-theme == "minecraft" ? #313233 :
+        root.active-theme == "liquid-glass" ? #1E2536BF :
+        root.active-theme == "custom" ? root.custom-surface-container :
+        #211F26;
+
+    out property <color> surface-container-high:
+        root.active-theme == "light" ? #ECE6F0 :
+        root.active-theme == "oled" ? #121218 :
+        root.active-theme == "minecraft" ? #3C3D3E :
+        root.active-theme == "liquid-glass" ? #283147CC :
+        root.active-theme == "custom" ? root.custom-surface-container.brighter(0.12) :
+        #2B2930;
+
+    out property <color> surface-container-highest:
+        root.active-theme == "light" ? #E6E0E9 :
+        root.active-theme == "oled" ? #1A1A22 :
+        root.active-theme == "minecraft" ? #48494A :
+        root.active-theme == "liquid-glass" ? #34405CD9 :
+        root.active-theme == "custom" ? root.custom-surface-container.brighter(0.24) :
+        #36343B;
+
+    // Primarios
+    out property <color> primary:
+        root.active-theme == "light" ? #6750A4 :
+        root.active-theme == "oled" ? #D0BCFF :
+        root.active-theme == "minecraft" ? #55FF55 :
+        root.active-theme == "liquid-glass" ? #0A84FF :
+        root.active-theme == "custom" ? root.custom-primary :
+        #D0BCFF;
+
+    out property <color> on-primary:
+        root.active-theme == "light" ? #FFFFFF :
+        root.active-theme == "oled" ? #1E0E4A :
+        root.active-theme == "minecraft" ? #0B2E0B :
+        root.active-theme == "liquid-glass" ? #FFFFFF :
+        root.active-theme == "custom" ? root.custom-on-primary :
+        #381E72;
+
+    out property <color> primary-container:
+        root.active-theme == "light" ? #EADDFF :
+        root.active-theme == "oled" ? #381E72 :
+        root.active-theme == "minecraft" ? #2D6E1E :
+        root.active-theme == "liquid-glass" ? #004080B3 :
+        root.active-theme == "custom" ? root.custom-primary.darker(0.35) :
+        #4F378B;
+
+    out property <color> on-primary-container:
+        root.active-theme == "light" ? #21005D :
+        root.active-theme == "oled" ? #EADDFF :
+        root.active-theme == "minecraft" ? #D6FFD6 :
+        root.active-theme == "liquid-glass" ? #D4E8FF :
+        root.active-theme == "custom" ? root.custom-primary.brighter(0.35) :
+        #EADDFF;
+
+    // Secundarios
+    out property <color> secondary:
+        root.active-theme == "light" ? #625B71 :
+        root.active-theme == "oled" ? #CCC2DC :
+        root.active-theme == "minecraft" ? #55FF55 :
+        root.active-theme == "liquid-glass" ? #5E5CE6 :
+        root.active-theme == "custom" ? root.custom-primary :
+        #CCC2DC;
+
+    out property <color> on-secondary:
+        root.active-theme == "light" ? #FFFFFF :
+        root.active-theme == "oled" ? #231D30 :
+        root.active-theme == "minecraft" ? #FFFFFF :
+        root.active-theme == "liquid-glass" ? #FFFFFF :
+        root.active-theme == "custom" ? root.custom-on-primary :
+        #332D41;
+
+    out property <color> secondary-container:
+        root.active-theme == "light" ? #E8DEF8 :
+        root.active-theme == "oled" ? #332D41 :
+        root.active-theme == "minecraft" ? #2E8B22 :
+        root.active-theme == "liquid-glass" ? #2E2C7AB3 :
+        root.active-theme == "custom" ? root.custom-surface-container.brighter(0.18) :
+        #4A4458;
+
+    out property <color> on-secondary-container:
+        root.active-theme == "light" ? #1D192B :
+        root.active-theme == "oled" ? #E8DEF8 :
+        root.active-theme == "minecraft" ? #FFFFFF :
+        root.active-theme == "liquid-glass" ? #E0E0FF :
+        root.active-theme == "custom" ? root.custom-on-surface :
+        #E8DEF8;
 
     // Terciarios / Estados (Indicadores de búfer activo, alertas suaves)
     out property <color> tertiary: #EFB8C8;
@@ -36,18 +152,72 @@ export global Theme {
     out property <color> on-error-container: #F9DEDC;
 
     // Textos y Bordes
-    out property <color> on-surface: #E6E0E9;               // Texto principal
-    out property <color> on-surface-variant: #CAC4D0;       // Subtítulos y descripciones
-    out property <color> outline: #938F99;                  // Solo para Outlined Buttons
-    out property <color> outline-variant: #49454F;          // Divisores sutiles
+    out property <color> on-surface:
+        root.active-theme == "light" ? #1D1B20 :
+        root.active-theme == "oled" ? #FFFFFF :
+        root.active-theme == "minecraft" ? #FFFFFF :
+        root.active-theme == "liquid-glass" ? #F5F7FA :
+        root.active-theme == "custom" ? root.custom-on-surface :
+        #E6E0E9;
+
+    out property <color> on-surface-variant:
+        root.active-theme == "light" ? #49454F :
+        root.active-theme == "oled" ? #B8B2C0 :
+        root.active-theme == "minecraft" ? #C6C6C6 :
+        root.active-theme == "liquid-glass" ? #A8B3C7 :
+        root.active-theme == "custom" ? root.custom-on-surface.darker(0.18) :
+        #CAC4D0;
+
+    out property <color> outline:
+        root.active-theme == "light" ? #79747E :
+        root.active-theme == "oled" ? #524E5A :
+        root.active-theme == "minecraft" ? #8B8B8B :
+        root.active-theme == "liquid-glass" ? #FFFFFF40 :
+        root.active-theme == "custom" ? root.custom-outline :
+        #938F99;
+
+    out property <color> outline-variant:
+        root.active-theme == "light" ? #CAC4D0 :
+        root.active-theme == "oled" ? #222028 :
+        root.active-theme == "minecraft" ? #555555 :
+        root.active-theme == "liquid-glass" ? #FFFFFF22 :
+        root.active-theme == "custom" ? root.custom-outline.darker(0.3) :
+        #49454F;
 
     // Radios de esquina (M3 Expressive)
-    out property <length> radius-xs: 8px;
-    out property <length> radius-sm: 12px;
-    out property <length> radius-md: 16px;
-    out property <length> radius-lg: 20px;
-    out property <length> radius-xl: 28px;
-    out property <length> radius-full: 999px;
+    out property <length> radius-xs:
+        root.is-minecraft ? 0px :
+        root.is-glass ? 10px :
+        root.active-theme == "custom" ? (8px * root.custom-radius-scale) :
+        8px;
+
+    out property <length> radius-sm:
+        root.is-minecraft ? 0px :
+        root.is-glass ? 14px :
+        root.active-theme == "custom" ? (12px * root.custom-radius-scale) :
+        12px;
+
+    out property <length> radius-md:
+        root.is-minecraft ? 0px :
+        root.is-glass ? 20px :
+        root.active-theme == "custom" ? (16px * root.custom-radius-scale) :
+        16px;
+
+    out property <length> radius-lg:
+        root.is-minecraft ? 0px :
+        root.is-glass ? 26px :
+        root.active-theme == "custom" ? (20px * root.custom-radius-scale) :
+        20px;
+
+    out property <length> radius-xl:
+        root.is-minecraft ? 0px :
+        root.is-glass ? 32px :
+        root.active-theme == "custom" ? (28px * root.custom-radius-scale) :
+        28px;
+
+    out property <length> radius-full:
+        root.is-minecraft ? 0px :
+        999px;
 
     // Estados funcionales armónicos M3
     out property <color> success: #A8DAB5;

@@ -20,14 +20,14 @@ pub struct HardwareProfile {
 impl Default for HardwareProfile {
     fn default() -> Self {
         Self {
-            name: "Sane-Desktop-Polaris".to_string(),
-            description: "Perfil optimizado para GPUs Polaris (RX 570) y CPU multinúcleo".to_string(),
-            target_device: "AMD Polaris RX 570 / Desktop".to_string(),
+            name: "Universal-Safe".to_string(),
+            description: "Perfil universal seguro compatible con cualquier CPU y GPU".to_string(),
+            target_device: "Universal CPU / Desktop & Laptop".to_string(),
             codec: "libx264".to_string(),
             preset: "ultrafast".to_string(),
-            crf: 21,
+            crf: 23,
             fps: 60,
-            resolution: "1360x768".to_string(),
+            resolution: "none".to_string(),
             max_memory_mb: 150,
             audio_track_mode: 0,
         }
@@ -39,22 +39,33 @@ pub fn profiles_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         if let Some(user_dirs) = directories::BaseDirs::new() {
-            user_dirs.config_dir().join("sane-rec").join("profiles")
-        } else if let Ok(appdata) = std::env::var("APPDATA") {
-            PathBuf::from(appdata).join("sane-rec").join("profiles")
-        } else {
-            PathBuf::from("profiles")
+            return user_dirs.config_dir().join("sane-rec").join("profiles");
+        }
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return PathBuf::from(appdata).join("sane-rec").join("profiles");
         }
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        if let Some(user_dirs) = directories::BaseDirs::new() {
-            user_dirs.config_dir().join("sane-rec").join("profiles")
-        } else {
-            PathBuf::from("/home/sane/.config/sane-rec/profiles")
-        }
+
+    if let Some(user_dirs) = directories::BaseDirs::new() {
+        user_dirs.config_dir().join("sane-rec").join("profiles")
+    } else if let Some(proj_dirs) = directories::ProjectDirs::from("com", "sane", "sane-rec") {
+        proj_dirs.config_dir().join("profiles")
+    } else {
+        std::env::temp_dir().join("sane-rec").join("profiles")
     }
 }
+
+pub const DEFAULT_PROFILE_UNIVERSAL_SAFE: &str = r#"name = "Universal-Safe"
+description = "Perfil universal seguro compatible con cualquier CPU y GPU"
+target_device = "Universal CPU / Desktop & Laptop"
+codec = "libx264"
+preset = "ultrafast"
+crf = 23
+fps = 60
+resolution = "none"
+max_memory_mb = 150
+audio_track_mode = 0
+"#;
 
 pub const DEFAULT_PROFILE_POLARIS: &str = include_str!("../profiles/Sane-Desktop-Polaris.toml");
 pub const DEFAULT_PROFILE_NOTEBOOK: &str = include_str!("../profiles/Notebook-Universal-Safe.toml");
@@ -62,7 +73,21 @@ pub const DEFAULT_PROFILE_HIME: &str = include_str!("../profiles/hime-config.tom
 pub const DEFAULT_PROFILE_PAVILION: &str = include_str!("../profiles/Pavilion-Gaming-Celsius.toml");
 pub const DEFAULT_PROFILE_POLARIS_VAAPI: &str = include_str!("../profiles/Polaris-VAAPI-ZeroBFrames.toml");
 
-pub const DEFAULT_PROFILES: [(&str, &str); 5] = [
+pub const DEFAULT_PROFILE_AMD_AMF: &str = r#"name = "AMD-AMF-Hardware"
+description = "Aceleración por hardware GPU AMD en Windows (AMF)"
+target_device = "AMD Radeon / Windows AMF"
+codec = "h264_amf"
+preset = "speed"
+crf = 22
+fps = 60
+resolution = "none"
+max_memory_mb = 150
+audio_track_mode = 0
+"#;
+
+#[cfg(not(target_os = "windows"))]
+pub const DEFAULT_PROFILES: [(&str, &str); 6] = [
+    ("Universal-Safe.toml", DEFAULT_PROFILE_UNIVERSAL_SAFE),
     ("Sane-Desktop-Polaris.toml", DEFAULT_PROFILE_POLARIS),
     ("Notebook-Universal-Safe.toml", DEFAULT_PROFILE_NOTEBOOK),
     ("hime-config.toml", DEFAULT_PROFILE_HIME),
@@ -70,12 +95,36 @@ pub const DEFAULT_PROFILES: [(&str, &str); 5] = [
     ("Polaris-VAAPI-ZeroBFrames.toml", DEFAULT_PROFILE_POLARIS_VAAPI),
 ];
 
-/// Siembra los 5 perfiles por defecto embebidos en el binario si aún no existen en el directorio.
+#[cfg(target_os = "windows")]
+pub const DEFAULT_PROFILES: [(&str, &str); 6] = [
+    ("Universal-Safe.toml", DEFAULT_PROFILE_UNIVERSAL_SAFE),
+    ("Sane-Desktop-Polaris.toml", DEFAULT_PROFILE_POLARIS),
+    ("Notebook-Universal-Safe.toml", DEFAULT_PROFILE_NOTEBOOK),
+    ("hime-config.toml", DEFAULT_PROFILE_HIME),
+    ("Pavilion-Gaming-Celsius.toml", DEFAULT_PROFILE_PAVILION),
+    ("AMD-AMF-Hardware.toml", DEFAULT_PROFILE_AMD_AMF),
+];
+
+/// Siembra los perfiles por defecto embebidos en el binario si aún no existen en el directorio.
 pub fn seed_default_profiles() {
     let dir = profiles_dir();
     let _ = fs::create_dir_all(&dir);
 
+    #[cfg(target_os = "windows")]
+    {
+        let vaapi_file = dir.join("Polaris-VAAPI-ZeroBFrames.toml");
+        if vaapi_file.exists() {
+            let _ = fs::remove_file(&vaapi_file);
+        }
+    }
+
     for (file_name, toml_str) in DEFAULT_PROFILES {
+        #[cfg(target_os = "windows")]
+        {
+            if file_name.contains("VAAPI") || toml_str.contains("h264_vaapi") || toml_str.contains("hevc_vaapi") {
+                continue;
+            }
+        }
         let dest = dir.join(file_name);
         if !dest.exists() {
             let _ = fs::write(&dest, toml_str);
@@ -98,6 +147,12 @@ pub fn list_profiles() -> Vec<String> {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("toml") {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    #[cfg(target_os = "windows")]
+                    {
+                        if stem == "Polaris-VAAPI-ZeroBFrames" {
+                            continue;
+                        }
+                    }
                     names.push(stem.to_string());
                 }
             }
@@ -113,6 +168,13 @@ pub fn load_profile(name: &str) -> Result<HardwareProfile, String> {
     let trimmed = name.trim();
     if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
         return Err("Nombre de perfil no válido o contiene caracteres no permitidos.".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if trimmed == "Polaris-VAAPI-ZeroBFrames" || trimmed == "Polaris-VAAPI-ZeroBFrames.toml" {
+            return Err("El perfil Polaris-VAAPI no está disponible en Windows.".to_string());
+        }
     }
 
     let file_name = if trimmed.ends_with(".toml") {
@@ -134,8 +196,17 @@ pub fn load_profile(name: &str) -> Result<HardwareProfile, String> {
             .ok_or_else(|| format!("Error al leer perfil '{}': Archivo no encontrado", path.display()))?
     };
 
-    toml::from_str::<HardwareProfile>(&content)
-        .map_err(|e| format!("Error al parsear TOML del perfil: {}", e))
+    let profile: HardwareProfile = toml::from_str(&content)
+        .map_err(|e| format!("Error al parsear TOML del perfil: {}", e))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        if profile.codec == "h264_vaapi" || profile.codec == "hevc_vaapi" {
+            return Err(format!("El codec VA-API '{}' no está soportado en Windows.", profile.codec));
+        }
+    }
+
+    Ok(profile)
 }
 
 /// Guarda un perfil en el directorio de perfiles.
@@ -191,6 +262,10 @@ mod tests {
         assert_eq!(p.name, p2.name);
         assert_eq!(p.codec, p2.codec);
         assert_eq!(p.fps, p2.fps);
+        assert_eq!(p.resolution, p2.resolution);
+        assert_eq!(p.name, "Universal-Safe");
+        assert_eq!(p.resolution, "none");
+        assert_eq!(p.crf, 23);
     }
 
     #[test]
@@ -206,11 +281,20 @@ mod tests {
     fn test_init_default_profiles_creates_templates() {
         init_default_profiles();
         let profiles = list_profiles();
+        assert!(profiles.contains(&"Universal-Safe".to_string()));
         assert!(profiles.contains(&"Sane-Desktop-Polaris".to_string()));
         assert!(profiles.contains(&"Notebook-Universal-Safe".to_string()));
         assert!(profiles.contains(&"hime-config".to_string()));
         assert!(profiles.contains(&"Pavilion-Gaming-Celsius".to_string()));
+
+        #[cfg(not(target_os = "windows"))]
         assert!(profiles.contains(&"Polaris-VAAPI-ZeroBFrames".to_string()));
+
+        #[cfg(target_os = "windows")]
+        {
+            assert!(!profiles.contains(&"Polaris-VAAPI-ZeroBFrames".to_string()));
+            assert!(profiles.contains(&"AMD-AMF-Hardware".to_string()));
+        }
     }
 
     #[test]
@@ -225,12 +309,30 @@ mod tests {
             assert!(profile.max_memory_mb > 0);
         }
 
+        // Validación específica del perfil universal neutro por defecto
+        let default_prof = HardwareProfile::default();
+        assert_eq!(default_prof.name, "Universal-Safe");
+        assert_eq!(default_prof.resolution, "none");
+        assert_eq!(default_prof.codec, "libx264");
+        assert_eq!(default_prof.preset, "ultrafast");
+        assert_eq!(default_prof.crf, 23);
+        assert_eq!(default_prof.fps, 60);
+        assert_eq!(default_prof.max_memory_mb, 150);
+        assert_eq!(default_prof.audio_track_mode, 0);
+
         // Validación específica del perfil Polaris VA-API Zero B-Frames
         let polaris_vaapi: HardwareProfile = toml::from_str(DEFAULT_PROFILE_POLARIS_VAAPI)
             .expect("Polaris-VAAPI-ZeroBFrames debe parsearse limpiamente");
         assert_eq!(polaris_vaapi.name, "Polaris-VAAPI-ZeroBFrames");
         assert_eq!(polaris_vaapi.codec, "h264_vaapi");
         assert_eq!(polaris_vaapi.fps, 60);
+
+        // Validación específica del perfil AMF en Windows
+        let amf_profile: HardwareProfile = toml::from_str(DEFAULT_PROFILE_AMD_AMF)
+            .expect("AMD-AMF-Hardware debe parsearse limpiamente");
+        assert_eq!(amf_profile.name, "AMD-AMF-Hardware");
+        assert_eq!(amf_profile.codec, "h264_amf");
+        assert_eq!(amf_profile.fps, 60);
 
         // Validación específica del perfil térmico Pavilion Gaming - Celsius
         let pavilion: HardwareProfile = toml::from_str(DEFAULT_PROFILE_PAVILION)
@@ -247,5 +349,28 @@ mod tests {
         let loaded = load_profile("Pavilion-Gaming-Celsius").expect("Debe cargar Pavilion-Gaming-Celsius");
         assert_eq!(loaded.name, "Pavilion-Gaming-Celsius");
         assert_eq!(loaded.fps, 30);
+    }
+
+    #[test]
+    fn test_os_specific_profiles_filtering() {
+        let default_prof = HardwareProfile::default();
+        assert_eq!(default_prof.name, "Universal-Safe");
+        assert_eq!(default_prof.codec, "libx264");
+
+        init_default_profiles();
+        let profiles = list_profiles();
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(profiles.contains(&"Polaris-VAAPI-ZeroBFrames".to_string()));
+            assert!(!profiles.iter().any(|p| p.contains("AMF") || p.contains("Windows-Universal")));
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            assert!(!profiles.contains(&"Polaris-VAAPI-ZeroBFrames".to_string()));
+            assert!(!profiles.iter().any(|p| p.to_lowercase().contains("vaapi")));
+            assert!(profiles.contains(&"AMD-AMF-Hardware".to_string()));
+        }
     }
 }

@@ -1,5 +1,22 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.6.0 - 2026-11-07 (0.6.0)
+- **Added:**
+  - Motor de Temas Reactivo en vivo (`Sane Dark`, `Sane Light`, `OLED Pitch Black`, `Minecraft Edition` con texturas pixel-art y bisel 3D, `Liquid Glass iOS` con refracción especular y orbes de luz) + soporte de Temas de la Comunidad en `.toml` (`~/.config/sane-rec/themes/` y `%APPDATA%\sane-rec\themes\`).
+  - Arquitectura ergonómica de interfaz con submenús desplegables (`M3CollapsibleCard`).
+  - Arranque instantáneo (`<100ms`) con descubrimiento de hardware, pantallas, audio y cálculo de duraciones de galería (`ffprobe`) asíncronos en segundo plano con caché en memoria.
+  - Sincronización caliente no bloqueante entre GUI y Daemon (`reload_config`) y limpieza garantizada de procesos de captura (`Drop` anti-zombies).
+- **Fixed:**
+  - Desacople total del compresor de Discord de las grabaciones continuas normales (`Record`), limitándolo exclusivamente a clips del Replay Buffer con modo Dual Clip o compresión manual.
+  - Reparación del Daemon e IPC con timeouts estrictos de lectura/escritura/conexión en Windows y Linux.
+  - Eliminación del bloqueo del Message Loop Win32 (`WM_HOTKEY`) mediante despacho asíncrono con debounce de 350ms y prevención de doble registro de atajos entre Daemon y GUI.
+  - Reparación del selector de carpetas en Windows con hilos STA desacoplados y candado atómico anti-reentrada.
+  - Eliminación de escritura intermedia en `%TEMP%` al guardar clips en Windows (streaming directo a `ffmpeg stdin` desde RAM alineado al primer paquete IDR/PUSI de 188 bytes).
+  - Cambio de segmentos del Replay Buffer en Linux de MP4 a MPEG-TS (`.ts`) con cabeceras PAT/PMT en cada fotograma, eliminando definitivamente el fallo `moov atom not found`.
+  - Eliminación del `DAR 16:9` forzado en el filtro de escalado de Windows que deformaba monitores 16:10, 4:3, 5:4 y 21:9.
+  - Eliminación de rutas y perfiles hardcodeados del autor y filtrado de perfiles de hardware por sistema operativo.
+  - Corrección de cortes visuales en monitores compactos mediante `ScrollView` en la lista de perfiles y `Flickable` en el Navigation Rail y filas de presets.
+
 ## [0.5.7] - 2026-11-04 (v0.5.7)
 - **Estirado Automático 16:9 para Resoluciones Competitivas (`setdar=16/9`)**: Soporte nativo para resoluciones estiradas (Stretched Res) 4:3 o 5:4 (ej. `1440x1080`, `1280x960`, `1080x1080`, `1600x1080`) utilizadas competitivamente en Fortnite, Counter-Strike 2 y Valorant. El filtro de video aplica `setdar='if(gte(iw,ih),16/9,9/16)'` asegurando que el clip MP4 se guarde y reproduzca a pantalla completa en 16:9 tal como el jugador lo ve en su monitor físico, eliminando barras negras laterales y evitando clips comprimidos en 4:3.
 - **Captura y Codificación CFR a 60 FPS Constantes sin Límite de Hilos**: Eliminada la restricción hardcodeada de 2 hilos en `libx264` que estrangulaba la CPU y provocaba descarte de hasta el 70% de los cuadros durante partidas exigentes. Implementación de `-vsync cfr` y escalado ultraligero `flags=fast_bilinear` sin sobrecarga por frame en el hilo de captura de Windows (`gdigrab`), garantizando clips perfectamente fluidos a 60 FPS constantes.

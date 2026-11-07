@@ -512,9 +512,9 @@ impl ReplayEngine {
         // Perfil de codificación
         apply_profile_args(&mut cmd, config);
 
-        // Segmenter en RAM con microsegmentos de 1 segundo e intervalo keyint exacto de 1 segundo:
+        // Segmenter en RAM con microsegmentos de 1 segundo e intervalo keyint exacto de 1 segundo en formato MPEG-TS:
         let wrap_n = config.replay.duration_secs + 10;
-        let seg_pattern = format!("{}/seg_%04d.mp4", self.buffer_dir.display());
+        let seg_pattern = format!("{}/seg_%05d.ts", self.buffer_dir.display());
 
         cmd.args([
             "-m",
@@ -755,12 +755,38 @@ impl ReplayEngine {
 
             cmd.stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null());
+                .stderr(Stdio::piped());
             cmd
         };
 
         let mut cmd = build_replay_cmd(&config, audio_port);
         let mut child = cmd.spawn()?;
+
+        let stderr_log = Arc::new(Mutex::new(String::new()));
+        if let Some(mut err_pipe) = child.stderr.take() {
+            let stderr_log_clone = Arc::clone(&stderr_log);
+            std::thread::Builder::new()
+                .name("sane-rec-win-stderr".into())
+                .spawn(move || {
+                    use std::io::Read;
+                    let mut buf = [0u8; 4096];
+                    let mut ring = Vec::new();
+                    while let Ok(n) = err_pipe.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                        ring.extend_from_slice(&buf[..n]);
+                        if ring.len() > 16384 {
+                            let drain_len = ring.len() - 16384;
+                            ring.drain(..drain_len);
+                        }
+                        if let Ok(mut lock) = stderr_log_clone.lock() {
+                            *lock = String::from_utf8_lossy(&ring).into_owned();
+                        }
+                    }
+                })
+                .ok();
+        }
 
         // Verificación de salud inicial (350ms) para detectar fallos de codificador GPU o ventana inválida
         std::thread::sleep(Duration::from_millis(350));
@@ -773,6 +799,13 @@ impl ReplayEngine {
         if failed {
             let code = child.try_wait().ok().flatten().and_then(|s| s.code());
             crate::crash_handler::log_engine_failure("Inicio del Búfer de Repetición (Windows)", code);
+            let err_text = stderr_log.lock().map(|g| g.clone()).unwrap_or_default();
+            if !err_text.is_empty() {
+                crate::crash_handler::write_crash_report(
+                    "Fallo al iniciar búfer de repetición en Windows (FFmpeg stderr)",
+                    &err_text,
+                );
+            }
 
             if let Some(stop) = audio_stop.take() {
                 stop.store(true, Ordering::SeqCst);
@@ -802,10 +835,43 @@ impl ReplayEngine {
                 let mut fallback_cmd = build_replay_cmd(&config, audio_port);
                 child = fallback_cmd.spawn()?;
 
+                let fallback_stderr_log = Arc::new(Mutex::new(String::new()));
+                if let Some(mut err_pipe) = child.stderr.take() {
+                    let fallback_stderr_clone = Arc::clone(&fallback_stderr_log);
+                    std::thread::Builder::new()
+                        .name("sane-rec-win-fallback-stderr".into())
+                        .spawn(move || {
+                            use std::io::Read;
+                            let mut buf = [0u8; 4096];
+                            let mut ring = Vec::new();
+                            while let Ok(n) = err_pipe.read(&mut buf) {
+                                if n == 0 {
+                                    break;
+                                }
+                                ring.extend_from_slice(&buf[..n]);
+                                if ring.len() > 16384 {
+                                    let drain_len = ring.len() - 16384;
+                                    ring.drain(..drain_len);
+                                }
+                                if let Ok(mut lock) = fallback_stderr_clone.lock() {
+                                    *lock = String::from_utf8_lossy(&ring).into_owned();
+                                }
+                            }
+                        })
+                        .ok();
+                }
+
                 std::thread::sleep(Duration::from_millis(350));
                 if let Ok(Some(status)) = child.try_wait() {
                     if let Some(stop) = audio_stop.take() {
                         stop.store(true, Ordering::SeqCst);
+                    }
+                    let err_text = fallback_stderr_log.lock().map(|g| g.clone()).unwrap_or_default();
+                    if !err_text.is_empty() {
+                        crate::crash_handler::write_crash_report(
+                            "Fallo de fallback en búfer de repetición (FFmpeg stderr)",
+                            &err_text,
+                        );
                     }
                     return Err(EngineError::Custom(format!(
                         "ffmpeg falló al iniciar el búfer de repetición (código {:?})",
@@ -1066,13 +1132,6 @@ impl ReplayEngine {
 
         play_feedback_sound("complete");
 
-        // Si el modo "doble clip" está activo, genera en segundo plano la copia optimizada para Discord
-        let current_cfg = Config::load().unwrap_or_else(|_| self.config());
-        if current_cfg.storage.dual_clip {
-            let target_mb = current_cfg.storage.discord_target_mb;
-            crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
-        }
-
         Ok(output_path)
     }
 
@@ -1234,12 +1293,6 @@ impl ReplayEngine {
 
         play_feedback_sound("complete");
 
-        let current_cfg = Config::load().unwrap_or_else(|_| self.config());
-        if current_cfg.storage.dual_clip {
-            let target_mb = current_cfg.storage.discord_target_mb;
-            crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
-        }
-
         Ok(output_path)
     }
 
@@ -1283,7 +1336,7 @@ impl ReplayEngine {
     /// Guarda un replay del búfer actual concatenando segmentos en RAM a alta velocidad con ffmpeg en Linux.
     #[cfg(target_os = "linux")]
     pub fn save_clip(&self) -> Result<PathBuf> {
-        // 1. Escanea los segmentos seg_*.mp4 en el directorio de búfer con tamaño > 0
+        // 1. Escanea los segmentos seg_* (ts, mp4, mkv) en el directorio de búfer con tamaño > 0
         let mut segments = self.scan_segments()?;
         if segments.is_empty() {
             return Err(EngineError::NoSegments);
@@ -1303,26 +1356,16 @@ impl ReplayEngine {
 
         let duration_secs = self.config().replay.duration_secs;
 
-        // 2. Crea el archivo de lista único con líneas "file '<abs_path>'"
+        // 2. Prepara rutas de archivos únicos
         let unique_id = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let list_file = self.buffer_dir.join(format!("concat_list_{}.txt", unique_id));
         let staging_file = self
             .buffer_dir
             .join(format!(".staging_concat_{}.{}", unique_id, self.config().storage.format));
 
-        let mut list_content = String::new();
-        for seg in &segments {
-            list_content.push_str(&format!("file '{}'\n", seg.display()));
-        }
-        if let Err(e) = std::fs::write(&list_file, list_content) {
-            self.is_saving.store(false, Ordering::SeqCst);
-            return Err(EngineError::Io(e));
-        }
-
         // 3. Determina el destino final
         let config = self.config();
         if let Err(e) = config.ensure_output_dir() {
-            let _ = std::fs::remove_file(&list_file);
             self.is_saving.store(false, Ordering::SeqCst);
             return Err(EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
         }
@@ -1333,30 +1376,91 @@ impl ReplayEngine {
         let filename = format!("{}.{}", timestamp, config.storage.format);
         let output_path = config.storage.output_dir.join(filename);
 
-        // 4. Concatena los segmentos en RAM hacia el archivo staging
-        let concat_res = new_hidden_command(resolve_binary("ffmpeg"))
-            .args(["-y", "-f", "concat", "-safe", "0", "-i"])
-            .arg(&list_file)
-            .args(["-c", "copy"])
-            .arg(&staging_file)
-            .output();
+        // 4. Concatena los segmentos en RAM hacia el archivo staging con recuperación automática
+        let run_concat = |segs: &[PathBuf]| -> std::result::Result<(), String> {
+            let mut list_content = String::new();
+            for seg in segs {
+                list_content.push_str(&format!("file '{}'\n", seg.display()));
+            }
+            if let Err(e) = std::fs::write(&list_file, list_content) {
+                return Err(format!("Error al escribir lista concat: {}", e));
+            }
 
-        let _ = std::fs::remove_file(&list_file);
+            // Primer intento con -bsf:a aac_adtstoasc (requerido para empaquetar AAC de MPEG-TS en MP4)
+            let res = new_hidden_command(resolve_binary("ffmpeg"))
+                .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+                .arg(&list_file)
+                .args(["-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart"])
+                .arg(&staging_file)
+                .output();
 
-        let concat_out = match concat_res {
-            Ok(o) => o,
-            Err(e) => {
-                let _ = std::fs::remove_file(&staging_file);
-                self.is_saving.store(false, Ordering::SeqCst);
-                return Err(EngineError::Io(e));
+            let success = match res {
+                Ok(ref o) if o.status.success() => {
+                    std::fs::metadata(&staging_file).map(|m| m.len() > 0).unwrap_or(false)
+                }
+                _ => false,
+            };
+
+            if success {
+                return Ok(());
+            }
+
+            // Segundo intento sin -bsf:a (por si el formato ya está paquetizado o no es AAC)
+            let res2 = new_hidden_command(resolve_binary("ffmpeg"))
+                .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+                .arg(&list_file)
+                .args(["-c", "copy", "-movflags", "+faststart"])
+                .arg(&staging_file)
+                .output();
+
+            let success2 = match res2 {
+                Ok(ref o) if o.status.success() => {
+                    std::fs::metadata(&staging_file).map(|m| m.len() > 0).unwrap_or(false)
+                }
+                _ => false,
+            };
+
+            if success2 {
+                return Ok(());
+            }
+
+            let err_msg = res2
+                .map(|o| String::from_utf8_lossy(&o.stderr).into_owned())
+                .or_else(|_| res.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()))
+                .unwrap_or_default();
+
+            Err(err_msg)
+        };
+
+        let mut selected_segments = segments.clone();
+        let concat_res = match run_concat(&selected_segments) {
+            Ok(()) => Ok(()),
+            Err(err_msg) => {
+                // Si la concatenación falló (ej. 'moov atom not found' por el último segmento MP4
+                // en el que wf-recorder sigue escribiendo sin haber cerrado el contenedor) y hay más de un segmento,
+                // reintentamos automáticamente excluyendo el último segmento abierto.
+                if selected_segments.len() > 1 {
+                    eprintln!(
+                        "Aviso: Falló la concatenación inicial con todos los segmentos ({}); reintentando excluyendo el último segmento en escritura activa...",
+                        err_msg
+                    );
+                    selected_segments.pop();
+                    run_concat(&selected_segments)
+                } else {
+                    Err(err_msg)
+                }
             }
         };
 
-        if !concat_out.status.success() {
-            let err_msg = String::from_utf8_lossy(&concat_out.stderr);
+        let _ = std::fs::remove_file(&list_file);
+
+        if let Err(err_msg) = concat_res {
             let _ = std::fs::remove_file(&staging_file);
             self.is_saving.store(false, Ordering::SeqCst);
-            crate::crash_handler::write_crash_report("Error de concatenación en ffmpeg al guardar replay", &err_msg);
+            crate::crash_handler::write_crash_report(
+                "Error de concatenación en ffmpeg al guardar replay",
+                &err_msg,
+            );
             return Err(EngineError::FfmpegError(format!(
                 "ffmpeg concat error: {}",
                 err_msg
@@ -1451,148 +1555,177 @@ impl ReplayEngine {
         let filename = format!("{}.{}", timestamp, config.storage.format);
         let output_path = config.storage.output_dir.join(filename);
 
-        let unique_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let temp_ts = std::env::temp_dir().join(format!(
-            "sane_rec_staging_{}_{}.ts",
-            std::process::id(),
-            unique_id
-        ));
-
-        // 1. Escribir los chunks alineados al archivo temporal staging .ts
-        let write_res = (|| -> std::io::Result<()> {
-            use std::io::Write;
-            let mut f = std::io::BufWriter::new(std::fs::File::create(&temp_ts)?);
-            for chunk in &chunks {
-                f.write_all(chunk)?;
-            }
-            f.flush()?;
-            Ok(())
-        })();
-
-        if let Err(e) = write_res {
-            let _ = std::fs::remove_file(&temp_ts);
-            self.is_saving.store(false, Ordering::SeqCst);
-            return Err(EngineError::Io(e));
+        // 1. Unificar los paquetes MPEG-TS en memoria
+        let mut raw_bytes = Vec::with_capacity(chunks.iter().map(|c| c.len()).sum());
+        for chunk in &chunks {
+            raw_bytes.extend_from_slice(chunk);
         }
 
-        // 2. Intento 1: Remuxeo directo (-c:v copy) con resincronización de audio AAC
-        // FFmpeg sobre archivo físico puede hacer seek completo para encontrar el primer IDR keyframe
-        // y descartar paquetes iniciales sin SPS/PPS, garantizando video inmediato en reproductores de Windows y Discord
-        let remux_res = new_hidden_command(resolve_binary("ffmpeg"))
-            .args([
+        // 2. Localizar inicio limpio del stream MPEG-TS (recorriendo de 188 en 188 bytes)
+        // Buscando el primer paquete donde packet[0] == 0x47 y (packet[1] & 0x40) != 0 (PUSI),
+        // dando prioridad a PID 0x0000 (PAT).
+        let mut start_offset = 0;
+        let mut found_clean_start = false;
+        let total_pkts = raw_bytes.len() / 188;
+        let mut first_pusi = None;
+
+        for i in 0..total_pkts {
+            let offset = i * 188;
+            let pkt = &raw_bytes[offset..offset + 188];
+            if pkt[0] == 0x47 && (pkt[1] & 0x40) != 0 {
+                let pid = (((pkt[1] & 0x1F) as u16) << 8) | (pkt[2] as u16);
+                if pid == 0 {
+                    start_offset = offset;
+                    found_clean_start = true;
+                    break;
+                } else if first_pusi.is_none() {
+                    first_pusi = Some(offset);
+                }
+            }
+        }
+
+        if !found_clean_start {
+            if let Some(offset) = first_pusi {
+                start_offset = offset;
+                found_clean_start = true;
+            }
+        }
+
+        let stream_data: Arc<Vec<u8>> = if found_clean_start && (raw_bytes.len() - start_offset > 188 * 10) {
+            Arc::new(raw_bytes[start_offset..].to_vec())
+        } else {
+            Arc::new(raw_bytes)
+        };
+
+        // 3. Remux primario directo con ffmpeg leyendo desde pipe:0 en RAM
+        let mut remux_cmd = new_hidden_command(resolve_binary("ffmpeg"));
+        remux_cmd.args([
+            "-y",
+            "-fflags",
+            "+genpts+igndts",
+            "-f",
+            "mpegts",
+            "-i",
+            "pipe:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-af",
+            "aresample=async=1:first_pts=0",
+            "-movflags",
+            "+faststart",
+        ]);
+        remux_cmd.arg(&output_path);
+        remux_cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+
+        let copy_succeeded = match remux_cmd.spawn() {
+            Ok(mut child) => {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let data = Arc::clone(&stream_data);
+                    std::thread::spawn(move || {
+                        use std::io::Write;
+                        let _ = stdin.write_all(&data);
+                        let _ = stdin.flush();
+                    });
+                }
+                match child.wait_with_output() {
+                    Ok(ref out) if out.status.success() => {
+                        std::fs::metadata(&output_path)
+                            .map(|m| m.len() >= 1024)
+                            .unwrap_or(false)
+                    }
+                    _ => false,
+                }
+            }
+            Err(_) => false,
+        };
+
+        // 4. Fallback de transcodificación de rescate alimentando pipe:0 en RAM si el remux directo falla o pesa < 1024 bytes
+        if !copy_succeeded {
+            eprintln!("Aviso: Remux directo en pipe devolvió error o archivo <1KB; ejecutando transcodificación de rescate.");
+            let mut transcode_cmd = new_hidden_command(resolve_binary("ffmpeg"));
+            transcode_cmd.args([
                 "-y",
                 "-fflags",
-                "+genpts+igndts+discardcorrupt",
-                "-err_detect",
-                "ignore_err",
+                "+genpts+igndts",
+                "-f",
+                "mpegts",
                 "-i",
-            ])
-            .arg(&temp_ts)
-            .args([
-                "-map",
-                "0:v:0",
-                "-map",
-                "0:a:0?",
+                "pipe:0",
                 "-c:v",
-                "copy",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-crf",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+                "-vf",
+                "scale=trunc(iw/2)*2:trunc(ih/2)*2",
                 "-c:a",
                 "aac",
                 "-b:a",
                 "192k",
-                "-af",
-                "aresample=async=1:first_pts=0",
-                "-vsync",
-                "passthrough",
-                "-avoid_negative_ts",
-                "make_zero",
                 "-movflags",
                 "+faststart",
-            ])
-            .arg(&output_path)
-            .output();
+            ]);
+            transcode_cmd.arg(&output_path);
+            transcode_cmd
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped());
 
-        let copy_succeeded = match remux_res {
-            Ok(ref out) if out.status.success() => {
-                if let Ok(meta) = std::fs::metadata(&output_path) {
-                    meta.len() >= 1024
-                } else {
-                    false
+            let transcode_res = match transcode_cmd.spawn() {
+                Ok(mut child) => {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        let data = Arc::clone(&stream_data);
+                        std::thread::spawn(move || {
+                            use std::io::Write;
+                            let _ = stdin.write_all(&data);
+                            let _ = stdin.flush();
+                        });
+                    }
+                    child.wait_with_output()
                 }
-            }
-            _ => false,
-        };
-
-        // 3. Fallback infalible: Si -c:v copy falló o devolvió un archivo vacío/corrupto
-        // (ej. cambio dinámico de resolución en mitad de una partida de Fortnite),
-        // recodifica rápidamente en una pasada con libx264 ultrafast garantizando que el clip NUNCA se pierda
-        if !copy_succeeded {
-            eprintln!("Aviso: Remux directo devolvió error o archivo vacío; ejecutando transcodificación de rescate.");
-            let transcode_res = new_hidden_command(resolve_binary("ffmpeg"))
-                .args([
-                    "-y",
-                    "-fflags",
-                    "+genpts+igndts+discardcorrupt",
-                    "-err_detect",
-                    "ignore_err",
-                    "-i",
-                ])
-                .arg(&temp_ts)
-                .args([
-                    "-map",
-                    "0:v:0",
-                    "-map",
-                    "0:a:0?",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "ultrafast",
-                    "-tune",
-                    "zerolatency",
-                    "-crf",
-                    "23",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-vf",
-                    "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
-                    "-af",
-                    "aresample=async=1:first_pts=0",
-                    "-r",
-                    &config.video.fps.max(15).to_string(),
-                    "-vsync",
-                    "cfr",
-                    "-avoid_negative_ts",
-                    "make_zero",
-                    "-movflags",
-                    "+faststart",
-                ])
-                .arg(&output_path)
-                .output();
+                Err(e) => {
+                    self.is_saving.store(false, Ordering::SeqCst);
+                    return Err(EngineError::Io(e));
+                }
+            };
 
             let transcode_succeeded = match transcode_res {
                 Ok(ref out) if out.status.success() => {
-                    std::fs::metadata(&output_path).map(|m| m.len() >= 1024).unwrap_or(false)
+                    std::fs::metadata(&output_path)
+                        .map(|m| m.len() >= 1024)
+                        .unwrap_or(false)
                 }
                 _ => false,
             };
 
             if !transcode_succeeded {
-                let _ = std::fs::remove_file(&temp_ts);
                 self.is_saving.store(false, Ordering::SeqCst);
+                let err_detail = transcode_res
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stderr).into_owned())
+                    .unwrap_or_default();
+                crate::crash_handler::write_crash_report(
+                    "Fallo al transcodificar clip de rescate en Windows",
+                    &err_detail,
+                );
                 return Err(EngineError::FfmpegError(
                     "Error al guardar MP4 desde el buffer MPEG-TS en RAM".into(),
                 ));
             }
         }
 
-        // 4. Limpieza de archivo staging temporal
-        let _ = std::fs::remove_file(&temp_ts);
         self.is_saving.store(false, Ordering::SeqCst);
 
         #[cfg(not(target_os = "windows"))]
@@ -1705,7 +1838,7 @@ impl ReplayEngine {
         }
     }
 
-    /// Escanea los segmentos válidos presentes en la RAM (seg_*.mp4 o segment_*.ts con tamaño > 0).
+    /// Escanea los segmentos válidos presentes en la RAM (seg_* o segment_* con extensión .ts, .mp4 o .mkv y tamaño > 0).
     pub fn scan_segments(&self) -> Result<Vec<PathBuf>> {
         let mut segments = Vec::new();
 
@@ -1724,7 +1857,7 @@ impl ReplayEngine {
                             .unwrap_or_default();
 
                         if (name.starts_with("seg_") || name.starts_with("segment_"))
-                            && (ext == "mp4" || ext == "ts")
+                            && (ext == "ts" || ext == "mp4" || ext == "mkv")
                             && !name.contains('%')
                         {
                             if let Ok(meta) = entry.metadata() {
@@ -1755,7 +1888,7 @@ impl ReplayEngine {
                             .unwrap_or_default();
 
                         if (name.starts_with("seg_") || name.starts_with("segment_"))
-                            && (ext == "mp4" || ext == "ts")
+                            && (ext == "ts" || ext == "mp4" || ext == "mkv")
                             && !name.contains('%')
                         {
                             if let Ok(meta) = entry.metadata() {
@@ -1809,60 +1942,50 @@ impl ReplayEngine {
 
 impl Drop for ReplayEngine {
     fn drop(&mut self) {
+        if self.is_recording() {
+            let _ = self.stop_continuous_recording();
+        }
+        if self.is_running() {
+            let _ = self.stop_replay();
+        }
+
         self.pruner_running.store(false, Ordering::SeqCst);
         self.win_buffer_running.store(false, Ordering::SeqCst);
 
-        #[cfg(target_os = "linux")]
-        {
-            if let Ok(mut guard) = self.replay_process.lock() {
-                if let Some(mut child) = guard.take() {
-                    unsafe {
-                        libc::kill(child.id() as i32, libc::SIGINT);
-                    }
-                    let _ = child.wait();
-                }
-            }
-            if let Ok(mut guard) = self.continuous_process.lock() {
-                if let Some(mut child) = guard.take() {
-                    unsafe {
-                        libc::kill(child.id() as i32, libc::SIGINT);
-                    }
-                    let _ = child.wait();
-                }
-            }
-            self.cleanup_audio_modules();
-            let _ = self.clean_buffer();
-        }
-
         #[cfg(target_os = "windows")]
         {
-            if let Some(stop) = self.win_replay_audio_stop.lock().unwrap().take() {
-                stop.store(true, Ordering::SeqCst);
+            if let Ok(mut lock) = self.win_continuous_audio_stop.lock() {
+                if let Some(stop) = lock.take() {
+                    stop.store(true, Ordering::SeqCst);
+                }
             }
-            if let Some(stop) = self.win_continuous_audio_stop.lock().unwrap().take() {
-                stop.store(true, Ordering::SeqCst);
+            if let Ok(mut lock) = self.win_replay_audio_stop.lock() {
+                if let Some(stop) = lock.take() {
+                    stop.store(true, Ordering::SeqCst);
+                }
             }
+        }
 
-            if let Ok(mut guard) = self.replay_process.lock() {
-                if let Some(mut child) = guard.take() {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        use std::io::Write;
-                        let _ = stdin.write_all(b"q\n");
-                    }
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+        // Asegurar que cualquier Child restante en continuous_process reciba kill() y wait()
+        if let Ok(mut guard) = self.continuous_process.lock() {
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
-            if let Ok(mut guard) = self.continuous_process.lock() {
-                if let Some(mut child) = guard.take() {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        use std::io::Write;
-                        let _ = stdin.write_all(b"q\n");
-                    }
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+        }
+
+        // Asegurar que cualquier Child restante en replay_process reciba kill() y wait()
+        if let Ok(mut guard) = self.replay_process.lock() {
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            self.cleanup_audio_modules();
+            let _ = self.clean_buffer();
         }
     }
 }
@@ -2195,27 +2318,6 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
             .or_else(|| outputs.iter().find(|o| o.is_current))
             .or_else(|| outputs.first());
 
-        if outputs.len() == 1 {
-            if let Some(o) = matched_output {
-                if o.x == 0 && o.y == 0 {
-                    // Si la pantalla tiene 1 solo monitor en el origen, no forzamos -offset ni -video_size fijo;
-                    // gdigrab capturará automáticamente el escritorio completo adaptándose en vivo
-                    // a resoluciones estiradas/personalizadas (ej. 1440x1080 o 1280x960 en Fortnite) sin pantalla negra.
-                    cmd.args([
-                        "-f",
-                        "gdigrab",
-                        "-framerate",
-                        &fps_str,
-                        "-draw_mouse",
-                        "1",
-                        "-i",
-                        "desktop",
-                    ]);
-                    return;
-                }
-            }
-        }
-
         if let Some(o) = matched_output {
             if o.width > 0 && o.height > 0 {
                 let w = (o.width & !1).max(2);
@@ -2320,18 +2422,16 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
     }
 }
 
-/// Genera el filtro de video de Windows optimizado para resoluciones estiradas competitivas
-/// (1440x1080, 1280x960 en Fortnite/CS2/Valorant) aplicando setdar=16/9 y escalado fast_bilinear.
+/// Genera el filtro de video de Windows optimizado para resoluciones escaladas o nativas
+/// respetando la relación de aspecto real del monitor sin forzar DAR 16:9.
 #[cfg(any(target_os = "windows", test))]
 pub fn build_windows_scale_filter(scale: &str) -> String {
-    if !scale.is_empty() && scale != "none" {
-        let target_scale = scale.replace('x', ":");
-        format!(
-            "scale={}:flags=fast_bilinear,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'",
-            target_scale
-        )
+    let s = scale.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("none") || s == "Nativa (100%)" {
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2".to_string()
     } else {
-        "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'".to_string()
+        let target_scale = s.replace('x', ":");
+        format!("scale={},setsar=1/1", target_scale)
     }
 }
 
@@ -2344,14 +2444,8 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
         .parse::<EncoderProfile>()
         .unwrap_or(EncoderProfile::SaneSafe);
 
-    // Si el monitor no es vertical (iw >= ih), aplicamos setdar=16/9 para que las resoluciones
-    // estiradas competitivas (ej. 1440x1080, 1280x960 en Fortnite/CS2/Valorant) se guarden en 16:9
-    // pantalla completa tal como las ve el jugador y no comprimidas en 4:3.
-    // Además usamos fast_bilinear para escalado sin penalización de FPS.
     let scale_filter = build_windows_scale_filter(&config.video.scale);
-    let fps = config.video.fps.max(15);
-    let fps_str = fps.to_string();
-    cmd.args(["-vf", &scale_filter, "-r", &fps_str, "-vsync", "cfr"]);
+    cmd.args(["-vf", &scale_filter, "-fps_mode", "cfr"]);
 
     match profile {
         EncoderProfile::SaneSafe => {
@@ -2836,7 +2930,7 @@ mod tests {
             ram_usage_mb: 28.5,
             max_memory_mb: 150,
             active_profile: "sane-safe".to_string(),
-            output_dir: PathBuf::from("/mnt/Files/Videos/Replays"),
+            output_dir: std::env::temp_dir().join("sane-rec-test-replays"),
         };
 
         let serialized = serde_json::to_string(&status).unwrap();
@@ -3162,27 +3256,27 @@ mod tests {
     #[test]
     fn test_windows_scale_filter_stretched_res() {
         let f_native = build_windows_scale_filter("none");
-        assert_eq!(
-            f_native,
-            "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'"
-        );
+        assert_eq!(f_native, "scale=trunc(iw/2)*2:trunc(ih/2)*2");
 
         let f_empty = build_windows_scale_filter("");
-        assert_eq!(
-            f_empty,
-            "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'"
-        );
+        assert_eq!(f_empty, "scale=trunc(iw/2)*2:trunc(ih/2)*2");
+
+        let f_nativa_str = build_windows_scale_filter("Nativa (100%)");
+        assert_eq!(f_nativa_str, "scale=trunc(iw/2)*2:trunc(ih/2)*2");
 
         let f_1080p = build_windows_scale_filter("1920x1080");
-        assert_eq!(
-            f_1080p,
-            "scale=1920:1080:flags=fast_bilinear,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'"
-        );
+        assert_eq!(f_1080p, "scale=1920:1080,setsar=1/1");
 
         let f_stretched = build_windows_scale_filter("1440x1080");
-        assert_eq!(
-            f_stretched,
-            "scale=1440:1080:flags=fast_bilinear,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1/1,setdar='if(gte(iw,ih),16/9,9/16)'"
-        );
+        assert_eq!(f_stretched, "scale=1440:1080,setsar=1/1");
+    }
+
+    #[test]
+    fn test_windows_scale_filter_never_forces_16_9_dar() {
+        let f_native = build_windows_scale_filter("none");
+        assert!(!f_native.contains("setdar") && !f_native.contains("16/9") && !f_native.contains("16:9"));
+
+        let f_custom = build_windows_scale_filter("1280x1024");
+        assert!(!f_custom.contains("setdar") && !f_custom.contains("16/9") && !f_custom.contains("16:9"));
     }
 }
