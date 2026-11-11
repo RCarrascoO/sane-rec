@@ -1,5 +1,19 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.6.1 - 2026-11-10 (0.6.1)
+- **Added:**
+  - **Tema Fortnite Edition** (`#091128` Lobby oscuro, amarillo vibrante `#F7E600` con borde superior blanco de `2px`, cian `#00D2FF` y cortes angulares `4px`), con migración transparente desde configuraciones previas `liquid-glass`.
+  - **Soporte Nativo de Botones Laterales del Mouse (`Mouse4` / `Mouse5` / `MouseMiddle`)**:
+    - Captura global en Windows mediante muestreo a `20 ms` con `GetAsyncKeyState` (compatible con juegos en pantalla completa exclusiva).
+    - Listener global nativo `evdev` en Linux leyendo `/dev/input/event*` (`BTN_SIDE`, `BTN_EXTRA`, `BTN_MIDDLE` y teclado) con soporte de modificadores cruzados teclado+ratón.
+    - Chips dedicados por sistema operativo, captura interactiva de botones de ratón en las cajas de atajos de la UI y protección anti doble disparo IPC (`400 ms`).
+  - **Auto-inyección KDL en Niri y Soporte en Caliente para Hyprland**: inserción automática dentro de `binds { ... }` en `~/.config/niri/config.d/70-binds.kdl` (`MouseBack` / `MouseForward`) y registro/desregistro dinámico en Hyprland vía `hyprctl keyword bind` (`mouse:275` / `mouse:276`).
+  - **Insignia de Versión en la Barra Lateral**: indicador dinámico `app-version` en el Navigation Rail y anclaje fijo del cuadro de estado del backend al borde inferior de la ventana.
+- **Fixed:**
+  - **Texturas Tileables 1:1 en Tema Minecraft**: texturas `64x64` pixel-art (`mc_dirt_bg.png`, `mc_stone_card.png`, `mc_cobble_btn.png`, `mc_emerald_btn.png`) repetidas en mosaico (`horizontal-tiling`/`vertical-tiling: repeat` + `image-rendering: pixelated`) sin estiramientos ni deformaciones, más padding adicional en la tarjeta superior del panel.
+  - **Garbage Collector Circular en `/dev/shm` para Linux**: limpieza previa de instancias huérfanas de `wf-recorder` / segmentos residuales e hilo `sane-rec-shm-gc` cada `2s` manteniendo `duration_secs + 8` segmentos.
+  - **Pipeline Zero-Lag y Captura Stretched en Windows**: reducción de `-probesize` en `gdigrab` a `32K` (`-analyzeduration 0 -fflags +nobuffer+flush_packets`), ajustes de baja latencia en `h264_amf`, `h264_nvenc` y `libx264`, reemplazo de `GetWindowRect` por `GetClientRect` + `ClientToScreen` con truncamiento a dimensiones pares (ej. `1024x664` sin bordes DWM), y sustitución de fallbacks fijos por `GetSystemMetrics`.
+
 ## v0.6.0 - 2026-11-07 (0.6.0)
 - **Added:**
   - Motor de Temas Reactivo en vivo (`Sane Dark`, `Sane Light`, `OLED Pitch Black`, `Minecraft Edition` con texturas pixel-art y bisel 3D, `Liquid Glass iOS` con refracción especular y orbes de luz) + soporte de Temas de la Comunidad en `.toml` (`~/.config/sane-rec/themes/` y `%APPDATA%\sane-rec\themes\`).

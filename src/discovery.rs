@@ -199,6 +199,9 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
         EnumDisplayDevicesW, EnumDisplaySettingsExW, DEVMODEW, DISPLAY_DEVICEW,
         DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_PRIMARY_DEVICE, ENUM_CURRENT_SETTINGS,
     };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
+    };
 
     let mut outputs = Vec::new();
     let mut dev_idx = 0;
@@ -252,7 +255,9 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
                     )
                 }
             } else {
-                (1920, 1080, 60.0, 0, 0)
+                let sys_w = unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(0) as u32;
+                let sys_h = unsafe { GetSystemMetrics(SM_CYSCREEN) }.max(0) as u32;
+                (sys_w, sys_h, 60.0, 0, 0)
             };
 
             let is_current = (display_device.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0;
@@ -262,10 +267,18 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
                 name.clone()
             };
 
-            let description = format!(
-                "{} ({}x{} @ {:.0}Hz)",
-                display_name, width, height, refresh_rate
-            );
+            let description = if width > 0 && height > 0 {
+                if refresh_rate > 0.0 {
+                    format!(
+                        "{} ({}x{} @ {:.0}Hz)",
+                        display_name, width, height, refresh_rate
+                    )
+                } else {
+                    format!("{} ({}x{})", display_name, width, height)
+                }
+            } else {
+                display_name
+            };
 
             outputs.push(OutputInfo {
                 name,
@@ -283,11 +296,19 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
     }
 
     if outputs.is_empty() {
+        let sys_w = unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(0) as u32;
+        let sys_h = unsafe { GetSystemMetrics(SM_CYSCREEN) }.max(0) as u32;
+        let description = if sys_w > 0 && sys_h > 0 {
+            format!("Pantalla Principal ({}x{})", sys_w, sys_h)
+        } else {
+            "Pantalla Principal".to_string()
+        };
+
         outputs.push(OutputInfo {
             name: r"\\.\DISPLAY1".to_string(),
-            description: "Pantalla Principal (1920x1080 @ 60Hz)".to_string(),
-            width: 1920,
-            height: 1080,
+            description,
+            width: sys_w,
+            height: sys_h,
             refresh_rate: 60.0,
             is_current: true,
             x: 0,
@@ -596,12 +617,21 @@ pub fn get_open_windows() -> Vec<WindowInfo> {
     windows
 }
 
-/// Busca una ventana por título y devuelve las coordenadas (x, y, width, height) actuales de esa ventana o del monitor donde se encuentra.
+/// Trunca ancho y alto a números pares (mínimo 2) para compatibilidad con encoders de video.
+pub fn truncate_to_even_dimensions(width: u32, height: u32) -> (u32, u32) {
+    let w = (width & !1).max(2);
+    let h = (height & !1).max(2);
+    (w, h)
+}
+
+/// Busca una ventana por título y devuelve las coordenadas (x, y, width, height) del área cliente interna
+/// truncada a dimensiones pares (mínimo 2x2).
 #[cfg(target_os = "windows")]
 pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> {
-    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, FindWindowW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+        EnumWindows, FindWindowW, GetClientRect, GetWindowTextLengthW, GetWindowTextW,
         IsWindowVisible,
     };
 
@@ -658,53 +688,25 @@ pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> 
         return None;
     }
 
-    let mut rect: RECT = unsafe { std::mem::zeroed() };
-    if unsafe { GetWindowRect(target_hwnd, &mut rect) } == 0 {
+    let mut client_rect: RECT = unsafe { std::mem::zeroed() };
+    if unsafe { GetClientRect(target_hwnd, &mut client_rect) } == 0 {
         return None;
     }
 
-    let w = (rect.right - rect.left).max(0) as u32;
-    let h = (rect.bottom - rect.top).max(0) as u32;
-
-    let outputs = get_connected_outputs();
-    let cx = rect.left + (w as i32) / 2;
-    let cy = rect.top + (h as i32) / 2;
-
-    let matched_output = outputs
-        .iter()
-        .find(|o| cx >= o.x && cx < o.x + (o.width as i32) && cy >= o.y && cy < o.y + (o.height as i32))
-        .or_else(|| outputs.iter().find(|o| o.is_current))
-        .or_else(|| outputs.first());
-
-    if let Some(o) = matched_output {
-        let mon_w = (o.width & !1).max(2);
-        let mon_h = (o.height & !1).max(2);
-
-        if w < 64 || h < 64 {
-            return Some((o.x, o.y, mon_w, mon_h));
-        }
-
-        // Intersección de la ventana con el monitor para no exceder los límites del escritorio
-        let x1 = rect.left.max(o.x);
-        let y1 = rect.top.max(o.y);
-        let x2 = rect.right.min(o.x + o.width as i32);
-        let y2 = rect.bottom.min(o.y + o.height as i32);
-
-        let int_w = (x2 - x1).max(0) as u32;
-        let int_h = (y2 - y1).max(0) as u32;
-
-        if int_w < 64 || int_h < 64 {
-            Some((o.x, o.y, mon_w, mon_h))
-        } else {
-            Some((x1, y1, (int_w & !1).max(2), (int_h & !1).max(2)))
-        }
-    } else {
-        if w < 64 || h < 64 {
-            None
-        } else {
-            Some((rect.left, rect.top, (w & !1).max(2), (h & !1).max(2)))
-        }
+    if (client_rect.right - client_rect.left) <= 0 || (client_rect.bottom - client_rect.top) <= 0 {
+        return None;
     }
+
+    let mut top_left = POINT { x: 0, y: 0 };
+    if unsafe { ClientToScreen(target_hwnd, &mut top_left) } == 0 {
+        return None;
+    }
+
+    let client_w = (client_rect.right - client_rect.left).max(2) as u32;
+    let client_h = (client_rect.bottom - client_rect.top).max(2) as u32;
+    let (w, h) = truncate_to_even_dimensions(client_w, client_h);
+
+    Some((top_left.x, top_left.y, w, h))
 }
 
 /// En sistemas no-Windows, devuelve None.
@@ -1407,5 +1409,20 @@ mod tests {
             assert_eq!(get_window_capture_rect("Fortnite"), None);
             assert_eq!(get_window_capture_rect(""), None);
         }
+    }
+
+    #[test]
+    fn test_truncate_to_even_dimensions() {
+        // Resoluciones ya pares se mantienen exactamente iguales (ej. Fortnite stretched 1024x664 o 1920x1080)
+        assert_eq!(truncate_to_even_dimensions(1024, 664), (1024, 664));
+        assert_eq!(truncate_to_even_dimensions(1920, 1080), (1920, 1080));
+
+        // Resoluciones impares se truncan hacia abajo a pares (ej. 1025x665 -> 1024x664)
+        assert_eq!(truncate_to_even_dimensions(1025, 665), (1024, 664));
+        assert_eq!(truncate_to_even_dimensions(1361, 769), (1360, 768));
+
+        // Dimensiones mínimas aseguran al menos 2x2
+        assert_eq!(truncate_to_even_dimensions(0, 0), (2, 2));
+        assert_eq!(truncate_to_even_dimensions(1, 1), (2, 2));
     }
 }

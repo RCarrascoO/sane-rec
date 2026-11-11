@@ -5,7 +5,7 @@ export global Theme {
     // Selector de tema activo
     in-out property <string> active-theme: "dark";
     out property <bool> is-minecraft: root.active-theme == "minecraft";
-    out property <bool> is-glass: root.active-theme == "liquid-glass";
+    out property <bool> is-fortnite: root.active-theme == "fortnite";
 
     // Propiedades inyectables para temas comunitarios ("custom")
     in-out property <color> custom-surface: #141218;
@@ -21,7 +21,7 @@ export global Theme {
         root.active-theme == "light" ? #FEF7FF :
         root.active-theme == "oled" ? #000000 :
         root.active-theme == "minecraft" ? #1E1E1F :
-        root.active-theme == "liquid-glass" ? #0D1117 :
+        root.active-theme == "fortnite" ? #091128 :
         root.active-theme == "custom" ? root.custom-surface :
         #141218;
 
@@ -29,7 +29,7 @@ export global Theme {
         root.active-theme == "light" ? #DED8E1 :
         root.active-theme == "oled" ? #000000 :
         root.active-theme == "minecraft" ? #181819 :
-        root.active-theme == "liquid-glass" ? #090C10 :
+        root.active-theme == "fortnite" ? #070D20 :
         root.active-theme == "custom" ? root.custom-surface.darker(0.08) :
         #141218;
 
@@ -37,7 +37,7 @@ export global Theme {
         root.active-theme == "light" ? #FFFFFF :
         root.active-theme == "oled" ? #000000 :
         root.active-theme == "minecraft" ? #141415 :
-        root.active-theme == "liquid-glass" ? #080B10 :
+        root.active-theme == "fortnite" ? #060B1B :
         root.active-theme == "custom" ? root.custom-surface.darker(0.18) :
         #0F0D13;
 
@@ -45,7 +45,7 @@ export global Theme {
         root.active-theme == "light" ? #F7F2FA :
         root.active-theme == "oled" ? #050507 :
         root.active-theme == "minecraft" ? #262728 :
-        root.active-theme == "liquid-glass" ? #161B26CC :
+        root.active-theme == "fortnite" ? #0F1C3F :
         root.active-theme == "custom" ? root.custom-surface-container.darker(0.08) :
         #1D1B20;
 
@@ -53,7 +53,7 @@ export global Theme {
         root.active-theme == "light" ? #F3EDF7 :
         root.active-theme == "oled" ? #0A0A0E :
         root.active-theme == "minecraft" ? #313233 :
-        root.active-theme == "liquid-glass" ? #1E2536BF :
+        root.active-theme == "fortnite" ? #152654 :
         root.active-theme == "custom" ? root.custom-surface-container :
         #211F26;
 
@@ -61,7 +61,7 @@ export global Theme {
         root.active-theme == "light" ? #ECE6F0 :
         root.active-theme == "oled" ? #121218 :
         root.active-theme == "minecraft" ? #3C3D3E :
-        root.active-theme == "liquid-glass" ? #283147CC :
+        root.active-theme == "fortnite" ? #1E3570 :
         root.active-theme == "custom" ? root.custom-surface-container.brighter(0.12) :
         #2B2930;
 
@@ -69,7 +69,7 @@ export global Theme {
         root.active-theme == "light" ? #E6E0E9 :
         root.active-theme == "oled" ? #1A1A22 :
         root.active-theme == "minecraft" ? #48494A :
-        root.active-theme == "liquid-glass" ? #34405CD9 :
+        root.active-theme == "fortnite" ? #284691 :
         root.active-theme == "custom" ? root.custom-surface-container.brighter(0.24) :
         #36343B;
 
@@ -78,7 +78,7 @@ export global Theme {
         root.active-theme == "light" ? #6750A4 :
         root.active-theme == "oled" ? #D0BCFF :
         root.active-theme == "minecraft" ? #55FF55 :
-        root.active-theme == "liquid-glass" ? #0A84FF :
+        root.active-theme == "fortnite" ? #F7E600 :
         root.active-theme == "custom" ? root.custom-primary :
         #D0BCFF;
 
@@ -86,7 +86,7 @@ export global Theme {
         root.active-theme == "light" ? #FFFFFF :
         root.active-theme == "oled" ? #1E0E4A :
         root.active-theme == "minecraft" ? #0B2E0B :
-        root.active-theme == "liquid-glass" ? #FFFFFF :
+        root.active-theme == "fortnite" ? #08090C :
         root.active-theme == "custom" ? root.custom-on-primary :
         #381E72;
 
@@ -94,7 +94,7 @@ export global Theme {
         root.active-theme == "light" ? #EADDFF :
         root.active-theme == "oled" ? #381E72 :
         root.active-theme == "minecraft" ? #2D6E1E :
-        root.active-theme == "liquid-glass" ? #004080B3 :
+        root.active-theme == "fortnite" ? #00C8FF :
         root.active-theme == "custom" ? root.custom-primary.darker(0.35) :
         #4F378B;
 
@@ -102,7 +102,7 @@ export global Theme {
         root.active-theme == "light" ? #21005D :
         root.active-theme == "oled" ? #EADDFF :
         root.active-theme == "minecraft" ? #D6FFD6 :
-        root.active-theme == "liquid-glass" ? #D4E8FF :
+        root.active-theme == "fortnite" ? #051329 :
         root.active-theme == "custom" ? root.custom-primary.brighter(0.35) :
         #EADDFF;
 
@@ -111,7 +111,7 @@ export global Theme {
         root.active-theme == "light" ? #625B71 :
         root.active-theme == "oled" ? #CCC2DC :
         root.active-theme == "minecraft" ? #55FF55 :
-        root.active-theme == "liquid-glass" ? #5E5CE6 :
+        root.active-theme == "fortnite" ? #9D4DFF :
         root.active-theme == "custom" ? root.custom-primary :
         #CCC2DC;
 
@@ -119,7 +119,7 @@ export global Theme {
         root.active-theme == "light" ? #FFFFFF :
         root.active-theme == "oled" ? #231D30 :
         root.active-theme == "minecraft" ? #FFFFFF :
-        root.active-theme == "liquid-glass" ? #FFFFFF :
+        root.active-theme == "fortnite" ? #FFFFFF :
         root.active-theme == "custom" ? root.custom-on-primary :
         #332D41;
 
@@ -127,7 +127,7 @@ export global Theme {
         root.active-theme == "light" ? #E8DEF8 :
         root.active-theme == "oled" ? #332D41 :
         root.active-theme == "minecraft" ? #2E8B22 :
-        root.active-theme == "liquid-glass" ? #2E2C7AB3 :
+        root.active-theme == "fortnite" ? #3D1A78 :
         root.active-theme == "custom" ? root.custom-surface-container.brighter(0.18) :
         #4A4458;
 
@@ -135,7 +135,7 @@ export global Theme {
         root.active-theme == "light" ? #1D192B :
         root.active-theme == "oled" ? #E8DEF8 :
         root.active-theme == "minecraft" ? #FFFFFF :
-        root.active-theme == "liquid-glass" ? #E0E0FF :
+        root.active-theme == "fortnite" ? #FFFFFF :
         root.active-theme == "custom" ? root.custom-on-surface :
         #E8DEF8;
 
@@ -156,7 +156,7 @@ export global Theme {
         root.active-theme == "light" ? #1D1B20 :
         root.active-theme == "oled" ? #FFFFFF :
         root.active-theme == "minecraft" ? #FFFFFF :
-        root.active-theme == "liquid-glass" ? #F5F7FA :
+        root.active-theme == "fortnite" ? #FFFFFF :
         root.active-theme == "custom" ? root.custom-on-surface :
         #E6E0E9;
 
@@ -164,7 +164,7 @@ export global Theme {
         root.active-theme == "light" ? #49454F :
         root.active-theme == "oled" ? #B8B2C0 :
         root.active-theme == "minecraft" ? #C6C6C6 :
-        root.active-theme == "liquid-glass" ? #A8B3C7 :
+        root.active-theme == "fortnite" ? #A6C8FF :
         root.active-theme == "custom" ? root.custom-on-surface.darker(0.18) :
         #CAC4D0;
 
@@ -172,7 +172,7 @@ export global Theme {
         root.active-theme == "light" ? #79747E :
         root.active-theme == "oled" ? #524E5A :
         root.active-theme == "minecraft" ? #8B8B8B :
-        root.active-theme == "liquid-glass" ? #FFFFFF40 :
+        root.active-theme == "fortnite" ? #00D2FF :
         root.active-theme == "custom" ? root.custom-outline :
         #938F99;
 
@@ -180,44 +180,44 @@ export global Theme {
         root.active-theme == "light" ? #CAC4D0 :
         root.active-theme == "oled" ? #222028 :
         root.active-theme == "minecraft" ? #555555 :
-        root.active-theme == "liquid-glass" ? #FFFFFF22 :
+        root.active-theme == "fortnite" ? #234B8C :
         root.active-theme == "custom" ? root.custom-outline.darker(0.3) :
         #49454F;
 
     // Radios de esquina (M3 Expressive)
     out property <length> radius-xs:
         root.is-minecraft ? 0px :
-        root.is-glass ? 10px :
+        root.is-fortnite ? 4px :
         root.active-theme == "custom" ? (8px * root.custom-radius-scale) :
         8px;
 
     out property <length> radius-sm:
         root.is-minecraft ? 0px :
-        root.is-glass ? 14px :
+        root.is-fortnite ? 4px :
         root.active-theme == "custom" ? (12px * root.custom-radius-scale) :
         12px;
 
     out property <length> radius-md:
         root.is-minecraft ? 0px :
-        root.is-glass ? 20px :
+        root.is-fortnite ? 4px :
         root.active-theme == "custom" ? (16px * root.custom-radius-scale) :
         16px;
 
     out property <length> radius-lg:
         root.is-minecraft ? 0px :
-        root.is-glass ? 26px :
+        root.is-fortnite ? 4px :
         root.active-theme == "custom" ? (20px * root.custom-radius-scale) :
         20px;
 
     out property <length> radius-xl:
         root.is-minecraft ? 0px :
-        root.is-glass ? 32px :
+        root.is-fortnite ? 4px :
         root.active-theme == "custom" ? (28px * root.custom-radius-scale) :
         28px;
 
     out property <length> radius-full:
         root.is-minecraft ? 0px :
-        999px;
+        (root.is-fortnite ? 4px : 999px);
 
     // Estados funcionales armónicos M3
     out property <color> success: #A8DAB5;

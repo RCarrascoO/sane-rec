@@ -99,6 +99,7 @@ pub struct ReplayEngine {
     continuous_start_time: Mutex<Option<Instant>>,
     audio_modules: Mutex<Vec<u32>>,
     pruner_running: Arc<AtomicBool>,
+    replay_session: Arc<std::sync::atomic::AtomicU64>,
     start_lock: Mutex<()>,
     is_saving: Arc<AtomicBool>,
     #[allow(dead_code)]
@@ -139,6 +140,7 @@ impl ReplayEngine {
             continuous_start_time: Mutex::new(None),
             audio_modules: Mutex::new(Vec::new()),
             pruner_running: Arc::new(AtomicBool::new(false)),
+            replay_session: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             start_lock: Mutex::new(()),
             is_saving: Arc::new(AtomicBool::new(false)),
             win_ram_buffer: Arc::new(Mutex::new(std::collections::VecDeque::new())),
@@ -218,14 +220,14 @@ impl ReplayEngine {
             return;
         }
 
-        // Orden cronológico (más antiguo primero)
+        // Orden cronológico (más antiguo primero) con desempate por nombre
         segments.sort_by(|a, b| match (a.1, b.1) {
-            (Some(ta), Some(tb)) => ta.cmp(&tb),
+            (Some(ta), Some(tb)) => ta.cmp(&tb).then_with(|| a.0.cmp(&b.0)),
             _ => a.0.cmp(&b.0),
         });
 
-        // 1. Podar si excede la duración requerida + 3 segundos de margen
-        let max_keep = (duration_secs + 3) as usize;
+        // 1. Podar si excede la duración requerida + 8 segundos de margen
+        let max_keep = (duration_secs as usize) + 8;
         while segments.len() > max_keep {
             let oldest = segments.remove(0);
             let _ = std::fs::remove_file(&oldest.0);
@@ -586,6 +588,42 @@ impl ReplayEngine {
         cmd
     }
 
+    /// Mata cualquier instancia huérfana previa de `wf-recorder` que esté escribiendo en `buffer_dir`
+    /// sin afectar a otros procesos del sistema.
+    #[cfg(target_os = "linux")]
+    fn kill_orphaned_wf_recorders(buffer_dir: &Path) {
+        let buf_str = buffer_dir.to_string_lossy();
+        let my_pid = std::process::id();
+
+        // 1. Escanear /proc para localizar y terminar cualquier proceso wf-recorder que apunte a este buffer_dir
+        if let Ok(entries) = std::fs::read_dir("/proc") {
+            for entry in entries.flatten() {
+                if let Ok(name) = entry.file_name().into_string() {
+                    if let Ok(pid) = name.parse::<i32>() {
+                        if pid as u32 != my_pid {
+                            let cmdline_path = entry.path().join("cmdline");
+                            if let Ok(bytes) = std::fs::read(cmdline_path) {
+                                let cmd_str = String::from_utf8_lossy(&bytes);
+                                if cmd_str.contains("wf-recorder") && cmd_str.contains(&*buf_str) {
+                                    unsafe {
+                                        libc::kill(pid, libc::SIGKILL);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Ejecutar pkill -KILL -f acotado exclusivamente a wf-recorder y buffer_dir
+        let _ = new_hidden_command("pkill")
+            .args(["-KILL", "-f", &format!("wf-recorder.*{}", buf_str)])
+            .output();
+
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
     /// Inicia el proceso de grabación en búfer rodante en RAM con `wf-recorder` en Linux.
     #[cfg(target_os = "linux")]
     pub fn start_replay(&self) -> Result<()> {
@@ -594,7 +632,10 @@ impl ReplayEngine {
             return Err(EngineError::AlreadyRunning);
         }
 
-        // Limpieza preventiva del buffer
+        // Mata cualquier instancia huérfana previa de wf-recorder que esté escribiendo en buffer_dir
+        Self::kill_orphaned_wf_recorders(&self.buffer_dir);
+
+        // Limpieza exhaustiva del buffer (.ts, .mp4 y archivos de lista)
         self.clean_buffer()?;
         let _ = std::fs::create_dir_all(&self.buffer_dir);
 
@@ -649,23 +690,34 @@ impl ReplayEngine {
         *self.replay_process.lock().unwrap() = Some(child);
         *self.start_time.lock().unwrap() = Some(Instant::now());
         self.pruner_running.store(true, Ordering::SeqCst);
+        let session_id = self.replay_session.fetch_add(1, Ordering::SeqCst) + 1;
 
-        // Lanza hilo podador activo para garantizar límites estrictos de RAM y duración
-        let pruner_flag = self.pruner_running.clone();
+        // Lanza hilo Garbage Collector circular dedicado en /dev/shm para Linux
+        let pruner_flag = Arc::clone(&self.pruner_running);
+        let session_tracker = Arc::clone(&self.replay_session);
         let pruner_buf = self.buffer_dir.clone();
-        let pruner_cfg = self.config.clone();
-        let is_saving_flag = self.is_saving.clone();
+        let pruner_cfg = Arc::clone(&self.config);
+        let is_saving_flag = Arc::clone(&self.is_saving);
         std::thread::Builder::new()
-            .name("sane-rec-ram-pruner".to_string())
+            .name("sane-rec-shm-gc".into())
             .spawn(move || {
-                while pruner_flag.load(Ordering::SeqCst) {
-                    std::thread::sleep(Duration::from_millis(1000));
-                    if !pruner_flag.load(Ordering::SeqCst) {
-                        break;
+                while pruner_flag.load(Ordering::SeqCst) && session_tracker.load(Ordering::SeqCst) == session_id {
+                    // Intervalo de 2 segundos en tramos de 100ms para responder rápido al detener
+                    for _ in 0..20 {
+                        std::thread::sleep(Duration::from_millis(100));
+                        if !pruner_flag.load(Ordering::SeqCst) || session_tracker.load(Ordering::SeqCst) != session_id {
+                            return;
+                        }
                     }
+
+                    if !pruner_buf.exists() {
+                        continue;
+                    }
+
                     if is_saving_flag.load(Ordering::Relaxed) {
                         continue;
                     }
+
                     let (dur_secs, max_mb) = {
                         let c = pruner_cfg.lock().unwrap();
                         (c.replay.duration_secs, c.replay.max_memory_mb)
@@ -684,6 +736,7 @@ impl ReplayEngine {
     #[cfg(target_os = "linux")]
     pub fn stop_replay(&self) -> Result<()> {
         self.pruner_running.store(false, Ordering::SeqCst);
+        self.replay_session.fetch_add(1, Ordering::SeqCst);
         let mut guard = self.replay_process.lock().unwrap();
         if let Some(mut child) = guard.take() {
             unsafe {
@@ -1664,8 +1717,12 @@ impl ReplayEngine {
                 "ultrafast",
                 "-tune",
                 "zerolatency",
+                "-threads",
+                "4",
                 "-crf",
                 "23",
+                "-bf",
+                "0",
                 "-pix_fmt",
                 "yuv420p",
                 "-vf",
@@ -1927,10 +1984,19 @@ impl ReplayEngine {
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or_default();
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or_default();
                     if name.starts_with("seg_")
                         || name.starts_with("segment_")
                         || name.starts_with("concat_")
+                        || name.starts_with(".staging_")
+                        || ext == "ts"
+                        || ext == "mp4"
+                        || ext == "mkv"
                         || name == "concat_list.txt"
+                        || name == "list.txt"
                     {
                         let _ = std::fs::remove_file(path);
                     }
@@ -1950,6 +2016,7 @@ impl Drop for ReplayEngine {
         }
 
         self.pruner_running.store(false, Ordering::SeqCst);
+        self.replay_session.fetch_add(1, Ordering::SeqCst);
         self.win_buffer_running.store(false, Ordering::SeqCst);
 
         #[cfg(target_os = "windows")]
@@ -2357,11 +2424,11 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
     // Input 0: Video (baja latencia y búfer ágil para 60 FPS en resoluciones altas)
     cmd.args([
         "-probesize",
-        "32M",
+        "32K",
         "-analyzeduration",
         "0",
         "-fflags",
-        "nobuffer",
+        "+nobuffer+flush_packets",
         "-thread_queue_size",
         "512",
     ]);
@@ -2456,6 +2523,8 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                 "ultrafast",
                 "-tune",
                 "zerolatency",
+                "-threads",
+                "4",
                 "-crf",
                 "23",
                 "-bf",
@@ -2468,6 +2537,8 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
             cmd.args([
                 "-c:v",
                 "h264_amf",
+                "-usage",
+                "ultralowlatency",
                 "-quality",
                 "speed",
                 "-rc",
@@ -2476,6 +2547,8 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                 "22",
                 "-qp_p",
                 "22",
+                "-bf",
+                "0",
                 "-pix_fmt",
                 "yuv420p",
             ]);
@@ -2485,7 +2558,11 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                 "-c:v",
                 "h264_nvenc",
                 "-preset",
-                "p2",
+                "p1",
+                "-tune",
+                "ull",
+                "-zerolatency",
+                "1",
                 "-rc",
                 "constqp",
                 "-qp",
@@ -2522,7 +2599,7 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     "superfast" | "p2" => "p2",
                     "veryfast" | "p3" => "p3",
                     "fast" | "p4" => "p4",
-                    _ => "p3",
+                    _ => "p1",
                 };
                 let win_codec = if codec.contains("hevc") || codec.contains("265") {
                     "hevc_nvenc"
@@ -2534,6 +2611,10 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     win_codec,
                     "-preset",
                     nv_preset,
+                    "-tune",
+                    "ull",
+                    "-zerolatency",
+                    "1",
                     "-rc",
                     "constqp",
                     "-qp",
@@ -2558,6 +2639,8 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                 cmd.args([
                     "-c:v",
                     win_codec,
+                    "-usage",
+                    "ultralowlatency",
                     "-quality",
                     amf_quality,
                     "-rc",
@@ -2566,6 +2649,8 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     &crf_str,
                     "-qp_p",
                     &crf_str,
+                    "-bf",
+                    "0",
                     "-pix_fmt",
                     "yuv420p",
                 ]);
@@ -2629,6 +2714,10 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     &crf_str,
                     "-tune",
                     "zerolatency",
+                    "-threads",
+                    "4",
+                    "-bf",
+                    "0",
                     "-pix_fmt",
                     "yuv420p",
                 ]);
@@ -2647,6 +2736,8 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     &crf_str,
                     "-tune",
                     "zerolatency",
+                    "-threads",
+                    "4",
                     "-bf",
                     "0",
                     "-pix_fmt",

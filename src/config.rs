@@ -400,7 +400,277 @@ pub fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8, u8)> {
     }
 }
 
-/// Actualiza los atajos de teclado de sane-rec en el archivo de configuración de niri.
+/// Helper puro para mapear atajos de sane-rec a sintaxis de atajos KDL de Niri.
+/// Convierte "Mouse4" -> "MouseBack", "Mouse5" -> "MouseForward", "MouseMiddle" -> "MouseMiddle".
+pub fn format_niri_bind(bind: &str) -> String {
+    let parts: Vec<String> = bind
+        .split('+')
+        .map(|s| {
+            let trimmed = s.trim();
+            if trimmed.eq_ignore_ascii_case("Mouse4") {
+                "MouseBack".to_string()
+            } else if trimmed.eq_ignore_ascii_case("Mouse5") {
+                "MouseForward".to_string()
+            } else if trimmed.eq_ignore_ascii_case("MouseMiddle") {
+                "MouseMiddle".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        })
+        .collect();
+    parts.join("+")
+}
+
+/// Helper puro para aplicar y/o inyectar atajos de sane-rec en el contenido KDL de Niri.
+/// Si encuentra líneas existentes las reemplaza in-place sin duplicar.
+/// Si faltan atajos, los inserta antes de la llave de cierre `}` del bloque `binds { ... }`.
+/// Si no existe bloque `binds { ... }`, añade uno al final.
+pub fn apply_niri_binds_kdl(content: &str, save_bind: &str, record_bind: &str) -> Option<String> {
+    let niri_save_bind = format_niri_bind(save_bind);
+    let niri_record_bind = format_niri_bind(record_bind);
+    let target_save_line = format!("    {} {{ spawn \"sane-rec\" \"save\"; }}", niri_save_bind);
+    let target_record_line = format!("    {} {{ spawn \"sane-rec\" \"record\" \"toggle\"; }}", niri_record_bind);
+
+    let lines: Vec<String> = content.lines().map(String::from).collect();
+    let mut found_save = false;
+    let mut found_record = false;
+
+    let mut filtered_lines = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.contains("spawn \"sane-rec\" \"save\"") {
+            if !found_save {
+                filtered_lines.push(target_save_line.clone());
+                found_save = true;
+            }
+        } else if trimmed.contains("spawn \"sane-rec\" \"record\"") {
+            if !found_record {
+                filtered_lines.push(target_record_line.clone());
+                found_record = true;
+            }
+        } else {
+            filtered_lines.push(line);
+        }
+    }
+
+    if !found_save || !found_record {
+        let mut missing_lines = Vec::new();
+        if !found_save {
+            missing_lines.push(target_save_line);
+        }
+        if !found_record {
+            missing_lines.push(target_record_line);
+        }
+
+        let mut binds_start_idx = None;
+        let mut binds_closing_idx = None;
+        let mut depth: i32 = 0;
+
+        for (idx, line) in filtered_lines.iter().enumerate() {
+            let non_comment = if let Some(pos) = line.find("//") {
+                &line[..pos]
+            } else {
+                line.as_str()
+            };
+
+            if binds_start_idx.is_none() {
+                let trimmed = non_comment.trim_start();
+                if trimmed.starts_with("binds") {
+                    let after = trimmed["binds".len()..].trim_start();
+                    if after.starts_with('{') {
+                        binds_start_idx = Some(idx);
+                        let mut in_str = false;
+                        let mut escaped = false;
+                        for ch in non_comment.chars() {
+                            if escaped {
+                                escaped = false;
+                                continue;
+                            }
+                            if ch == '\\' && in_str {
+                                escaped = true;
+                                continue;
+                            }
+                            if ch == '"' {
+                                in_str = !in_str;
+                                continue;
+                            }
+                            if !in_str {
+                                if ch == '{' {
+                                    depth += 1;
+                                } else if ch == '}' {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        binds_closing_idx = Some(idx);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                let mut in_str = false;
+                let mut escaped = false;
+                for ch in non_comment.chars() {
+                    if escaped {
+                        escaped = false;
+                        continue;
+                    }
+                    if ch == '\\' && in_str {
+                        escaped = true;
+                        continue;
+                    }
+                    if ch == '"' {
+                        in_str = !in_str;
+                        continue;
+                    }
+                    if !in_str {
+                        if ch == '{' {
+                            depth += 1;
+                        } else if ch == '}' {
+                            depth -= 1;
+                            if depth == 0 {
+                                binds_closing_idx = Some(idx);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if binds_start_idx.is_some() && depth == 0 && binds_closing_idx.is_some() {
+                break;
+            }
+        }
+
+        if let Some(close_idx) = binds_closing_idx {
+            if binds_start_idx == Some(close_idx) {
+                let single_line = filtered_lines[close_idx].clone();
+                if let Some(last_brace_pos) = single_line.rfind('}') {
+                    let before = &single_line[..last_brace_pos];
+                    let after = &single_line[last_brace_pos + 1..];
+                    filtered_lines[close_idx] = before.trim_end().to_string();
+                    let mut insert_idx = close_idx + 1;
+                    for m_line in missing_lines {
+                        filtered_lines.insert(insert_idx, m_line);
+                        insert_idx += 1;
+                    }
+                    filtered_lines.insert(insert_idx, format!("}}{}", after));
+                }
+            } else {
+                for (offset, m_line) in missing_lines.into_iter().enumerate() {
+                    filtered_lines.insert(close_idx + offset, m_line);
+                }
+            }
+        } else {
+            if !filtered_lines.is_empty() && !filtered_lines.last().map(|s| s.trim().is_empty()).unwrap_or(false) {
+                filtered_lines.push(String::new());
+            }
+            filtered_lines.push("binds {".to_string());
+            for m_line in missing_lines {
+                filtered_lines.push(m_line);
+            }
+            filtered_lines.push("}".to_string());
+        }
+    }
+
+    let mut result = filtered_lines.join("\n");
+    if !result.is_empty() && !result.ends_with('\n') {
+        result.push('\n');
+    }
+    Some(result)
+}
+
+/// Helper puro que formatea un atajo para Hyprland devolviendo `(mods, key)`.
+/// Modificadores: Mod/Super/Win -> SUPER, Ctrl/Control -> CTRL, Shift -> SHIFT, Alt -> ALT.
+/// Ratón: Mouse4 -> mouse:275, Mouse5 -> mouse:276, MouseMiddle -> mouse:274.
+pub fn format_hyprland_bind(bind: &str) -> (String, String) {
+    let mut mods = Vec::new();
+    let mut key = String::new();
+
+    for part in bind.split('+').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        match part.to_ascii_uppercase().as_str() {
+            "MOD" | "SUPER" | "WIN" => mods.push("SUPER"),
+            "CTRL" | "CONTROL" => mods.push("CTRL"),
+            "SHIFT" => mods.push("SHIFT"),
+            "ALT" => mods.push("ALT"),
+            _ => {
+                let mapped_key = if part.eq_ignore_ascii_case("Mouse4") {
+                    "mouse:275"
+                } else if part.eq_ignore_ascii_case("Mouse5") {
+                    "mouse:276"
+                } else if part.eq_ignore_ascii_case("MouseMiddle") {
+                    "mouse:274"
+                } else {
+                    part
+                };
+                key = mapped_key.to_string();
+            }
+        }
+    }
+
+    (mods.join(" "), key)
+}
+
+#[cfg(target_os = "linux")]
+static PREV_HYPRLAND_BINDS: std::sync::OnceLock<std::sync::Mutex<Option<(String, String)>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(target_os = "linux")]
+fn update_hyprland_shortcuts(save_bind: &str, record_bind: &str) -> bool {
+    if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_err() {
+        return false;
+    }
+
+    let (save_mods, save_key) = format_hyprland_bind(save_bind);
+    let (rec_mods, rec_key) = format_hyprland_bind(record_bind);
+
+    let cur_save_combo = format!("{},{}", save_mods, save_key);
+    let cur_rec_combo = format!("{},{}", rec_mods, rec_key);
+
+    let binds_lock = PREV_HYPRLAND_BINDS.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(mut guard) = binds_lock.lock() {
+        if let Some((prev_save, prev_rec)) = guard.as_ref() {
+            if !prev_save.is_empty() {
+                let _ = std::process::Command::new("hyprctl")
+                    .args(["keyword", "unbind", prev_save])
+                    .output();
+            }
+            if !prev_rec.is_empty() {
+                let _ = std::process::Command::new("hyprctl")
+                    .args(["keyword", "unbind", prev_rec])
+                    .output();
+            }
+        }
+        *guard = Some((cur_save_combo.clone(), cur_rec_combo.clone()));
+    }
+
+    let save_arg = format!("{},exec,sane-rec save", cur_save_combo);
+    let rec_arg = format!("{},exec,sane-rec record toggle", cur_rec_combo);
+
+    let mut success = false;
+    if let Ok(status) = std::process::Command::new("hyprctl")
+        .args(["keyword", "bind", &save_arg])
+        .status()
+    {
+        if status.success() {
+            success = true;
+        }
+    }
+
+    if let Ok(status) = std::process::Command::new("hyprctl")
+        .args(["keyword", "bind", &rec_arg])
+        .status()
+    {
+        if status.success() {
+            success = true;
+        }
+    }
+
+    success
+}
+
+/// Actualiza los atajos de teclado de sane-rec en el archivo de configuración de niri y/o Hyprland.
 /// En sistemas no-Linux, retorna `Ok(false)` limpiamente sin interactuar con configuraciones de Wayland.
 pub fn update_niri_shortcuts(save_bind: &str, record_bind: &str) -> std::io::Result<bool> {
     #[cfg(not(target_os = "linux"))]
@@ -410,35 +680,25 @@ pub fn update_niri_shortcuts(save_bind: &str, record_bind: &str) -> std::io::Res
     }
     #[cfg(target_os = "linux")]
     {
-        let base_dirs = match directories::BaseDirs::new() {
-            Some(dirs) => dirs,
-            None => return Ok(false),
-        };
-        let binds_path = base_dirs.config_dir().join("niri/config.d/70-binds.kdl");
-
-        if !binds_path.exists() {
-            return Ok(false);
-        }
-
-        let content = std::fs::read_to_string(&binds_path)?;
-        let mut lines: Vec<String> = content.lines().map(String::from).collect();
         let mut updated = false;
 
-        for i in 0..lines.len() {
-            let trimmed = lines[i].trim();
-            if trimmed.contains("spawn \"sane-rec\" \"save\"") {
-                lines[i] = format!("    {} {{ spawn \"sane-rec\" \"save\"; }}", save_bind);
-                updated = true;
-            } else if trimmed.contains("spawn \"sane-rec\" \"record\"") {
-                lines[i] = format!("    {} {{ spawn \"sane-rec\" \"record\" \"toggle\"; }}", record_bind);
-                updated = true;
+        if let Some(base_dirs) = directories::BaseDirs::new() {
+            let binds_path = base_dirs.config_dir().join("niri/config.d/70-binds.kdl");
+            if binds_path.exists() {
+                let content = std::fs::read_to_string(&binds_path)?;
+                if let Some(new_content) = apply_niri_binds_kdl(&content, save_bind, record_bind) {
+                    if new_content != content {
+                        std::fs::write(&binds_path, new_content)?;
+                        updated = true;
+                    }
+                }
             }
         }
 
-        if updated {
-            let mut new_content = lines.join("\n");
-            new_content.push('\n');
-            std::fs::write(&binds_path, new_content)?;
+        if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
+            if update_hyprland_shortcuts(save_bind, record_bind) {
+                updated = true;
+            }
         }
 
         Ok(updated)
@@ -675,6 +935,88 @@ mod tests {
         // En Windows retorna Ok(false), en Linux busca el archivo o retorna Ok(false)
         let res = inject_niri_keybinds("Mod+F10", "Mod+F9");
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_apply_niri_binds_kdl_inserts_when_missing() {
+        let initial_kdl = r#"// Atajos niri
+binds {
+    Mod+Q { close-window; }
+    Mod+Return { spawn "alacritty"; }
+}
+"#;
+        // Inserción inicial dentro de binds con otros atajos, mapeando Mouse4 y Mouse5
+        let res1 = apply_niri_binds_kdl(initial_kdl, "Mouse4", "Mouse5")
+            .expect("Debe insertar los atajos faltantes");
+        assert!(res1.contains("MouseBack { spawn \"sane-rec\" \"save\"; }"));
+        assert!(res1.contains("MouseForward { spawn \"sane-rec\" \"record\" \"toggle\"; }"));
+        assert!(res1.contains("Mod+Q { close-window; }"));
+        assert_eq!(res1.matches("spawn \"sane-rec\" \"save\"").count(), 1);
+        assert_eq!(res1.matches("spawn \"sane-rec\" \"record\"").count(), 1);
+
+        // Reemplazo posterior sin duplicar
+        let res2 = apply_niri_binds_kdl(&res1, "Mod+Shift+S", "Mod+Shift+R")
+            .expect("Debe actualizar atajos existentes");
+        assert!(res2.contains("Mod+Shift+S { spawn \"sane-rec\" \"save\"; }"));
+        assert!(res2.contains("Mod+Shift+R { spawn \"sane-rec\" \"record\" \"toggle\"; }"));
+        assert!(!res2.contains("MouseBack"));
+        assert!(!res2.contains("MouseForward"));
+        assert_eq!(res2.matches("spawn \"sane-rec\" \"save\"").count(), 1);
+        assert_eq!(res2.matches("spawn \"sane-rec\" \"record\"").count(), 1);
+
+        // Inserción en binds vacío
+        let empty_binds = "binds {\n}";
+        let res_empty = apply_niri_binds_kdl(empty_binds, "Mouse4", "Mouse5")
+            .expect("Debe insertar en bloque binds vacío");
+        assert!(res_empty.contains("MouseBack { spawn \"sane-rec\" \"save\"; }"));
+        assert!(res_empty.contains("MouseForward { spawn \"sane-rec\" \"record\" \"toggle\"; }"));
+
+        // Inserción cuando no existe ningún bloque binds
+        let no_binds = "workspace \"1\"\n";
+        let res_no_binds = apply_niri_binds_kdl(no_binds, "Mouse4", "Mouse5")
+            .expect("Debe crear bloque binds nuevo");
+        assert!(res_no_binds.contains("binds {"));
+        assert!(res_no_binds.contains("MouseBack { spawn \"sane-rec\" \"save\"; }"));
+        assert!(res_no_binds.contains("MouseForward { spawn \"sane-rec\" \"record\" \"toggle\"; }"));
+    }
+
+    #[test]
+    fn test_format_hyprland_bind() {
+        let (mods, key) = format_hyprland_bind("Mouse4");
+        assert_eq!(format!("{mods},{key}"), ",mouse:275");
+        assert_eq!(mods, "");
+        assert_eq!(key, "mouse:275");
+
+        let (mods, key) = format_hyprland_bind("Mouse5");
+        assert_eq!(format!("{mods},{key}"), ",mouse:276");
+        assert_eq!(mods, "");
+        assert_eq!(key, "mouse:276");
+
+        let (mods, key) = format_hyprland_bind("Mod+Shift+S");
+        assert_eq!(format!("{mods},{key}"), "SUPER SHIFT,S");
+        assert_eq!(mods, "SUPER SHIFT");
+        assert_eq!(key, "S");
+
+        let (mods, key) = format_hyprland_bind("F10");
+        assert_eq!(format!("{mods},{key}"), ",F10");
+        assert_eq!(mods, "");
+        assert_eq!(key, "F10");
+
+        let (mods, key) = format_hyprland_bind("Mod+Mouse4");
+        assert_eq!(format!("{mods},{key}"), "SUPER,mouse:275");
+
+        let (mods, key) = format_hyprland_bind("Ctrl+Alt+MouseMiddle");
+        assert_eq!(format!("{mods},{key}"), "CTRL ALT,mouse:274");
+    }
+
+    #[test]
+    fn test_format_niri_bind() {
+        assert_eq!(format_niri_bind("Mouse4"), "MouseBack");
+        assert_eq!(format_niri_bind("Mouse5"), "MouseForward");
+        assert_eq!(format_niri_bind("MouseMiddle"), "MouseMiddle");
+        assert_eq!(format_niri_bind("Mod+Mouse4"), "Mod+MouseBack");
+        assert_eq!(format_niri_bind("Alt+F10"), "Alt+F10");
+        assert_eq!(format_niri_bind("Mod+Shift+S"), "Mod+Shift+S");
     }
 
     #[test]

@@ -140,6 +140,7 @@ export component AppWindow inherits Window {
     in-out property <int> discord-target-mb: 10;
 
     // Auto-actualizador
+    in-out property <string> app-version: "v0.6.1";
     in-out property <bool> has-update: false;
     in-out property <string> update-version: "";
     in-out property <bool> is-updating: false;
@@ -157,6 +158,8 @@ export component AppWindow inherits Window {
     in-out property <string> shortcut-record: "F9";
     in-out property <string> custom-save-text: "F10";
     in-out property <string> custom-record-text: "F9";
+    private property <bool> listening-save-mouse: false;
+    private property <bool> listening-record-mouse: false;
     in-out property <int> max-memory-mb: 150;
 
     // Configuración interactiva del Perfil Personalizado
@@ -205,51 +208,21 @@ export component AppWindow inherits Window {
     in-out property <[AudioDeviceEntry]> available-sinks: [];
     in-out property <[AudioDeviceEntry]> available-mics: [];
 
-    // Fondo de Ventana para Minecraft (textura de tierra pixel-art)
+    // Fondo de Ventana para Minecraft (textura de tierra pixel-art repetida)
     if Theme.is-minecraft: Image {
         width: 100%;
         height: 100%;
         source: @image-url("../assets/mc_dirt_bg.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
     }
 
-    // Fondo de Ventana para Liquid Glass (gradiente atmosférico y orbes de luz reactivos)
-    if Theme.is-glass: Rectangle {
+    // Fondo de Ventana para Fortnite (Lobby estilizado con gradiente angular profundo)
+    if Theme.is-fortnite: Rectangle {
         width: 100%;
         height: 100%;
-        clip: true;
-        background: @linear-gradient(135deg, #060B19 0%, #0F1E3D 45%, #1A103C 100%);
-
-        // Orbe 1: Cian / Azul brillante
-        Rectangle {
-            x: 140px;
-            y: -60px;
-            width: 420px;
-            height: 420px;
-            border-radius: 999px;
-            background: #0A84FF33;
-        }
-
-        // Orbe 2: Violeta / Púrpura profundo
-        Rectangle {
-            x: parent.width - 360px;
-            y: parent.height - 340px;
-            width: 440px;
-            height: 440px;
-            border-radius: 999px;
-            background: #5E5CE630;
-        }
-
-        // Orbe 3: Celeste resplandeciente central
-        Rectangle {
-            x: parent.width * 0.42;
-            y: parent.height * 0.28;
-            width: 320px;
-            height: 320px;
-            border-radius: 999px;
-            background: #00D4FF28;
-        }
+        background: @linear-gradient(160deg, #070E22 0%, #13285C 50%, #24124D 100%);
     }
 
     // =========================================================================
@@ -260,6 +233,7 @@ export component AppWindow inherits Window {
         x: 0px;
         y: 0px;
         height: parent.height;
+        app-version: root.app-version;
         active-view <=> root.active-view;
         compact: root.width < 820px;
         backend-title: root.backend-title;
@@ -274,7 +248,7 @@ export component AppWindow inherits Window {
         y: 0px;
         width: parent.width - rail.width;
         height: parent.height;
-        background: (Theme.is-minecraft || Theme.is-glass) ? transparent : Theme.surface;
+        background: (Theme.is-minecraft || Theme.is-fortnite) ? transparent : Theme.surface;
         border-width: 0px;
         clip: true;
 
@@ -415,6 +389,10 @@ export component AppWindow inherits Window {
                             card-border-width: 0px;
 
                             VerticalLayout {
+                                padding-top: 14px;
+                                padding-bottom: 14px;
+                                padding-left: 4px;
+                                padding-right: 4px;
                                 spacing: 18px;
 
                                 // Fila superior: Indicadores de búfer y memoria
@@ -1725,12 +1703,12 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                     M3PresetChip {
-                                        text: "Liquid Glass (iOS)";
-                                        is-active: root.active-theme == "liquid-glass";
+                                        text: "Fortnite";
+                                        is-active: root.active-theme == "fortnite";
                                         clicked => {
-                                            root.active-theme = "liquid-glass";
-                                            Theme.active-theme = "liquid-glass";
-                                            root.select-theme("liquid-glass");
+                                            root.active-theme = "fortnite";
+                                            Theme.active-theme = "fortnite";
+                                            root.select-theme("fortnite");
                                         }
                                     }
                                     M3PresetChip {
@@ -2831,42 +2809,74 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        M3PresetChip {
-                                            text: "F10 (Directo)";
-                                            is-active: root.shortcut-save == "F10";
-                                            clicked => {
-                                                root.shortcut-save = "F10";
-                                                root.custom-save-text = "F10";
-                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                    Flickable {
+                                        height: 38px;
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+
+                                            M3PresetChip {
+                                                text: "F10 (Directo)";
+                                                is-active: root.shortcut-save == "F10";
+                                                clicked => {
+                                                    root.shortcut-save = "F10";
+                                                    root.custom-save-text = "F10";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "Alt+F10 (Shadowplay)";
-                                            is-active: root.shortcut-save == "Alt+F10";
-                                            clicked => {
-                                                root.shortcut-save = "Alt+F10";
-                                                root.custom-save-text = "Alt+F10";
-                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            if root.is-windows: M3PresetChip {
+                                                text: "Alt+F10 (Shadowplay)";
+                                                is-active: root.shortcut-save == "Alt+F10";
+                                                clicked => {
+                                                    root.shortcut-save = "Alt+F10";
+                                                    root.custom-save-text = "Alt+F10";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: root.is-windows ? "Ctrl+Shift+S" : "Mod+F10";
-                                            is-active: root.shortcut-save == (root.is-windows ? "Ctrl+Shift+S" : "Mod+F10");
-                                            clicked => {
-                                                root.shortcut-save = root.is-windows ? "Ctrl+Shift+S" : "Mod+F10";
-                                                root.custom-save-text = root.shortcut-save;
-                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            if root.is-windows: M3PresetChip {
+                                                text: "Ctrl+Shift+S";
+                                                is-active: root.shortcut-save == "Ctrl+Shift+S";
+                                                clicked => {
+                                                    root.shortcut-save = "Ctrl+Shift+S";
+                                                    root.custom-save-text = "Ctrl+Shift+S";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
                                             }
-                                        }
-                                        if !root.is-windows: M3PresetChip {
-                                            text: "Mod+Shift+S";
-                                            is-active: root.shortcut-save == "Mod+Shift+S";
-                                            clicked => {
-                                                root.shortcut-save = "Mod+Shift+S";
-                                                root.custom-save-text = "Mod+Shift+S";
-                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            if !root.is-windows: M3PresetChip {
+                                                text: "Mod+F10";
+                                                is-active: root.shortcut-save == "Mod+F10";
+                                                clicked => {
+                                                    root.shortcut-save = "Mod+F10";
+                                                    root.custom-save-text = "Mod+F10";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
+                                            }
+                                            if !root.is-windows: M3PresetChip {
+                                                text: "Mod+Shift+S";
+                                                is-active: root.shortcut-save == "Mod+Shift+S";
+                                                clicked => {
+                                                    root.shortcut-save = "Mod+Shift+S";
+                                                    root.custom-save-text = "Mod+Shift+S";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
+                                            }
+                                            M3PresetChip {
+                                                text: "Mouse4 (Lateral)";
+                                                is-active: root.shortcut-save == "Mouse4";
+                                                clicked => {
+                                                    root.shortcut-save = "Mouse4";
+                                                    root.custom-save-text = "Mouse4";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
+                                            }
+                                            M3PresetChip {
+                                                text: "Mouse5 (Lateral)";
+                                                is-active: root.shortcut-save == "Mouse5";
+                                                clicked => {
+                                                    root.shortcut-save = "Mouse5";
+                                                    root.custom-save-text = "Mouse5";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
                                             }
                                         }
                                     }
@@ -2874,18 +2884,92 @@ export component AppWindow inherits Window {
                                     // Campo interactivo para atajo personalizado libre con auto-captura
                                     HorizontalLayout {
                                         spacing: 10px;
-                                        M3ShortcutField {
+
+                                        Rectangle {
                                             horizontal-stretch: 1;
-                                            text <=> root.custom-save-text;
-                                            placeholder: "Presiona una tecla (ej. F10, Alt+F10)...";
-                                            accepted(val) => {
-                                                if val != "" {
-                                                    root.shortcut-save = val;
-                                                    root.custom-save-text = val;
-                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            height: 42px;
+                                            border-radius: Theme.is-minecraft ? 0px : Theme.radius-sm;
+                                            border-width: root.listening-save-mouse ? 2px : 0px;
+                                            border-color: root.listening-save-mouse ? Theme.primary : Colors.transparent;
+                                            clip: true;
+
+                                            M3ShortcutField {
+                                                width: 100%;
+                                                height: 100%;
+                                                text <=> root.custom-save-text;
+                                                placeholder: root.listening-save-mouse ? "Haz clic aquí con Mouse4, Mouse5 o botón central..." : "Presiona una tecla (ej. F10, Alt+F10)...";
+                                                accepted(val) => {
+                                                    if val != "" {
+                                                        root.shortcut-save = val;
+                                                        root.custom-save-text = val;
+                                                        root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                    }
+                                                }
+                                            }
+
+                                            if root.listening-save-mouse: Rectangle {
+                                                width: 100%;
+                                                height: 100%;
+                                                background: Theme.primary-container;
+                                                border-radius: Theme.is-minecraft ? 0px : Theme.radius-sm;
+
+                                                HorizontalLayout {
+                                                    padding-left: 14px;
+                                                    padding-right: 14px;
+                                                    alignment: center;
+                                                    Text {
+                                                        text: "Haz clic aquí con Mouse4, Mouse5 o botón central...";
+                                                        font-size: Theme.font-body-small;
+                                                        font-weight: 600;
+                                                        color: Theme.on-primary-container;
+                                                        vertical-alignment: center;
+                                                        horizontal-alignment: center;
+                                                        overflow: elide;
+                                                    }
+                                                }
+                                            }
+
+                                            if root.listening-save-mouse: TouchArea {
+                                                width: 100%;
+                                                height: 100%;
+                                                pointer-event(ev) => {
+                                                    if ev.kind == PointerEventKind.down {
+                                                        if ev.button == PointerEventButton.back {
+                                                            root.shortcut-save = "Mouse4";
+                                                            root.custom-save-text = "Mouse4";
+                                                            root.listening-save-mouse = false;
+                                                            root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                        }
+                                                        if ev.button == PointerEventButton.forward {
+                                                            root.shortcut-save = "Mouse5";
+                                                            root.custom-save-text = "Mouse5";
+                                                            root.listening-save-mouse = false;
+                                                            root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                        }
+                                                        if ev.button == PointerEventButton.middle {
+                                                            root.shortcut-save = "MouseMiddle";
+                                                            root.custom-save-text = "MouseMiddle";
+                                                            root.listening-save-mouse = false;
+                                                            root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                        }
+                                                        if ev.button == PointerEventButton.left {
+                                                            root.listening-save-mouse = false;
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
+
+                                        M3Button {
+                                            text: root.listening-save-mouse ? "Pulsa ratón..." : "Capturar ratón";
+                                            variant: root.listening-save-mouse ? "filled" : "tonal";
+                                            btn-height: 42px;
+                                            btn-padding-h: 16px;
+                                            clicked => {
+                                                root.listening-save-mouse = !root.listening-save-mouse;
+                                            }
+                                        }
+
                                         M3Button {
                                             text: "Aplicar atajo";
                                             variant: "filled";
@@ -2933,42 +3017,74 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    HorizontalLayout {
-                                        spacing: 8px;
-                                        M3PresetChip {
-                                            text: "F9 (Directo)";
-                                            is-active: root.shortcut-record == "F9";
-                                            clicked => {
-                                                root.shortcut-record = "F9";
-                                                root.custom-record-text = "F9";
-                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                    Flickable {
+                                        height: 38px;
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+
+                                            M3PresetChip {
+                                                text: "F9 (Directo)";
+                                                is-active: root.shortcut-record == "F9";
+                                                clicked => {
+                                                    root.shortcut-record = "F9";
+                                                    root.custom-record-text = "F9";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: "Alt+F9 (Shadowplay)";
-                                            is-active: root.shortcut-record == "Alt+F9";
-                                            clicked => {
-                                                root.shortcut-record = "Alt+F9";
-                                                root.custom-record-text = "Alt+F9";
-                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            if root.is-windows: M3PresetChip {
+                                                text: "Alt+F9 (Shadowplay)";
+                                                is-active: root.shortcut-record == "Alt+F9";
+                                                clicked => {
+                                                    root.shortcut-record = "Alt+F9";
+                                                    root.custom-record-text = "Alt+F9";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
                                             }
-                                        }
-                                        M3PresetChip {
-                                            text: root.is-windows ? "Ctrl+Shift+R" : "Mod+F9";
-                                            is-active: root.shortcut-record == (root.is-windows ? "Ctrl+Shift+R" : "Mod+F9");
-                                            clicked => {
-                                                root.shortcut-record = root.is-windows ? "Ctrl+Shift+R" : "Mod+F9";
-                                                root.custom-record-text = root.shortcut-record;
-                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            if root.is-windows: M3PresetChip {
+                                                text: "Ctrl+Shift+R";
+                                                is-active: root.shortcut-record == "Ctrl+Shift+R";
+                                                clicked => {
+                                                    root.shortcut-record = "Ctrl+Shift+R";
+                                                    root.custom-record-text = "Ctrl+Shift+R";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
                                             }
-                                        }
-                                        if !root.is-windows: M3PresetChip {
-                                            text: "Mod+Shift+R";
-                                            is-active: root.shortcut-record == "Mod+Shift+R";
-                                            clicked => {
-                                                root.shortcut-record = "Mod+Shift+R";
-                                                root.custom-record-text = "Mod+Shift+R";
-                                                root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            if !root.is-windows: M3PresetChip {
+                                                text: "Mod+F9";
+                                                is-active: root.shortcut-record == "Mod+F9";
+                                                clicked => {
+                                                    root.shortcut-record = "Mod+F9";
+                                                    root.custom-record-text = "Mod+F9";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
+                                            }
+                                            if !root.is-windows: M3PresetChip {
+                                                text: "Mod+Shift+R";
+                                                is-active: root.shortcut-record == "Mod+Shift+R";
+                                                clicked => {
+                                                    root.shortcut-record = "Mod+Shift+R";
+                                                    root.custom-record-text = "Mod+Shift+R";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
+                                            }
+                                            M3PresetChip {
+                                                text: "Mouse4 (Lateral)";
+                                                is-active: root.shortcut-record == "Mouse4";
+                                                clicked => {
+                                                    root.shortcut-record = "Mouse4";
+                                                    root.custom-record-text = "Mouse4";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
+                                            }
+                                            M3PresetChip {
+                                                text: "Mouse5 (Lateral)";
+                                                is-active: root.shortcut-record == "Mouse5";
+                                                clicked => {
+                                                    root.shortcut-record = "Mouse5";
+                                                    root.custom-record-text = "Mouse5";
+                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                }
                                             }
                                         }
                                     }
@@ -2976,18 +3092,92 @@ export component AppWindow inherits Window {
                                     // Campo interactivo para atajo personalizado libre con auto-captura
                                     HorizontalLayout {
                                         spacing: 10px;
-                                        M3ShortcutField {
+
+                                        Rectangle {
                                             horizontal-stretch: 1;
-                                            text <=> root.custom-record-text;
-                                            placeholder: "Presiona una tecla (ej. F9, Alt+F9)...";
-                                            accepted(val) => {
-                                                if val != "" {
-                                                    root.shortcut-record = val;
-                                                    root.custom-record-text = val;
-                                                    root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                            height: 42px;
+                                            border-radius: Theme.is-minecraft ? 0px : Theme.radius-sm;
+                                            border-width: root.listening-record-mouse ? 2px : 0px;
+                                            border-color: root.listening-record-mouse ? Theme.primary : Colors.transparent;
+                                            clip: true;
+
+                                            M3ShortcutField {
+                                                width: 100%;
+                                                height: 100%;
+                                                text <=> root.custom-record-text;
+                                                placeholder: root.listening-record-mouse ? "Haz clic aquí con Mouse4, Mouse5 o botón central..." : "Presiona una tecla (ej. F9, Alt+F9)...";
+                                                accepted(val) => {
+                                                    if val != "" {
+                                                        root.shortcut-record = val;
+                                                        root.custom-record-text = val;
+                                                        root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                    }
+                                                }
+                                            }
+
+                                            if root.listening-record-mouse: Rectangle {
+                                                width: 100%;
+                                                height: 100%;
+                                                background: Theme.primary-container;
+                                                border-radius: Theme.is-minecraft ? 0px : Theme.radius-sm;
+
+                                                HorizontalLayout {
+                                                    padding-left: 14px;
+                                                    padding-right: 14px;
+                                                    alignment: center;
+                                                    Text {
+                                                        text: "Haz clic aquí con Mouse4, Mouse5 o botón central...";
+                                                        font-size: Theme.font-body-small;
+                                                        font-weight: 600;
+                                                        color: Theme.on-primary-container;
+                                                        vertical-alignment: center;
+                                                        horizontal-alignment: center;
+                                                        overflow: elide;
+                                                    }
+                                                }
+                                            }
+
+                                            if root.listening-record-mouse: TouchArea {
+                                                width: 100%;
+                                                height: 100%;
+                                                pointer-event(ev) => {
+                                                    if ev.kind == PointerEventKind.down {
+                                                        if ev.button == PointerEventButton.back {
+                                                            root.shortcut-record = "Mouse4";
+                                                            root.custom-record-text = "Mouse4";
+                                                            root.listening-record-mouse = false;
+                                                            root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                        }
+                                                        if ev.button == PointerEventButton.forward {
+                                                            root.shortcut-record = "Mouse5";
+                                                            root.custom-record-text = "Mouse5";
+                                                            root.listening-record-mouse = false;
+                                                            root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                        }
+                                                        if ev.button == PointerEventButton.middle {
+                                                            root.shortcut-record = "MouseMiddle";
+                                                            root.custom-record-text = "MouseMiddle";
+                                                            root.listening-record-mouse = false;
+                                                            root.update-shortcuts(root.shortcut-save, root.shortcut-record);
+                                                        }
+                                                        if ev.button == PointerEventButton.left {
+                                                            root.listening-record-mouse = false;
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
+
+                                        M3Button {
+                                            text: root.listening-record-mouse ? "Pulsa ratón..." : "Capturar ratón";
+                                            variant: root.listening-record-mouse ? "filled" : "tonal";
+                                            btn-height: 42px;
+                                            btn-padding-h: 16px;
+                                            clicked => {
+                                                root.listening-record-mouse = !root.listening-record-mouse;
+                                            }
+                                        }
+
                                         M3Button {
                                             text: "Aplicar atajo";
                                             variant: "filled";
@@ -3774,7 +3964,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            // v0.6.0 (Actual / Destacado)
+                            // v0.6.1 (Actual / Destacado)
                             M3Card {
                                 content-padding: 18px;
                                 card-background: Theme.surface-container-low;
@@ -3790,7 +3980,7 @@ export component AppWindow inherits Window {
                                         Text {
                                             horizontal-stretch: 1;
                                             min-width: 0px;
-                                            text: "v0.6.0 — Motor de Temas, Submenús Desplegables y Estabilidad Total";
+                                            text: "v0.6.1 — Tema Fortnite, Minecraft Tileable, Keybinds Mouse4/5 y Zero-Lag";
                                             font-size: Theme.font-title-medium;
                                             font-weight: 700;
                                             color: Theme.primary;
@@ -3819,7 +4009,38 @@ export component AppWindow inherits Window {
                                     Text {
                                         horizontal-stretch: 1;
                                         min-width: 0px;
-                                        text: "• Motor de Temas Reactivo en vivo: Sane Dark, Sane Light, OLED Pitch Black, Minecraft Edition (con texturas pixel-art reales y bisel 3D) y Liquid Glass (iOS / Aero) (con refracción especular y orbes de luz), más soporte de Temas de la Comunidad (.toml).\n• Interfaz ergonómica con submenús desplegables (M3CollapsibleCard) y soporte completo para monitores compactos sin recortes visuales.\n• Arranque instantáneo (<100ms), desacople del compresor Discord de grabaciones continuas, streaming directo RAM→FFmpeg sin %TEMP% en Windows, segmentos .ts en Linux sin errores moov atom y sincronización caliente Daemon↔GUI con cero procesos zombies.";
+                                        text: "• Nuevo tema Fortnite Edition (#F7E600 / #00D2FF / #091128) y texturas Minecraft 64x64 tileables 1:1 sin deformación, con insignia de versión y footer anclado al fondo en el Navigation Rail.\n• Keybinds globales reales para Mouse4, Mouse5 y MouseMiddle en Windows (GetAsyncKeyState 20ms) y Linux (evdev /dev/input/event*), más auto-inyección KDL en Niri y registro en caliente en Hyprland.\n• Garbage Collector circular en /dev/shm (sane-rec-shm-gc), captura interna exacta GetClientRect + ClientToScreen para resoluciones stretched/custom sin bordes DWM y gdigrab ultra rápido (-probesize 32K).";
+                                        font-size: Theme.font-body-medium;
+                                        color: Theme.on-surface-variant;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            // v0.6.0
+                            M3Card {
+                                content-padding: 18px;
+                                card-background: Theme.surface-container-low;
+                                card-radius: Theme.radius-xl;
+                                card-border-width: 0px;
+
+                                VerticalLayout {
+                                    spacing: 10px;
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "v0.6.0 — Motor de Temas, Submenús Desplegables y Estabilidad Total";
+                                        font-size: Theme.font-title-medium;
+                                        font-weight: 700;
+                                        color: Theme.primary;
+                                        wrap: word-wrap;
+                                    }
+
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        min-width: 0px;
+                                        text: "• Motor de Temas Reactivo en vivo: Sane Dark, Sane Light, OLED Pitch Black, Minecraft Edition y Temas de la Comunidad (.toml).\n• Interfaz ergonómica con submenús desplegables (M3CollapsibleCard) y soporte completo para monitores compactos sin recortes visuales.\n• Arranque instantáneo (<100ms), desacople del compresor Discord de grabaciones continuas, streaming directo RAM→FFmpeg sin %TEMP% en Windows, segmentos .ts en Linux sin errores moov atom y sincronización caliente Daemon↔GUI con cero procesos zombies.";
                                         font-size: Theme.font-body-medium;
                                         color: Theme.on-surface-variant;
                                         wrap: word-wrap;

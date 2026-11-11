@@ -268,8 +268,7 @@ fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
             &config.shortcuts.toggle_record,
         );
 
-        // En Windows, escuchar atajos globales F9 y F10
-        #[cfg(target_os = "windows")]
+        // Escuchar atajos globales (Windows GetAsyncKeyState/RegisterHotKey y Linux /dev/input/event*)
         sane_rec::ipc::spawn_global_hotkeys_listener();
 
         // Tarea del listener IPC
@@ -347,6 +346,19 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
 
     match action.as_str() {
         "save" => {
+            static LAST_IPC_SAVE_MS: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let prev_ms = LAST_IPC_SAVE_MS.load(std::sync::atomic::Ordering::SeqCst);
+            if now_ms.saturating_sub(prev_ms) < 400 {
+                cmd.ok("Replay ya en proceso de guardado");
+                return false;
+            }
+            LAST_IPC_SAVE_MS.store(now_ms, std::sync::atomic::Ordering::SeqCst);
+
             let eng = engine.clone();
             tokio::task::spawn_blocking(move || {
                 match eng.save_clip() {
@@ -368,16 +380,36 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
                 cmd.error("Failed to serialize engine status");
             }
         }
-        "record" | "record_toggle" => match engine.toggle_continuous_recording() {
-            Ok(recording) => {
-                cmd.ok(if recording {
+        "record" | "record_toggle" => {
+            static LAST_IPC_RECORD_MS: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let prev_ms = LAST_IPC_RECORD_MS.load(std::sync::atomic::Ordering::SeqCst);
+            if now_ms.saturating_sub(prev_ms) < 400 {
+                let is_rec = engine.is_recording();
+                cmd.ok(if is_rec {
                     "Grabación continua iniciada"
                 } else {
                     "Grabación continua detenida"
                 });
+                return false;
             }
-            Err(e) => cmd.error(format!("Error en grabación: {}", e)),
-        },
+            LAST_IPC_RECORD_MS.store(now_ms, std::sync::atomic::Ordering::SeqCst);
+
+            match engine.toggle_continuous_recording() {
+                Ok(recording) => {
+                    cmd.ok(if recording {
+                        "Grabación continua iniciada"
+                    } else {
+                        "Grabación continua detenida"
+                    });
+                }
+                Err(e) => cmd.error(format!("Error en grabación: {}", e)),
+            }
+        }
         "record_start" => match engine.start_continuous_recording() {
             Ok(path) => cmd.ok(format!("Grabación iniciada en {}", path.display())),
             Err(e) => cmd.error(format!("Error iniciando grabación: {}", e)),
@@ -533,6 +565,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui = AppWindow::new()?;
     ui.set_is_windows(cfg!(target_os = "windows"));
+    ui.set_app_version(format!("v{}", env!("CARGO_PKG_VERSION")).into());
 
     // Inicializar propiedades de la ventana desde la configuración en memoria (<1ms)
     ui.set_active_profile(config.profile.active_profile.clone().into());
@@ -674,7 +707,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             daemon_flag_bg.store(is_ext_daemon, std::sync::atomic::Ordering::SeqCst);
 
             if !is_ext_daemon {
-                #[cfg(target_os = "windows")]
                 sane_rec::ipc::spawn_global_hotkeys_listener();
 
                 let engine_for_ipc = engine_init.clone();
@@ -1441,9 +1473,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let _ = sane_rec::update_niri_shortcuts(save_str, rec_str);
-
-            #[cfg(target_os = "windows")]
-            sane_rec::ipc::reload_windows_hotkeys(save_str, rec_str);
+            sane_rec::ipc::reload_hotkeys(save_str, rec_str);
 
             if let Some(ref eng) = engine_clone {
                 let mut cfg = eng.config();
@@ -1458,10 +1488,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             }
             notify_daemon_reload_async(&daemon_flag);
 
-            #[cfg(target_os = "windows")]
             let toast_msg = format!("Atajos globales actualizados ({}, {})", save_str, rec_str);
-            #[cfg(not(target_os = "windows"))]
-            let toast_msg = format!("Atajos actualizados en niri ({}, {})", save_str, rec_str);
 
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_shortcut_save(save_str.into());
@@ -2024,7 +2051,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 "light" => "Sane Light",
                 "oled" => "OLED Pitch Black",
                 "minecraft" => "Minecraft",
-                "liquid-glass" => "Liquid Glass (iOS)",
+                "fortnite" => "Fortnite",
                 "custom" => updated_cfg
                     .ui
                     .custom_theme_name
@@ -2654,10 +2681,13 @@ fn apply_theme_to_ui(ui: &AppWindow, cfg: &Config) {
         available.iter().cloned().map(|s| s.into()).collect();
     ui.set_community_themes_list(std::rc::Rc::new(slint::VecModel::from(slint_themes)).into());
 
-    let theme_id = if cfg.ui.theme.trim().is_empty() {
+    let raw_theme = cfg.ui.theme.trim();
+    let theme_id = if raw_theme.is_empty() {
         "dark"
+    } else if raw_theme == "liquid-glass" {
+        "fortnite"
     } else {
-        cfg.ui.theme.trim()
+        raw_theme
     };
 
     ui.set_active_theme(theme_id.into());
@@ -2789,7 +2819,8 @@ mod tests {
         ui.set_backend_subtitle("WASAPI • Activo".into());
         assert_eq!(ui.get_backend_subtitle(), "WASAPI • Activo");
 
-        // Verificación del Motor de Temas Reactivo y Temas de la Comunidad (Fase 3)
+        // Verificación del Motor de Temas Reactivo y Temas de la Comunidad (Fase 3 + Fortnite)
+        assert_eq!(ui.get_app_version(), concat!("v", env!("CARGO_PKG_VERSION")));
         assert_eq!(ui.get_active_theme(), "dark");
         let theme_global = ui.global::<Theme>();
         assert_eq!(theme_global.get_active_theme(), "dark");
@@ -2799,6 +2830,17 @@ mod tests {
         apply_theme_to_ui(&ui, &cfg);
         assert_eq!(ui.get_active_theme(), "oled");
         assert_eq!(theme_global.get_active_theme(), "oled");
+
+        cfg.ui.theme = "fortnite".to_string();
+        apply_theme_to_ui(&ui, &cfg);
+        assert_eq!(ui.get_active_theme(), "fortnite");
+        assert_eq!(theme_global.get_active_theme(), "fortnite");
+        assert!(theme_global.get_is_fortnite());
+
+        // Compatibilidad hacia atrás desde "liquid-glass" -> "fortnite"
+        cfg.ui.theme = "liquid-glass".to_string();
+        apply_theme_to_ui(&ui, &cfg);
+        assert_eq!(ui.get_active_theme(), "fortnite");
 
         sane_rec::init_default_themes();
         cfg.ui.theme = "custom".to_string();

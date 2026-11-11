@@ -345,14 +345,14 @@ export component M3Card inherits Rectangle {
     in-out property <length> card-radius: Theme.radius-xl;
 
     background: Theme.is-minecraft ? Colors.transparent :
-                Theme.is-glass ? @linear-gradient(160deg, #ffffff28 0%, #ffffff10 45%, #0a84ff18 100%) :
+                Theme.is-fortnite ? @linear-gradient(135deg, #182B5C 0%, #0E1A3A 100%) :
                 root.card-background;
-    border-radius: Theme.is-minecraft ? 0px : root.card-radius;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : root.card-radius);
     border-color: Theme.is-minecraft ? #000000 :
-                  Theme.is-glass ? #ffffff45 :
+                  Theme.is-fortnite ? #00D2FF :
                   root.card-border-color;
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? 1px :
+                  Theme.is-fortnite ? 2px :
                   root.card-border-width;
     clip: true;
 
@@ -363,15 +363,14 @@ export component M3Card inherits Rectangle {
         x: 0px;
         y: 0px;
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
     }
 
     if Theme.is-minecraft: Rectangle { x: 2px; y: 2px; width: parent.width - 4px; height: 2px; background: #FFFFFF55; }
     if Theme.is-minecraft: Rectangle { x: 2px; y: 2px; width: 2px; height: parent.height - 4px; background: #FFFFFF44; }
     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
-
-    if Theme.is-glass: Rectangle { x: 16px; y: 1px; width: parent.width - 32px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
 
     VerticalLayout {
         padding: root.content-padding;
@@ -395,19 +394,15 @@ export component M3Button inherits Rectangle {
 
     height: root.btn-height;
     min-width: btn-layout.preferred-width;
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
     clip: true;
 
     // Fondo interactivo por elevación tonal
     background: Theme.is-minecraft ? Colors.transparent :
-        Theme.is-glass ? (!root.enabled ? #ffffff10 :
-            (root.variant == "filled" ? (touch.pressed ? @linear-gradient(180deg, #40b0e5ee 0%, #0070e0ee 50%, #0040bbee 100%) :
-                                        touch.has-hover ? @linear-gradient(180deg, #6fd0ffee 0%, #1a90ffee 50%, #0a60e5ee 100%) :
-                                        @linear-gradient(180deg, #5AC8FAEE 0%, #0A84FFEE 50%, #0051D5EE 100%)) :
-             root.variant == "danger" ? (touch.pressed ? #ff3b3088 : touch.has-hover ? #ff453a66 : #ff3b3044) :
-             touch.pressed ? @linear-gradient(160deg, #ffffff40 0%, #ffffff20 45%, #0a84ff30 100%) :
-             touch.has-hover ? @linear-gradient(160deg, #ffffff35 0%, #ffffff15 45%, #0a84ff25 100%) :
-             @linear-gradient(160deg, #ffffff28 0%, #ffffff10 45%, #0a84ff18 100%))) :
+        Theme.is-fortnite ? (!root.enabled ? (root.variant == "filled" ? #F7E60066 : #15265466) :
+            (root.variant == "filled" ? (touch.pressed ? #D9CA00 : touch.has-hover ? #FFF033 : #F7E600) :
+             root.variant == "danger" ? (touch.pressed ? #B71C1C : touch.has-hover ? #EF5350 : #D32F2F) :
+             touch.pressed ? #0E1A3A : touch.has-hover ? #1E3570 : #152654)) :
         (!root.enabled ?
             (root.variant == "outlined" ? Colors.transparent : Theme.surface-container-highest.with-alpha(0.38)) :
             touch.pressed ?
@@ -425,12 +420,14 @@ export component M3Button inherits Rectangle {
              root.variant == "danger" ? Theme.error-container :
              Colors.transparent));
 
-    // Cero bordes en filled, tonal y danger; 1px en outlined o glass; 2px en Minecraft
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? 1px :
+                  Theme.is-fortnite ? 2px :
                   (root.variant == "outlined" ? 1px : 0px);
     border-color: Theme.is-minecraft ? #000000 :
-                  Theme.is-glass ? (root.variant == "filled" ? #ffffff88 : (root.variant == "danger" ? #ff453a88 : #ffffff45)) :
+                  Theme.is-fortnite ? (!root.enabled ? #234B8C66 :
+                      (root.variant == "filled" ? (touch.has-hover ? #FFFFFF : #00D2FF) :
+                       root.variant == "danger" ? #FF4A4A :
+                       touch.has-hover ? #00D2FF : #234B8C)) :
                   (!root.enabled ? Theme.outline.with-alpha(0.2) :
                    touch.has-hover ? Theme.primary :
                    Theme.outline-variant);
@@ -441,7 +438,8 @@ export component M3Button inherits Rectangle {
     if Theme.is-minecraft: Image {
         source: root.variant == "filled" ? @image-url("../assets/mc_emerald_btn.png") : @image-url("../assets/mc_cobble_btn.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -453,7 +451,7 @@ export component M3Button inherits Rectangle {
     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
 
-    if Theme.is-glass: Rectangle { x: 12px; y: 1px; width: parent.width - 24px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
+    if Theme.is-fortnite && root.variant == "filled" && root.enabled: Rectangle { x: 0px; y: 0px; width: 100%; height: 2px; background: #FFFFFF; }
 
     btn-layout := HorizontalLayout {
         padding-left: root.text == "" ? 10px : root.btn-padding-h;
@@ -465,7 +463,7 @@ export component M3Button inherits Rectangle {
             name: root.icon-name;
             icon-size: 18px;
             icon-color: Theme.is-minecraft ? (!root.enabled ? #888888 : #FFFFFF) :
-                        Theme.is-glass ? (!root.enabled ? #ffffff66 : (root.variant == "filled" ? #FFFFFF : (root.variant == "danger" ? #FF453A : #FFFFFFEE))) :
+                        Theme.is-fortnite ? (!root.enabled ? (root.variant == "filled" ? #08090C66 : #FFFFFF66) : (root.variant == "filled" ? #08090C : #FFFFFF)) :
                         (!root.enabled ? Theme.on-surface.with-alpha(0.38) :
                          root.variant == "filled" ? Theme.on-primary :
                          root.variant == "tonal" ? Theme.on-secondary-container :
@@ -479,7 +477,7 @@ export component M3Button inherits Rectangle {
             font-size: 15px;
             vertical-alignment: center;
             color: Theme.is-minecraft ? (!root.enabled ? #888888 : #FFFFFF) :
-                   Theme.is-glass ? (!root.enabled ? #ffffff66 : (root.variant == "filled" ? #FFFFFF : (root.variant == "danger" ? #FF453A : #FFFFFFEE))) :
+                   Theme.is-fortnite ? (!root.enabled ? (root.variant == "filled" ? #08090C66 : #FFFFFF66) : (root.variant == "filled" ? #08090C : #FFFFFF)) :
                    (!root.enabled ? Theme.on-surface.with-alpha(0.38) :
                     root.variant == "filled" ? Theme.on-primary :
                     root.variant == "tonal" ? Theme.on-secondary-container :
@@ -490,12 +488,12 @@ export component M3Button inherits Rectangle {
         if root.text != "": Text {
             text: root.text;
             font-size: Theme.font-label-large;
-            font-weight: 600;
+            font-weight: (Theme.is-fortnite && root.variant == "filled") ? 800 : 600;
             vertical-alignment: center;
             horizontal-alignment: center;
             overflow: elide;
             color: Theme.is-minecraft ? (!root.enabled ? #888888 : #FFFFFF) :
-                   Theme.is-glass ? (!root.enabled ? #ffffff66 : (root.variant == "filled" ? #FFFFFF : (root.variant == "danger" ? #FF453A : #FFFFFFEE))) :
+                   Theme.is-fortnite ? (!root.enabled ? (root.variant == "filled" ? #08090C66 : #FFFFFF66) : (root.variant == "filled" ? #08090C : #FFFFFF)) :
                    (!root.enabled ? Theme.on-surface.with-alpha(0.38) :
                     root.variant == "filled" ? Theme.on-primary :
                     root.variant == "tonal" ? Theme.on-secondary-container :
@@ -536,12 +534,14 @@ export component M3Switch inherits Rectangle {
 
     width: 52px;
     height: 32px;
-    border-radius: Theme.is-minecraft ? 0px : 16px;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 16px);
 
-    background: !root.enabled ? Theme.surface-container-highest.with-alpha(0.38) :
-                root.checked ? Theme.primary : Theme.surface-container-highest;
-    border-width: root.checked ? 0px : 2px;
-    border-color: !root.enabled ? Theme.outline.with-alpha(0.2) : Theme.outline;
+    background: Theme.is-fortnite ? (!root.enabled ? #15265466 : (root.checked ? #F7E600 : #152654)) :
+                (!root.enabled ? Theme.surface-container-highest.with-alpha(0.38) :
+                root.checked ? Theme.primary : Theme.surface-container-highest);
+    border-width: Theme.is-fortnite ? 2px : (root.checked ? 0px : 2px);
+    border-color: Theme.is-fortnite ? (root.checked ? #FFFFFF : #234B8C) :
+                  (!root.enabled ? Theme.outline.with-alpha(0.2) : Theme.outline);
 
     animate background { duration: 180ms; easing: ease-out; }
     animate border-color { duration: 180ms; easing: ease-out; }
@@ -554,10 +554,11 @@ export component M3Switch inherits Rectangle {
 
         width: root.checked ? 24px : 16px;
         height: root.checked ? 24px : 16px;
-        border-radius: Theme.is-minecraft ? 0px : 12px;
+        border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 2px : 12px);
 
-        background: !root.enabled ? Theme.on-surface.with-alpha(0.38) :
-                    root.checked ? Theme.on-primary : Theme.outline;
+        background: Theme.is-fortnite ? (root.checked ? #08090C : #00D2FF) :
+                    (!root.enabled ? Theme.on-surface.with-alpha(0.38) :
+                    root.checked ? Theme.on-primary : Theme.outline);
 
         animate x { duration: 180ms; easing: ease-out; }
         animate width { duration: 150ms; easing: ease-out; }
@@ -583,11 +584,11 @@ export component M3StatusChip inherits Rectangle {
     in-out property <string> status: "idle"; // "recording" | "active" | "idle"
 
     height: 32px;
-    border-radius: Theme.radius-full;
-    border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-    border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
+    border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 2px : 0px);
+    border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? (root.status == "recording" ? #FF4A4A : root.status == "active" ? #00D2FF : #234B8C) : Colors.transparent);
 
-    background: Theme.is-glass ? (root.status == "recording" ? #ff3b3044 : root.status == "active" ? #34c75944 : #ffffff15) :
+    background: Theme.is-fortnite ? (root.status == "recording" ? #B71C1C88 : root.status == "active" ? #182B5C : #0E1A3A) :
                 (root.status == "recording" ? Theme.error-container :
                  root.status == "active" ? Theme.secondary-container :
                  Theme.surface-container-high);
@@ -604,11 +605,12 @@ export component M3StatusChip inherits Rectangle {
         Rectangle {
             width: 14px;
             height: 14px;
-            border-radius: Theme.is-minecraft ? 0px : 7px;
+            border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 2px : 7px);
             y: Math.floor((parent.height - self.height) / 2px) * 1px;
-            background: root.status == "recording" ? Theme.error.with-alpha(0.25) :
-                        root.status == "active" ? Theme.primary.with-alpha(0.25) :
-                        Colors.transparent;
+            background: Theme.is-fortnite ? (root.status == "recording" ? #FF4A4A44 : root.status == "active" ? #00D2FF44 : Colors.transparent) :
+                        (root.status == "recording" ? Theme.error.with-alpha(0.25) :
+                         root.status == "active" ? Theme.primary.with-alpha(0.25) :
+                         Colors.transparent);
 
             // Dot central
             Rectangle {
@@ -616,10 +618,11 @@ export component M3StatusChip inherits Rectangle {
                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
                 width: 8px;
                 height: 8px;
-                border-radius: Theme.is-minecraft ? 0px : 4px;
-                background: root.status == "recording" ? Theme.error :
-                            root.status == "active" ? Theme.primary :
-                            Theme.outline;
+                border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 2px : 4px);
+                background: Theme.is-fortnite ? (root.status == "recording" ? #FF4A4A : root.status == "active" ? #00D2FF : #A6C8FF) :
+                            (root.status == "recording" ? Theme.error :
+                             root.status == "active" ? Theme.primary :
+                             Theme.outline);
             }
         }
 
@@ -628,7 +631,7 @@ export component M3StatusChip inherits Rectangle {
             font-size: Theme.font-label-medium;
             font-weight: 700;
             vertical-alignment: center;
-            color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF :
+            color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF :
                    (root.status == "recording" ? Theme.on-error-container :
                     root.status == "active" ? Theme.on-secondary-container :
                     Theme.on-surface-variant);
@@ -651,19 +654,19 @@ export component M3ProfileTile inherits Rectangle {
 
     callback clicked();
 
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-lg;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-lg);
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? (root.is-selected ? 1.5px : 1px) :
+                  Theme.is-fortnite ? 2px :
                   0px;
     border-color: Theme.is-minecraft ? (root.is-selected ? #FFFFFF : #000000) :
-                  Theme.is-glass ? (root.is-selected ? #5AC8FACC : #ffffff45) :
+                  Theme.is-fortnite ? (root.is-selected ? #F7E600 : #00D2FF) :
                   Colors.transparent;
 
     background: Theme.is-minecraft ? Colors.transparent :
-                Theme.is-glass ? (root.is-selected ?
-                    @linear-gradient(160deg, #0A84FF55 0%, #5E5CE635 50%, #0051D544 100%) :
-                    (touch.has-hover ? @linear-gradient(160deg, #ffffff38 0%, #ffffff18 45%, #0a84ff25 100%) :
-                                       @linear-gradient(160deg, #ffffff28 0%, #ffffff10 45%, #0a84ff18 100%))) :
+                Theme.is-fortnite ? (root.is-selected ?
+                    @linear-gradient(135deg, #213D82 0%, #152654 100%) :
+                    (touch.has-hover ? @linear-gradient(135deg, #1E3570 0%, #152654 100%) :
+                                       @linear-gradient(135deg, #182B5C 0%, #0E1A3A 100%))) :
                 (root.is-selected ?
                     Theme.secondary-container :
                     touch.has-hover ?
@@ -676,7 +679,8 @@ export component M3ProfileTile inherits Rectangle {
     if Theme.is-minecraft: Image {
         source: root.is-selected ? @image-url("../assets/mc_emerald_btn.png") : @image-url("../assets/mc_stone_card.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -687,8 +691,6 @@ export component M3ProfileTile inherits Rectangle {
     if Theme.is-minecraft: Rectangle { x: 2px; y: 2px; width: 2px; height: parent.height - 4px; background: #FFFFFF44; }
     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
-
-    if Theme.is-glass: Rectangle { x: 16px; y: 1px; width: parent.width - 32px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
 
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -706,20 +708,20 @@ export component M3ProfileTile inherits Rectangle {
             Rectangle {
                 width: 42px;
                 height: 42px;
-                border-radius: Theme.is-minecraft ? 0px : 21px;
-                border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+                border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 21px);
+                border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? (root.is-selected ? #F7E600 : #00D2FF) : Colors.transparent);
                 background: Theme.is-minecraft ? #00000033 :
-                            (root.is-selected ?
-                                (Theme.is-glass ? #0A84FF44 : Theme.primary.with-alpha(0.2)) :
-                                (Theme.is-glass ? #ffffff18 : Theme.surface-container-highest));
+                            (Theme.is-fortnite ?
+                                (root.is-selected ? #152654 : #0E1A3A) :
+                                (root.is-selected ? Theme.primary.with-alpha(0.2) : Theme.surface-container-highest));
                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                 if root.icon-name != "": M3Icon {
                     name: root.icon-name;
                     icon-size: 20px;
                     icon-color: Theme.is-minecraft ? #FFFFFF :
-                                Theme.is-glass ? (root.is-selected ? #5AC8FA : #FFFFFF) :
+                                Theme.is-fortnite ? (root.is-selected ? #F7E600 : #00D2FF) :
                                 (root.is-selected ? Theme.primary : Theme.on-surface-variant);
                     x: Math.floor((parent.width - self.width) / 2px) * 1px;
                     y: Math.floor((parent.height - self.height) / 2px) * 1px;
@@ -732,7 +734,7 @@ export component M3ProfileTile inherits Rectangle {
                     font-size: 16px;
                     vertical-alignment: center;
                     horizontal-alignment: center;
-                    color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface;
+                    color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface;
                 }
             }
 
@@ -753,7 +755,7 @@ export component M3ProfileTile inherits Rectangle {
                         font-size: 14px;
                         font-weight: root.is-selected ? 700 : 600;
                         color: Theme.is-minecraft ? #FFFFFF :
-                               Theme.is-glass ? (root.is-selected ? #FFFFFF : #FFFFFFEE) :
+                               Theme.is-fortnite ? #FFFFFF :
                                (root.is-selected ? Theme.on-secondary-container : Theme.on-surface);
                         vertical-alignment: center;
                         wrap: word-wrap;
@@ -764,13 +766,13 @@ export component M3ProfileTile inherits Rectangle {
                     if root.badge-text != "": Rectangle {
                         horizontal-stretch: 0;
                         height: 20px;
-                        border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
-                        border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                        border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+                        border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
+                        border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                        border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? (root.is-selected ? #F7E600 : #00D2FF) : Colors.transparent);
                         background: root.badge-text == "Experimental" ?
                             Theme.error-container :
                             (Theme.is-minecraft ? (root.is-selected ? #000000 : #00000088) :
-                             Theme.is-glass ? (root.is-selected ? #0051D5 : #ffffff28) :
+                             Theme.is-fortnite ? (root.is-selected ? #F7E600 : #152654) :
                              (root.is-selected ? Theme.primary : Theme.surface-container-highest));
                         y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
@@ -784,8 +786,9 @@ export component M3ProfileTile inherits Rectangle {
                                 vertical-alignment: center;
                                 color: root.badge-text == "Experimental" ?
                                     Theme.on-error-container :
-                                    (Theme.is-minecraft || Theme.is-glass ? #FFFFFF :
-                                     (root.is-selected ? Theme.on-primary : Theme.on-surface-variant));
+                                    (Theme.is-fortnite ? (root.is-selected ? #08090C : #FFFFFF) :
+                                     (Theme.is-minecraft ? #FFFFFF :
+                                      (root.is-selected ? Theme.on-primary : Theme.on-surface-variant)));
                             }
                         }
                     }
@@ -829,7 +832,7 @@ export component M3ProfileTile inherits Rectangle {
                     wrap: word-wrap;
                     min-width: 0px;
                     color: Theme.is-minecraft ? #EEEEEE :
-                           Theme.is-glass ? #FFFFFFBB :
+                           Theme.is-fortnite ? #A6C8FF :
                            (root.is-selected ?
                                Theme.on-secondary-container.with-alpha(0.85) :
                                Theme.on-surface-variant);
@@ -840,22 +843,22 @@ export component M3ProfileTile inherits Rectangle {
             Rectangle {
                 width: 22px;
                 height: 22px;
-                border-radius: Theme.is-minecraft ? 0px : 11px;
+                border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 11px);
                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
                 border-width: 2px;
                 border-color: Theme.is-minecraft ? (root.is-selected ? #FFFFFF : #555555) :
-                              Theme.is-glass ? (root.is-selected ? #5AC8FA : #ffffff66) :
+                              Theme.is-fortnite ? (root.is-selected ? #F7E600 : #00D2FF) :
                               (root.is-selected ? Theme.primary : Theme.outline);
-                background: Theme.is-minecraft ? #00000066 : Colors.transparent;
+                background: Theme.is-minecraft ? #00000066 : (Theme.is-fortnite ? #0E1A3A : Colors.transparent);
 
                 if root.is-selected: Rectangle {
                     x: Math.floor((parent.width - self.width) / 2px) * 1px;
                     y: Math.floor((parent.height - self.height) / 2px) * 1px;
                     width: 12px;
                     height: 12px;
-                    border-radius: Theme.is-minecraft ? 0px : 6px;
+                    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 2px : 6px);
                     background: Theme.is-minecraft ? #FFFFFF :
-                                Theme.is-glass ? #5AC8FA :
+                                Theme.is-fortnite ? #F7E600 :
                                 Theme.primary;
                 }
             }
@@ -874,17 +877,16 @@ export component M3SegmentItem inherits Rectangle {
     in-out property <bool> is-selected: false;
     callback clicked();
 
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? 1px : 0px;
+                  Theme.is-fortnite ? 2px : 0px;
     border-color: Theme.is-minecraft ? (root.is-selected ? #FFFFFF : #000000) :
-                  Theme.is-glass ? (root.is-selected ? #ffffff88 : #ffffff45) :
+                  Theme.is-fortnite ? (root.is-selected ? (touch.has-hover ? #FFFFFF : #00D2FF) : (touch.has-hover ? #00D2FF : #234B8C)) :
                   Colors.transparent;
     background: Theme.is-minecraft ? Colors.transparent :
-                Theme.is-glass ? (root.is-selected ?
-                    @linear-gradient(180deg, #5AC8FAEE 0%, #0A84FFEE 50%, #0051D5EE 100%) :
-                    (touch.has-hover ? @linear-gradient(160deg, #ffffff38 0%, #ffffff18 45%, #0a84ff25 100%) :
-                                       @linear-gradient(160deg, #ffffff28 0%, #ffffff10 45%, #0a84ff18 100%))) :
+                Theme.is-fortnite ? (root.is-selected ?
+                    (touch.pressed ? #D9CA00 : touch.has-hover ? #FFF033 : #F7E600) :
+                    (touch.has-hover ? #1E3570 : #152654)) :
                 (root.is-selected ?
                     Theme.primary :
                     touch.has-hover ?
@@ -897,7 +899,8 @@ export component M3SegmentItem inherits Rectangle {
     if Theme.is-minecraft: Image {
         source: root.is-selected ? @image-url("../assets/mc_emerald_btn.png") : @image-url("../assets/mc_cobble_btn.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -909,7 +912,7 @@ export component M3SegmentItem inherits Rectangle {
     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
 
-    if Theme.is-glass: Rectangle { x: 12px; y: 1px; width: parent.width - 24px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
+    if Theme.is-fortnite && root.is-selected: Rectangle { x: 0px; y: 0px; width: 100%; height: 2px; background: #FFFFFF; }
 
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -925,7 +928,7 @@ export component M3SegmentItem inherits Rectangle {
                 name: root.icon-name;
                 icon-size: 16px;
                 icon-color: Theme.is-minecraft ? #FFFFFF :
-                            Theme.is-glass ? (root.is-selected ? #FFFFFF : #FFFFFFCC) :
+                            Theme.is-fortnite ? (root.is-selected ? #08090C : #FFFFFF) :
                             (root.is-selected ? Theme.on-primary : Theme.on-surface-variant);
                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
             }
@@ -933,10 +936,10 @@ export component M3SegmentItem inherits Rectangle {
             Text {
                 text: root.text;
                 font-size: Theme.font-label-medium;
-                font-weight: root.is-selected ? 700 : 500;
+                font-weight: (Theme.is-fortnite && root.is-selected) ? 800 : (root.is-selected ? 700 : 500);
                 vertical-alignment: center;
                 color: Theme.is-minecraft ? #FFFFFF :
-                       Theme.is-glass ? (root.is-selected ? #FFFFFF : #FFFFFFEE) :
+                       Theme.is-fortnite ? (root.is-selected ? #08090C : #FFFFFF) :
                        (root.is-selected ? Theme.on-primary : Theme.on-surface-variant);
             }
         }
@@ -953,17 +956,16 @@ export component M3PresetChip inherits Rectangle {
 
     min-width: 0px;
     height: 34px;
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? 1px : 0px;
+                  Theme.is-fortnite ? 2px : 0px;
     border-color: Theme.is-minecraft ? (root.is-active ? #FFFFFF : #000000) :
-                  Theme.is-glass ? (root.is-active ? #ffffff88 : #ffffff45) :
+                  Theme.is-fortnite ? (root.is-active ? (touch.has-hover ? #FFFFFF : #00D2FF) : (touch.has-hover ? #00D2FF : #234B8C)) :
                   Colors.transparent;
     background: Theme.is-minecraft ? Colors.transparent :
-                Theme.is-glass ? (root.is-active ?
-                    @linear-gradient(180deg, #5AC8FAEE 0%, #0A84FFEE 50%, #0051D5EE 100%) :
-                    (touch.has-hover ? @linear-gradient(160deg, #ffffff38 0%, #ffffff18 45%, #0a84ff25 100%) :
-                                       @linear-gradient(160deg, #ffffff28 0%, #ffffff10 45%, #0a84ff18 100%))) :
+                Theme.is-fortnite ? (root.is-active ?
+                    (touch.pressed ? #D9CA00 : touch.has-hover ? #FFF033 : #F7E600) :
+                    (touch.has-hover ? #1E3570 : #152654)) :
                 (root.is-active ?
                     Theme.primary :
                     touch.has-hover ?
@@ -976,7 +978,8 @@ export component M3PresetChip inherits Rectangle {
     if Theme.is-minecraft: Image {
         source: root.is-active ? @image-url("../assets/mc_emerald_btn.png") : @image-url("../assets/mc_cobble_btn.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -988,7 +991,7 @@ export component M3PresetChip inherits Rectangle {
     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
 
-    if Theme.is-glass: Rectangle { x: 12px; y: 1px; width: parent.width - 24px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
+    if Theme.is-fortnite && root.is-active: Rectangle { x: 0px; y: 0px; width: 100%; height: 2px; background: #FFFFFF; }
 
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -1002,12 +1005,12 @@ export component M3PresetChip inherits Rectangle {
             Text {
                 text: root.text;
                 font-size: Theme.font-label-medium;
-                font-weight: root.is-active ? 700 : 500;
+                font-weight: (Theme.is-fortnite && root.is-active) ? 800 : (root.is-active ? 700 : 500);
                 vertical-alignment: center;
                 overflow: elide;
                 min-width: 0px;
                 color: Theme.is-minecraft ? #FFFFFF :
-                       Theme.is-glass ? (root.is-active ? #FFFFFF : #FFFFFFEE) :
+                       Theme.is-fortnite ? (root.is-active ? #08090C : #FFFFFF) :
                        (root.is-active ? Theme.on-primary : Theme.on-surface-variant);
             }
         }
@@ -1029,16 +1032,16 @@ export component M3NavItem inherits Rectangle {
     callback clicked();
 
     height: root.compact ? 56px : 48px;
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
     border-width: Theme.is-minecraft ? (root.is-selected ? 2px : 0px) :
-                  Theme.is-glass ? (root.is-selected ? 1px : (touch.has-hover ? 1px : 0px)) :
+                  Theme.is-fortnite ? 2px :
                   0px;
     border-color: Theme.is-minecraft ? (root.is-selected ? #FFFFFF : Colors.transparent) :
-                  Theme.is-glass ? (root.is-selected ? #ffffff88 : (touch.has-hover ? #ffffff35 : Colors.transparent)) :
+                  Theme.is-fortnite ? (root.is-selected ? (touch.has-hover ? #FFFFFF : #00D2FF) : (touch.has-hover ? #00D2FF : #234B8C)) :
                   Colors.transparent;
 
     background: Theme.is-minecraft ? (root.is-selected ? Colors.transparent : (touch.has-hover ? #ffffff22 : Colors.transparent)) :
-                Theme.is-glass ? (root.is-selected ? @linear-gradient(180deg, #5AC8FAEE 0%, #0A84FFEE 50%, #0051D5EE 100%) : (touch.has-hover ? #ffffff22 : Colors.transparent)) :
+                Theme.is-fortnite ? (root.is-selected ? (touch.pressed ? #D9CA00 : touch.has-hover ? #FFF033 : #F7E600) : (touch.has-hover ? #1E3570 : Colors.transparent)) :
                 (root.is-selected ?
                     Theme.secondary-container :
                     touch.has-hover ?
@@ -1051,7 +1054,8 @@ export component M3NavItem inherits Rectangle {
     if Theme.is-minecraft && root.is-selected: Image {
         source: @image-url("../assets/mc_emerald_btn.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -1063,7 +1067,7 @@ export component M3NavItem inherits Rectangle {
     if Theme.is-minecraft && root.is-selected: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft && root.is-selected: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
 
-    if Theme.is-glass && root.is-selected: Rectangle { x: 12px; y: 1px; width: parent.width - 24px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
+    if Theme.is-fortnite && root.is-selected: Rectangle { x: 0px; y: 0px; width: 100%; height: 2px; background: #FFFFFF; }
 
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -1079,7 +1083,7 @@ export component M3NavItem inherits Rectangle {
                 name: root.icon-name;
                 icon-size: 20px;
                 icon-color: Theme.is-minecraft ? #FFFFFF :
-                            Theme.is-glass ? (root.is-selected ? #FFFFFF : (touch.has-hover ? #FFFFFF : #FFFFFFCC)) :
+                            Theme.is-fortnite ? (root.is-selected ? #08090C : (touch.has-hover ? #00D2FF : #FFFFFF)) :
                             (root.is-selected ? Theme.on-secondary-container : Theme.on-surface-variant);
                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
             }
@@ -1088,28 +1092,29 @@ export component M3NavItem inherits Rectangle {
                 text: root.icon-text;
                 font-size: 18px;
                 vertical-alignment: center;
-                color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface;
+                color: Theme.is-minecraft || Theme.is-fortnite ? (root.is-selected ? #08090C : #FFFFFF) : Theme.on-surface;
             }
 
             Text {
                 horizontal-stretch: 1;
                 text: root.text;
                 font-size: Theme.font-label-large;
-                font-weight: root.is-selected ? 700 : 500;
+                font-weight: (Theme.is-fortnite && root.is-selected) ? 800 : (root.is-selected ? 700 : 500);
                 vertical-alignment: center;
                 overflow: elide;
                 color: Theme.is-minecraft ? #FFFFFF :
-                       Theme.is-glass ? (root.is-selected ? #FFFFFF : (touch.has-hover ? #FFFFFF : #FFFFFFEE)) :
+                       Theme.is-fortnite ? (root.is-selected ? #08090C : (touch.has-hover ? #FFFFFF : #A6C8FF)) :
                        (root.is-selected ? Theme.on-secondary-container : Theme.on-surface-variant);
             }
 
             if root.badge-text != "": Rectangle {
                 height: 20px;
-                border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
-                border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+                border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
+                border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? (root.is-selected ? #08090C : #00D2FF) : Colors.transparent);
                 background: Theme.is-minecraft ? (root.is-selected ? #000000 : #00000088) :
-                            (root.is-selected ? (Theme.is-glass ? #0051D5 : Theme.primary) : (Theme.is-glass ? #ffffff35 : Theme.surface-container-highest));
+                            Theme.is-fortnite ? (root.is-selected ? #08090C22 : #152654) :
+                            (root.is-selected ? Theme.primary : Theme.surface-container-highest);
                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                 HorizontalLayout {
@@ -1119,7 +1124,9 @@ export component M3NavItem inherits Rectangle {
                         text: root.badge-text;
                         font-size: Theme.font-label-small;
                         font-weight: 700;
-                        color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : (root.is-selected ? Theme.on-primary : Theme.on-surface-variant);
+                        color: Theme.is-minecraft ? #FFFFFF :
+                               Theme.is-fortnite ? (root.is-selected ? #08090C : #00D2FF) :
+                               (root.is-selected ? Theme.on-primary : Theme.on-surface-variant);
                         vertical-alignment: center;
                     }
                 }
@@ -1142,7 +1149,7 @@ export component M3NavItem inherits Rectangle {
                     name: root.icon-name;
                     icon-size: 22px;
                     icon-color: Theme.is-minecraft ? #FFFFFF :
-                                Theme.is-glass ? (root.is-selected ? #FFFFFF : (touch.has-hover ? #FFFFFF : #FFFFFFCC)) :
+                                Theme.is-fortnite ? (root.is-selected ? #08090C : (touch.has-hover ? #00D2FF : #FFFFFF)) :
                                 (root.is-selected ? Theme.on-secondary-container : Theme.on-surface-variant);
                 }
             }
@@ -1152,18 +1159,18 @@ export component M3NavItem inherits Rectangle {
                 font-size: 18px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
-                color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface;
+                color: Theme.is-minecraft || Theme.is-fortnite ? (root.is-selected ? #08090C : #FFFFFF) : Theme.on-surface;
             }
 
             Text {
                 text: root.text;
                 font-size: 10px;
-                font-weight: root.is-selected ? 700 : 500;
+                font-weight: (Theme.is-fortnite && root.is-selected) ? 800 : (root.is-selected ? 700 : 500);
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 overflow: elide;
                 color: Theme.is-minecraft ? #FFFFFF :
-                       Theme.is-glass ? (root.is-selected ? #FFFFFF : (touch.has-hover ? #FFFFFF : #FFFFFFEE)) :
+                       Theme.is-fortnite ? (root.is-selected ? #08090C : (touch.has-hover ? #FFFFFF : #A6C8FF)) :
                        (root.is-selected ? Theme.on-secondary-container : Theme.on-surface-variant);
             }
         }
@@ -1177,13 +1184,14 @@ export component M3NavItem inherits Rectangle {
 export component M3NavigationRail inherits Rectangle {
     in-out property <int> active-view: 0;
     in-out property <bool> compact: false;
+    in property <string> app-version: "v0.6.1";
     in-out property <string> backend-title: "Wayland / niri";
     in-out property <string> backend-subtitle: "PipeWire • 60 FPS";
     callback view-selected(int);
 
     width: root.compact ? 68px : 188px;
     background: Theme.is-minecraft ? Colors.transparent :
-                Theme.is-glass ? @linear-gradient(180deg, #ffffff20 0%, #0a84ff14 100%) :
+                Theme.is-fortnite ? @linear-gradient(180deg, #182B5C 0%, #0E1A3A 100%) :
                 Theme.surface;
     border-width: 0px;
     clip: true;
@@ -1193,7 +1201,8 @@ export component M3NavigationRail inherits Rectangle {
     if Theme.is-minecraft: Image {
         source: @image-url("../assets/mc_dirt_bg.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -1208,15 +1217,17 @@ export component M3NavigationRail inherits Rectangle {
         background: #000000;
     }
 
-    if Theme.is-glass: Rectangle {
-        x: parent.width - 1px;
+    if Theme.is-fortnite: Rectangle {
+        x: parent.width - 2px;
         y: 0px;
-        width: 1px;
+        width: 2px;
         height: 100%;
-        background: #ffffff35;
+        background: #00D2FF;
     }
 
     VerticalLayout {
+        width: 100%;
+        height: 100%;
         padding-left: root.compact ? 6px : 12px;
         padding-right: root.compact ? 6px : 12px;
         padding-top: 18px;
@@ -1233,10 +1244,10 @@ export component M3NavigationRail inherits Rectangle {
             Rectangle {
                 width: 44px;
                 height: 44px;
-                border-radius: Theme.is-minecraft ? 0px : 14px;
-                background: Theme.is-minecraft ? #00000044 : (Theme.is-glass ? #ffffff15 : Theme.surface-container-high);
-                border-width: Theme.is-minecraft ? 2px : (Theme.is-glass ? 1px : 0px);
-                border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+                border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 14px);
+                background: Theme.is-minecraft ? #00000044 : (Theme.is-fortnite ? #0E1A3A : Theme.surface-container-high);
+                border-width: Theme.is-minecraft ? 2px : (Theme.is-fortnite ? 2px : 0px);
+                border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
                 clip: true;
                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
@@ -1250,19 +1261,40 @@ export component M3NavigationRail inherits Rectangle {
 
             VerticalLayout {
                 alignment: center;
-                spacing: 1px;
+                spacing: 2px;
 
                 Text {
                     text: "sane-rec";
                     font-size: Theme.font-title-medium;
                     font-weight: 800;
-                    color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface;
+                    color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface;
                 }
 
                 Text {
-                    text: Theme.is-minecraft ? "Minecraft Edition" : (Theme.is-glass ? "Liquid Glass" : "M3 Expressive");
+                    text: Theme.is-minecraft ? "Minecraft Edition" : (Theme.is-fortnite ? "Fortnite Edition" : "M3 Expressive");
                     font-size: Theme.font-label-small;
-                    color: Theme.is-minecraft ? #DDDDDD : (Theme.is-glass ? #FFFFFFBB : Theme.on-surface-variant);
+                    color: Theme.is-minecraft ? #DDDDDD : (Theme.is-fortnite ? #A6C8FF : Theme.on-surface-variant);
+                }
+
+                Rectangle {
+                    horizontal-stretch: 0;
+                    height: 18px;
+                    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 3px : Theme.radius-xs);
+                    background: Theme.is-minecraft ? #00000088 : (Theme.is-fortnite ? #152654 : Theme.surface-container-highest);
+                    border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                    border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
+
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        Text {
+                            text: root.app-version;
+                            font-size: 10px;
+                            font-weight: 700;
+                            color: Theme.is-minecraft || Theme.is-fortnite ? #00D2FF : Theme.primary;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
             }
         }
@@ -1274,10 +1306,10 @@ export component M3NavigationRail inherits Rectangle {
             Rectangle {
                 width: 44px;
                 height: 44px;
-                border-radius: Theme.is-minecraft ? 0px : 14px;
-                background: Theme.is-minecraft ? #00000044 : (Theme.is-glass ? #ffffff15 : Theme.surface-container-high);
-                border-width: Theme.is-minecraft ? 2px : (Theme.is-glass ? 1px : 0px);
-                border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+                border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 14px);
+                background: Theme.is-minecraft ? #00000044 : (Theme.is-fortnite ? #0E1A3A : Theme.surface-container-high);
+                border-width: Theme.is-minecraft ? 2px : (Theme.is-fortnite ? 2px : 0px);
+                border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
                 clip: true;
 
                 Image {
@@ -1292,6 +1324,8 @@ export component M3NavigationRail inherits Rectangle {
         // Elementos de Navegación (Píldoras M3 en Flickable interactivo para pantallas pequeñas)
         Flickable {
             vertical-stretch: 1;
+            min-height: 0px;
+            content-height: nav-items-col.preferred-height;
 
             nav-items-col := VerticalLayout {
                 spacing: 6px;
@@ -1366,11 +1400,12 @@ export component M3NavigationRail inherits Rectangle {
 
         // Footer informativo tonal sin bordes
         if !root.compact: Rectangle {
+            vertical-stretch: 0;
             height: 52px;
-            border-radius: Theme.is-minecraft ? 0px : Theme.radius-md;
-            background: Theme.is-minecraft ? #00000055 : (Theme.is-glass ? #ffffff15 : Theme.surface-container-low);
-            border-width: Theme.is-minecraft ? 2px : (Theme.is-glass ? 1px : 0px);
-            border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+            border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-md);
+            background: Theme.is-minecraft ? #00000055 : (Theme.is-fortnite ? @linear-gradient(135deg, #182B5C 0%, #0E1A3A 100%) : Theme.surface-container-low);
+            border-width: Theme.is-minecraft ? 2px : (Theme.is-fortnite ? 2px : 0px);
+            border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
 
             HorizontalLayout {
                 padding-left: 12px;
@@ -1381,7 +1416,7 @@ export component M3NavigationRail inherits Rectangle {
                 Rectangle {
                     width: 8px;
                     height: 8px;
-                    border-radius: Theme.is-minecraft ? 0px : 4px;
+                    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 2px : 4px);
                     background: Theme.success;
                     y: Math.floor((parent.height - self.height) / 2px) * 1px;
                 }
@@ -1394,34 +1429,35 @@ export component M3NavigationRail inherits Rectangle {
                         text: root.backend-title;
                         font-size: Theme.font-label-small;
                         font-weight: 700;
-                        color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface;
+                        color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface;
                     }
 
                     Text {
                         text: root.backend-subtitle;
                         font-size: 10px;
-                        color: Theme.is-minecraft ? #DDDDDD : (Theme.is-glass ? #FFFFFFBB : Theme.on-surface-variant);
+                        color: Theme.is-minecraft ? #DDDDDD : (Theme.is-fortnite ? #A6C8FF : Theme.on-surface-variant);
                     }
                 }
             }
         }
 
         if root.compact: HorizontalLayout {
+            vertical-stretch: 0;
             alignment: center;
             width: 100%;
 
             Rectangle {
                 width: 36px;
                 height: 36px;
-                border-radius: Theme.is-minecraft ? 0px : 18px;
-                background: Theme.is-minecraft ? #00000055 : (Theme.is-glass ? #ffffff15 : Theme.surface-container-low);
-                border-width: Theme.is-minecraft ? 2px : (Theme.is-glass ? 1px : 0px);
-                border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+                border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 18px);
+                background: Theme.is-minecraft ? #00000055 : (Theme.is-fortnite ? @linear-gradient(135deg, #182B5C 0%, #0E1A3A 100%) : Theme.surface-container-low);
+                border-width: Theme.is-minecraft ? 2px : (Theme.is-fortnite ? 2px : 0px);
+                border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
 
                 Rectangle {
                     width: 8px;
                     height: 8px;
-                    border-radius: Theme.is-minecraft ? 0px : 4px;
+                    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 2px : 4px);
                     background: Theme.success;
                     x: Math.floor((parent.width - self.width) / 2px) * 1px;
                     y: Math.floor((parent.height - self.height) / 2px) * 1px;
@@ -1444,16 +1480,16 @@ export component M3MetricTile inherits Rectangle {
 
     min-height: 98px;
     preferred-height: 106px;
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-lg;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-lg);
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? 1px : 0px;
+                  Theme.is-fortnite ? 2px : 0px;
     border-color: Theme.is-minecraft ? #000000 :
-                  Theme.is-glass ? #ffffff45 : Colors.transparent;
+                  Theme.is-fortnite ? (root.highlight ? #F7E600 : #00D2FF) : Colors.transparent;
 
     background: Theme.is-minecraft ? Colors.transparent :
-                Theme.is-glass ? (root.highlight ?
-                    @linear-gradient(160deg, #ffffff35 0%, #ffffff15 45%, #0a84ff25 100%) :
-                    @linear-gradient(160deg, #ffffff28 0%, #ffffff10 45%, #0a84ff18 100%)) :
+                Theme.is-fortnite ? (root.highlight ?
+                    @linear-gradient(135deg, #213D82 0%, #152654 100%) :
+                    @linear-gradient(135deg, #182B5C 0%, #0E1A3A 100%)) :
                 (root.highlight ?
                     Theme.surface-container-high :
                     Theme.surface-container);
@@ -1462,7 +1498,8 @@ export component M3MetricTile inherits Rectangle {
     if Theme.is-minecraft: Image {
         source: @image-url("../assets/mc_stone_card.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -1473,8 +1510,6 @@ export component M3MetricTile inherits Rectangle {
     if Theme.is-minecraft: Rectangle { x: 2px; y: 2px; width: 2px; height: parent.height - 4px; background: #FFFFFF44; }
     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
-
-    if Theme.is-glass: Rectangle { x: 16px; y: 1px; width: parent.width - 32px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
 
     VerticalLayout {
         padding-left: 16px;
@@ -1491,18 +1526,18 @@ export component M3MetricTile inherits Rectangle {
             Rectangle {
                 width: 30px;
                 height: 30px;
-                border-radius: Theme.is-minecraft ? 0px : 15px;
-                border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+                border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 15px);
+                border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
                 background: Theme.is-minecraft ? #00000044 :
-                            Theme.is-glass ? #ffffff18 :
+                            Theme.is-fortnite ? #152654 :
                             (root.highlight ? Theme.primary.with-alpha(0.2) : Theme.surface-container-highest);
 
                 if root.icon-name != "": M3Icon {
                     name: root.icon-name;
                     icon-size: 16px;
                     icon-color: Theme.is-minecraft ? #FFFFFF :
-                                Theme.is-glass ? (root.highlight ? #5AC8FA : #FFFFFF) :
+                                Theme.is-fortnite ? (root.highlight ? #F7E600 : #00D2FF) :
                                 (root.highlight ? Theme.primary : Theme.on-surface-variant);
                     x: Math.floor((parent.width - self.width) / 2px) * 1px;
                     y: Math.floor((parent.height - self.height) / 2px) * 1px;
@@ -1515,17 +1550,17 @@ export component M3MetricTile inherits Rectangle {
                     font-size: 14px;
                     vertical-alignment: center;
                     horizontal-alignment: center;
-                    color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface;
+                    color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface;
                 }
             }
 
             if root.badge-text != "": Rectangle {
                 height: 20px;
-                border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
-                border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+                border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
+                border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
                 background: Theme.is-minecraft ? #00000055 :
-                            Theme.is-glass ? #ffffff22 :
+                            Theme.is-fortnite ? #152654 :
                             (root.highlight ? Theme.secondary-container : Theme.surface-container-highest);
                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
@@ -1536,7 +1571,7 @@ export component M3MetricTile inherits Rectangle {
                         text: root.badge-text;
                         font-size: 10px;
                         font-weight: 700;
-                        color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF :
+                        color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF :
                                (root.highlight ? Theme.on-secondary-container : Theme.on-surface-variant);
                         vertical-alignment: center;
                     }
@@ -1553,7 +1588,7 @@ export component M3MetricTile inherits Rectangle {
                 font-weight: 800;
                 overflow: elide;
                 color: Theme.is-minecraft ? #FFFFFF :
-                       Theme.is-glass ? (root.highlight ? #5AC8FA : #FFFFFF) :
+                       Theme.is-fortnite ? (root.highlight ? #F7E600 : #FFFFFF) :
                        (root.highlight ? Theme.primary : Theme.on-surface);
             }
             Text {
@@ -1562,7 +1597,7 @@ export component M3MetricTile inherits Rectangle {
                 font-weight: 500;
                 overflow: elide;
                 color: Theme.is-minecraft ? #DDDDDD :
-                       Theme.is-glass ? #FFFFFFCC :
+                       Theme.is-fortnite ? #A6C8FF :
                        Theme.on-surface-variant;
             }
         }
@@ -1579,19 +1614,19 @@ export component M3OptionItem inherits Rectangle {
     callback clicked();
 
     height: 42px;
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-sm;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-sm);
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? (root.is-selected ? 1.5px : 1px) :
+                  Theme.is-fortnite ? 2px :
                   0px;
     border-color: Theme.is-minecraft ? (root.is-selected ? #FFFFFF : #000000) :
-                  Theme.is-glass ? (root.is-selected ? #5AC8FACC : #ffffff45) :
+                  Theme.is-fortnite ? (root.is-selected ? #F7E600 : #00D2FF) :
                   Colors.transparent;
 
     background: Theme.is-minecraft ? Colors.transparent :
-                Theme.is-glass ? (root.is-selected ?
-                    @linear-gradient(160deg, #0A84FF55 0%, #5E5CE635 50%, #0051D544 100%) :
-                    (touch.has-hover ? @linear-gradient(160deg, #ffffff38 0%, #ffffff18 45%, #0a84ff25 100%) :
-                                       @linear-gradient(160deg, #ffffff28 0%, #ffffff10 45%, #0a84ff18 100%))) :
+                Theme.is-fortnite ? (root.is-selected ?
+                    @linear-gradient(135deg, #213D82 0%, #152654 100%) :
+                    (touch.has-hover ? @linear-gradient(135deg, #1E3570 0%, #152654 100%) :
+                                       @linear-gradient(135deg, #182B5C 0%, #0E1A3A 100%))) :
                 (root.is-selected ?
                     Theme.secondary-container :
                     touch.has-hover ?
@@ -1604,7 +1639,8 @@ export component M3OptionItem inherits Rectangle {
     if Theme.is-minecraft: Image {
         source: root.is-selected ? @image-url("../assets/mc_emerald_btn.png") : @image-url("../assets/mc_stone_card.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -1615,8 +1651,6 @@ export component M3OptionItem inherits Rectangle {
     if Theme.is-minecraft: Rectangle { x: 2px; y: 2px; width: 2px; height: parent.height - 4px; background: #FFFFFF44; }
     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
-
-    if Theme.is-glass: Rectangle { x: 16px; y: 1px; width: parent.width - 32px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
 
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -1636,7 +1670,7 @@ export component M3OptionItem inherits Rectangle {
                     name: "check";
                     icon-size: 16px;
                     icon-color: Theme.is-minecraft ? (root.is-selected ? #FFFFFF : Colors.transparent) :
-                                Theme.is-glass ? (root.is-selected ? #5AC8FA : Colors.transparent) :
+                                Theme.is-fortnite ? (root.is-selected ? #F7E600 : Colors.transparent) :
                                 (root.is-selected ? Theme.primary : Colors.transparent);
                     y: Math.floor((parent.height - self.height) / 2px) * 1px;
                 }
@@ -1646,7 +1680,7 @@ export component M3OptionItem inherits Rectangle {
                     font-size: Theme.font-label-medium;
                     font-weight: root.is-selected ? 700 : 500;
                     color: Theme.is-minecraft ? #FFFFFF :
-                           Theme.is-glass ? (root.is-selected ? #FFFFFF : #FFFFFFEE) :
+                           Theme.is-fortnite ? #FFFFFF :
                            (root.is-selected ? Theme.on-secondary-container : Theme.on-surface);
                     vertical-alignment: center;
                 }
@@ -1654,11 +1688,12 @@ export component M3OptionItem inherits Rectangle {
 
             if root.badge-text != "": Rectangle {
                 height: 20px;
-                border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
-                border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+                border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
+                border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? (root.is-selected ? #F7E600 : #00D2FF) : Colors.transparent);
                 background: Theme.is-minecraft ? (root.is-selected ? #000000 : #00000088) :
-                            (root.is-selected ? (Theme.is-glass ? #0051D5 : Theme.primary) : (Theme.is-glass ? #ffffff28 : Theme.surface-container-highest));
+                            (Theme.is-fortnite ? (root.is-selected ? #F7E600 : #152654) :
+                             (root.is-selected ? Theme.primary : Theme.surface-container-highest));
                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                 HorizontalLayout {
@@ -1668,7 +1703,8 @@ export component M3OptionItem inherits Rectangle {
                         text: root.badge-text;
                         font-size: 10px;
                         font-weight: 600;
-                        color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : (root.is-selected ? Theme.on-primary : Theme.on-surface-variant);
+                        color: Theme.is-fortnite ? (root.is-selected ? #08090C : #FFFFFF) :
+                               (Theme.is-minecraft ? #FFFFFF : (root.is-selected ? Theme.on-primary : Theme.on-surface-variant));
                         vertical-alignment: center;
                     }
                 }
@@ -1689,18 +1725,19 @@ export component M3DropdownCard inherits Rectangle {
     in-out property <bool> is-open: false;
     callback toggled();
 
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-lg;
-    border-width: Theme.is-minecraft ? 2px : (Theme.is-glass ? 1px : 0px);
-    border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff45 : Colors.transparent);
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-lg);
+    border-width: Theme.is-minecraft ? 2px : (Theme.is-fortnite ? 2px : 0px);
+    border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? (root.is-open ? #F7E600 : #00D2FF) : Colors.transparent);
     background: Theme.is-minecraft ? Colors.transparent :
-                Theme.is-glass ? @linear-gradient(160deg, #ffffff28 0%, #ffffff10 45%, #0a84ff18 100%) :
+                Theme.is-fortnite ? @linear-gradient(135deg, #182B5C 0%, #0E1A3A 100%) :
                 Theme.surface-container-low;
     clip: true;
 
     if Theme.is-minecraft: Image {
         source: @image-url("../assets/mc_stone_card.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -1711,8 +1748,6 @@ export component M3DropdownCard inherits Rectangle {
     if Theme.is-minecraft: Rectangle { x: 2px; y: 2px; width: 2px; height: parent.height - 4px; background: #FFFFFF44; }
     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
-
-    if Theme.is-glass: Rectangle { x: 16px; y: 1px; width: parent.width - 32px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
 
     VerticalLayout {
         padding-left: 16px;
@@ -1741,16 +1776,16 @@ export component M3DropdownCard inherits Rectangle {
                     Rectangle {
                         width: 40px;
                         height: 40px;
-                        border-radius: Theme.is-minecraft ? 0px : 20px;
-                        border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                        border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
-                        background: Theme.is-minecraft ? #00000044 : (Theme.is-glass ? #ffffff18 : Theme.surface-container-high);
+                        border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 20px);
+                        border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                        border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
+                        background: Theme.is-minecraft ? #00000044 : (Theme.is-fortnite ? #152654 : Theme.surface-container-high);
                         y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                         if root.icon-name != "": M3Icon {
                             name: root.icon-name;
                             icon-size: 20px;
-                            icon-color: Theme.is-minecraft ? #FFFFFF : (Theme.is-glass ? #5AC8FA : Theme.primary);
+                            icon-color: Theme.is-minecraft ? #FFFFFF : (Theme.is-fortnite ? #00D2FF : Theme.primary);
                             x: Math.floor((parent.width - self.width) / 2px) * 1px;
                             y: Math.floor((parent.height - self.height) / 2px) * 1px;
                         }
@@ -1762,7 +1797,7 @@ export component M3DropdownCard inherits Rectangle {
                             font-size: 16px;
                             vertical-alignment: center;
                             horizontal-alignment: center;
-                            color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface;
+                            color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface;
                         }
                     }
 
@@ -1775,14 +1810,14 @@ export component M3DropdownCard inherits Rectangle {
                             text: root.title;
                             font-size: Theme.font-title-small;
                             font-weight: 600;
-                            color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface;
+                            color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface;
                             overflow: elide;
                         }
 
                         if root.description != "": Text {
                             text: root.description;
                             font-size: Theme.font-body-small;
-                            color: Theme.is-minecraft ? #DDDDDD : (Theme.is-glass ? #FFFFFFBB : Theme.on-surface-variant);
+                            color: Theme.is-minecraft ? #DDDDDD : (Theme.is-fortnite ? #A6C8FF : Theme.on-surface-variant);
                             overflow: elide;
                         }
                     }
@@ -1791,11 +1826,11 @@ export component M3DropdownCard inherits Rectangle {
                 // Selector píldora tonal
                 Rectangle {
                     height: 36px;
-                    border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
-                    border-width: Theme.is-minecraft ? 2px : (Theme.is-glass ? 1px : 0px);
-                    border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff45 : Colors.transparent);
+                    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
+                    border-width: Theme.is-minecraft ? 2px : (Theme.is-fortnite ? 2px : 0px);
+                    border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? (root.is-open ? #FFFFFF : #00D2FF) : Colors.transparent);
                     background: Theme.is-minecraft ? Colors.transparent :
-                                Theme.is-glass ? (root.is-open ? #0A84FF44 : #ffffff20) :
+                                Theme.is-fortnite ? (root.is-open ? #F7E600 : #152654) :
                                 (root.is-open ? Theme.secondary-container : Theme.surface-container-high);
                     clip: true;
                     y: Math.floor((parent.height - self.height) / 2px) * 1px;
@@ -1803,7 +1838,8 @@ export component M3DropdownCard inherits Rectangle {
                     if Theme.is-minecraft: Image {
                         source: root.is-open ? @image-url("../assets/mc_emerald_btn.png") : @image-url("../assets/mc_cobble_btn.png");
                         image-rendering: pixelated;
-                        image-fit: cover;
+                        horizontal-tiling: repeat;
+                        vertical-tiling: repeat;
                         width: 100%;
                         height: 100%;
                         x: 0px;
@@ -1815,7 +1851,7 @@ export component M3DropdownCard inherits Rectangle {
                     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
                     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
 
-                    if Theme.is-glass: Rectangle { x: 12px; y: 1px; width: parent.width - 24px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
+                    if Theme.is-fortnite && root.is-open: Rectangle { x: 0px; y: 0px; width: 100%; height: 2px; background: #FFFFFF; }
 
                     HorizontalLayout {
                         padding-left: 14px;
@@ -1826,9 +1862,9 @@ export component M3DropdownCard inherits Rectangle {
                         Text {
                             text: root.current-value;
                             font-size: Theme.font-label-medium;
-                            font-weight: 600;
+                            font-weight: (Theme.is-fortnite && root.is-open) ? 800 : 600;
                             color: Theme.is-minecraft ? #FFFFFF :
-                                   Theme.is-glass ? #FFFFFF :
+                                   Theme.is-fortnite ? (root.is-open ? #08090C : #FFFFFF) :
                                    (root.is-open ? Theme.on-secondary-container : Theme.primary);
                             vertical-alignment: center;
                             overflow: elide;
@@ -1838,7 +1874,7 @@ export component M3DropdownCard inherits Rectangle {
                             name: root.is-open ? "arrow_up" : "arrow_down";
                             icon-size: 14px;
                             icon-color: Theme.is-minecraft ? #FFFFFF :
-                                        Theme.is-glass ? #FFFFFF :
+                                        Theme.is-fortnite ? (root.is-open ? #08090C : #00D2FF) :
                                         (root.is-open ? Theme.on-secondary-container : Theme.on-surface-variant);
                             y: Math.floor((parent.height - self.height) / 2px) * 1px;
                         }
@@ -1879,20 +1915,21 @@ export component M3ClipCard inherits Rectangle {
     callback compress-clicked(string);
     callback delete-clicked(string);
 
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-lg;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-lg);
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? 1px : 0px;
+                  Theme.is-fortnite ? 2px : 0px;
     border-color: Theme.is-minecraft ? #000000 :
-                  Theme.is-glass ? #ffffff45 : Colors.transparent;
+                  Theme.is-fortnite ? #00D2FF : Colors.transparent;
     background: Theme.is-minecraft ? Colors.transparent :
-                Theme.is-glass ? @linear-gradient(160deg, #ffffff28 0%, #ffffff10 45%, #0a84ff18 100%) :
+                Theme.is-fortnite ? @linear-gradient(135deg, #182B5C 0%, #0E1A3A 100%) :
                 Theme.surface-container;
     clip: true;
 
     if Theme.is-minecraft: Image {
         source: @image-url("../assets/mc_stone_card.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -1904,8 +1941,6 @@ export component M3ClipCard inherits Rectangle {
     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
 
-    if Theme.is-glass: Rectangle { x: 16px; y: 1px; width: parent.width - 32px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
-
     HorizontalLayout {
         padding: 14px;
         spacing: 12px;
@@ -1915,16 +1950,16 @@ export component M3ClipCard inherits Rectangle {
         Rectangle {
             width: 44px;
             height: 44px;
-            border-radius: Theme.is-minecraft ? 0px : Theme.radius-md;
-            border-width: Theme.is-minecraft ? 2px : (Theme.is-glass ? 1px : 0px);
-            border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+            border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-md);
+            border-width: Theme.is-minecraft ? 2px : (Theme.is-fortnite ? 2px : 0px);
+            border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
             background: root.is-discord ?
                 (Theme.active-theme == "light" ? #6750A4 :
                  Theme.is-minecraft ? #5865F2 :
-                 Theme.is-glass ? #5865F255 :
+                 Theme.is-fortnite ? #5865F2 :
                  Theme.primary-container) :
                 (Theme.is-minecraft ? #00000044 :
-                 Theme.is-glass ? #ffffff15 :
+                 Theme.is-fortnite ? #152654 :
                  Theme.secondary-container);
             y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
@@ -1934,10 +1969,10 @@ export component M3ClipCard inherits Rectangle {
                 icon-color: root.is-discord ?
                     (Theme.active-theme == "light" ? #FFFFFF :
                      Theme.is-minecraft ? #FFFFFF :
-                     Theme.is-glass ? #FFFFFF :
+                     Theme.is-fortnite ? #FFFFFF :
                      Theme.on-primary-container) :
                     (Theme.is-minecraft ? #FFFFFF :
-                     Theme.is-glass ? #FFFFFF :
+                     Theme.is-fortnite ? #00D2FF :
                      Theme.on-secondary-container);
                 x: Math.floor((parent.width - self.width) / 2px) * 1px;
                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
@@ -1955,7 +1990,7 @@ export component M3ClipCard inherits Rectangle {
                 text: root.filename;
                 font-size: Theme.font-title-small;
                 font-weight: 700;
-                color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface;
+                color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface;
                 overflow: elide;
                 min-width: 0px;
             }
@@ -1968,10 +2003,10 @@ export component M3ClipCard inherits Rectangle {
                 // Tag duración
                 Rectangle {
                     height: 20px;
-                    border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
-                    border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                    border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff25 : Colors.transparent);
-                    background: Theme.is-minecraft ? #00000044 : (Theme.is-glass ? #ffffff15 : Theme.surface-container-high);
+                    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
+                    border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                    border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #234B8C : Colors.transparent);
+                    background: Theme.is-minecraft ? #00000044 : (Theme.is-fortnite ? #152654 : Theme.surface-container-high);
                     y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                     HorizontalLayout {
@@ -1981,7 +2016,7 @@ export component M3ClipCard inherits Rectangle {
                             text: root.duration-text;
                             font-size: 11px;
                             font-weight: 600;
-                            color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface-variant;
+                            color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface-variant;
                             vertical-alignment: center;
                         }
                     }
@@ -1989,12 +2024,12 @@ export component M3ClipCard inherits Rectangle {
 
                 if root.is-discord: Rectangle {
                     height: 20px;
-                    border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
-                    border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                    border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
+                    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
+                    border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                    border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #5865F2 : Colors.transparent);
                     background: Theme.active-theme == "light" ? #6750A4 :
                                 (Theme.is-minecraft ? #5865F2 :
-                                 Theme.is-glass ? #5865F266 :
+                                 Theme.is-fortnite ? #5865F2 :
                                  Theme.primary-container);
                     y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
@@ -2007,7 +2042,7 @@ export component M3ClipCard inherits Rectangle {
                             font-weight: 700;
                             color: Theme.active-theme == "light" ? #FFFFFF :
                                    (Theme.is-minecraft ? #FFFFFF :
-                                    Theme.is-glass ? #FFFFFF :
+                                    Theme.is-fortnite ? #FFFFFF :
                                     Theme.on-primary-container);
                             vertical-alignment: center;
                         }
@@ -2017,7 +2052,7 @@ export component M3ClipCard inherits Rectangle {
                 Text {
                     text: root.file-size + " • " + root.date-text;
                     font-size: Theme.font-body-small;
-                    color: Theme.is-minecraft ? #DDDDDD : (Theme.is-glass ? #FFFFFFCC : Theme.on-surface-variant);
+                    color: Theme.is-minecraft ? #DDDDDD : (Theme.is-fortnite ? #A6C8FF : Theme.on-surface-variant);
                     vertical-alignment: center;
                     overflow: elide;
                     min-width: 0px;
@@ -2183,8 +2218,8 @@ export component M3Slider inherits Rectangle {
     track-bg := Rectangle {
         y: Math.floor((parent.height - self.height) / 2px) * 1px;
         height: 12px;
-        border-radius: Theme.radius-full;
-        background: Theme.surface-container-highest;
+        border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 2px : Theme.radius-full);
+        background: Theme.is-fortnite ? #152654 : Theme.surface-container-highest;
         border-width: 0px;
         clip: true;
 
@@ -2193,8 +2228,8 @@ export component M3Slider inherits Rectangle {
             y: 0px;
             height: parent.height;
             width: Math.clamp((root.value - root.minimum) / Math.max(0.0001, root.maximum - root.minimum), 0.0, 1.0) * parent.width;
-            border-radius: Theme.radius-full;
-            background: root.enabled ? Theme.primary : Theme.outline.with-alpha(0.38);
+            border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 2px : Theme.radius-full);
+            background: Theme.is-fortnite ? (root.enabled ? #00D2FF : #00D2FF66) : (root.enabled ? Theme.primary : Theme.outline.with-alpha(0.38));
 
             animate width { duration: 50ms; }
         }
@@ -2206,10 +2241,10 @@ export component M3Slider inherits Rectangle {
         y: Math.floor((root.height - self.height) / 2px) * 1px;
         width: 20px;
         height: 20px;
-        border-radius: Theme.is-minecraft ? 0px : 10px;
-        border-width: Theme.is-minecraft ? 1px : 0px;
-        border-color: Theme.is-minecraft ? #000000 : Colors.transparent;
-        background: root.enabled ? Theme.primary : Theme.outline;
+        border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 10px);
+        border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 2px : 0px);
+        border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #FFFFFF : Colors.transparent);
+        background: Theme.is-fortnite ? (root.enabled ? #F7E600 : #F7E60066) : (root.enabled ? Theme.primary : Theme.outline);
         drop-shadow-color: Colors.black.with-alpha(0.35);
         drop-shadow-blur: 4px;
         drop-shadow-offset-y: 1px;
@@ -2306,13 +2341,13 @@ export component M3InputField inherits Rectangle {
     callback edited(string);
 
     height: 42px;
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-sm;
-    background: Theme.is-minecraft ? #00000044 : (Theme.is-glass ? #ffffff15 : Theme.surface-container-high);
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-sm);
+    background: Theme.is-minecraft ? #00000044 : (Theme.is-fortnite ? #0E1A3A : Theme.surface-container-high);
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? 1px :
+                  Theme.is-fortnite ? 2px :
                   (input.has-focus ? 1.5px : 0px);
     border-color: Theme.is-minecraft ? (input.has-focus ? #FFFFFF : #000000) :
-                  Theme.is-glass ? (input.has-focus ? #5AC8FA : #ffffff35) :
+                  Theme.is-fortnite ? (input.has-focus ? #F7E600 : #234B8C) :
                   (input.has-focus ? Theme.primary : Colors.transparent);
 
     animate border-color { duration: 150ms; }
@@ -2326,7 +2361,7 @@ export component M3InputField inherits Rectangle {
         if root.icon-name != "": M3Icon {
             name: root.icon-name;
             icon-size: 16px;
-            icon-color: Theme.on-surface-variant;
+            icon-color: Theme.is-fortnite ? (input.has-focus ? #00D2FF : #A6C8FF) : Theme.on-surface-variant;
             y: Math.floor((parent.height - self.height) / 2px) * 1px;
         }
 
@@ -2335,12 +2370,13 @@ export component M3InputField inherits Rectangle {
             font-size: 14px;
             vertical-alignment: center;
             opacity: 0.8;
+            color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface;
         }
 
         input := TextInput {
             horizontal-stretch: 1;
             font-size: Theme.font-body-medium;
-            color: Theme.on-surface;
+            color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface;
             vertical-alignment: center;
             single-line: true;
             enabled: root.enabled;
@@ -2361,13 +2397,13 @@ export component M3ShortcutField inherits Rectangle {
     callback edited(string);
 
     height: 42px;
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-sm;
-    background: Theme.is-minecraft ? #00000044 : (Theme.is-glass ? #ffffff15 : Theme.surface-container-high);
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-sm);
+    background: Theme.is-minecraft ? #00000044 : (Theme.is-fortnite ? #0E1A3A : Theme.surface-container-high);
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? 1px :
+                  Theme.is-fortnite ? 2px :
                   (input.has-focus ? 1.5px : 0px);
     border-color: Theme.is-minecraft ? (input.has-focus ? #FFFFFF : #000000) :
-                  Theme.is-glass ? (input.has-focus ? #5AC8FA : #ffffff35) :
+                  Theme.is-fortnite ? (input.has-focus ? #F7E600 : #234B8C) :
                   (input.has-focus ? Theme.primary : Colors.transparent);
 
     animate border-color { duration: 150ms; }
@@ -2381,14 +2417,14 @@ export component M3ShortcutField inherits Rectangle {
         M3Icon {
             name: "keyboard";
             icon-size: 16px;
-            icon-color: input.has-focus ? Theme.primary : Theme.on-surface-variant;
+            icon-color: Theme.is-fortnite ? (input.has-focus ? #00D2FF : #A6C8FF) : (input.has-focus ? Theme.primary : Theme.on-surface-variant);
             y: Math.floor((parent.height - self.height) / 2px) * 1px;
         }
 
         input := TextInput {
             horizontal-stretch: 1;
             font-size: Theme.font-body-medium;
-            color: Theme.on-surface;
+            color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-surface;
             vertical-alignment: center;
             single-line: true;
             enabled: root.enabled;
@@ -2522,19 +2558,20 @@ export component M3CollapsibleCard inherits Rectangle {
     in-out property <bool> expanded: false;
 
     background: Theme.is-minecraft ? Colors.transparent :
-                Theme.is-glass ? @linear-gradient(160deg, #ffffff28 0%, #ffffff10 45%, #0a84ff18 100%) :
+                Theme.is-fortnite ? @linear-gradient(135deg, #182B5C 0%, #0E1A3A 100%) :
                 Theme.surface-container-low;
-    border-radius: Theme.is-minecraft ? 0px : Theme.radius-xl;
+    border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-xl);
     border-width: Theme.is-minecraft ? 2px :
-                  Theme.is-glass ? 1px : 0px;
+                  Theme.is-fortnite ? 2px : 0px;
     border-color: Theme.is-minecraft ? (root.expanded ? #FFFFFF : #000000) :
-                  Theme.is-glass ? #ffffff45 : Colors.transparent;
+                  Theme.is-fortnite ? (root.expanded ? #F7E600 : #00D2FF) : Colors.transparent;
     clip: true;
 
     if Theme.is-minecraft: Image {
         source: @image-url("../assets/mc_stone_card.png");
         image-rendering: pixelated;
-        image-fit: cover;
+        horizontal-tiling: repeat;
+        vertical-tiling: repeat;
         width: 100%;
         height: 100%;
         x: 0px;
@@ -2546,8 +2583,6 @@ export component M3CollapsibleCard inherits Rectangle {
     if Theme.is-minecraft: Rectangle { x: 2px; y: parent.height - 5px; width: parent.width - 4px; height: 3px; background: #00000099; }
     if Theme.is-minecraft: Rectangle { x: parent.width - 5px; y: 2px; width: 3px; height: parent.height - 4px; background: #00000099; }
 
-    if Theme.is-glass: Rectangle { x: 16px; y: 1px; width: parent.width - 32px; height: 1.5px; background: @linear-gradient(90deg, #ffffff15 0%, #ffffff99 50%, #ffffff15 100%); }
-
     VerticalLayout {
         spacing: 0px;
         padding: 0px;
@@ -2555,8 +2590,10 @@ export component M3CollapsibleCard inherits Rectangle {
         // Encabezado clicable
         header-box := Rectangle {
             min-height: 64px;
-            background: Theme.is-minecraft || Theme.is-glass ?
+            background: Theme.is-minecraft ?
                         (header-touch.pressed ? #ffffff22 : header-touch.has-hover ? #ffffff11 : Colors.transparent) :
+                        Theme.is-fortnite ?
+                        (header-touch.pressed ? #213D8244 : header-touch.has-hover ? #15265444 : Colors.transparent) :
                         (header-touch.pressed ? Theme.surface-container-high :
                          header-touch.has-hover ? Theme.surface-container :
                          Colors.transparent);
@@ -2586,16 +2623,16 @@ export component M3CollapsibleCard inherits Rectangle {
                     if root.icon-name != "": Rectangle {
                         width: 36px;
                         height: 36px;
-                        border-radius: Theme.is-minecraft ? 0px : 18px;
-                        border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                        border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
-                        background: Theme.is-minecraft ? #00000044 : (Theme.is-glass ? #ffffff18 : Theme.surface-container-high);
+                        border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 18px);
+                        border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                        border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
+                        background: Theme.is-minecraft ? #00000044 : (Theme.is-fortnite ? #152654 : Theme.surface-container-high);
                         y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                         M3Icon {
                             name: root.icon-name;
                             icon-size: 18px;
-                            icon-color: Theme.is-minecraft ? #FFFFFF : (Theme.is-glass ? #5AC8FA : Theme.primary);
+                            icon-color: Theme.is-minecraft ? #FFFFFF : (Theme.is-fortnite ? #00D2FF : Theme.primary);
                             x: Math.floor((parent.width - self.width) / 2px) * 1px;
                             y: Math.floor((parent.height - self.height) / 2px) * 1px;
                         }
@@ -2610,7 +2647,7 @@ export component M3CollapsibleCard inherits Rectangle {
                             text: root.title;
                             font-size: 15px;
                             font-weight: 600;
-                            color: Theme.is-minecraft ? #FFFFFF : (Theme.is-glass ? #FFFFFF : Theme.primary);
+                            color: Theme.is-minecraft ? #FFFFFF : (Theme.is-fortnite ? #FFFFFF : Theme.primary);
                             vertical-alignment: center;
                             overflow: elide;
                         }
@@ -2618,7 +2655,7 @@ export component M3CollapsibleCard inherits Rectangle {
                         if root.subtitle != "": Text {
                             text: root.subtitle;
                             font-size: Theme.font-body-small;
-                            color: Theme.is-minecraft ? #DDDDDD : (Theme.is-glass ? #FFFFFFBB : Theme.on-surface-variant);
+                            color: Theme.is-minecraft ? #DDDDDD : (Theme.is-fortnite ? #A6C8FF : Theme.on-surface-variant);
                             vertical-alignment: center;
                             wrap: word-wrap;
                         }
@@ -2633,10 +2670,10 @@ export component M3CollapsibleCard inherits Rectangle {
 
                     if root.badge-text != "": Rectangle {
                         height: 24px;
-                        border-radius: Theme.is-minecraft ? 0px : Theme.radius-full;
-                        border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                        border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
-                        background: Theme.is-minecraft ? #00000066 : (Theme.is-glass ? #ffffff25 : Theme.secondary-container);
+                        border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : Theme.radius-full);
+                        border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                        border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? #00D2FF : Colors.transparent);
+                        background: Theme.is-minecraft ? #00000066 : (Theme.is-fortnite ? #152654 : Theme.secondary-container);
                         y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                         HorizontalLayout {
@@ -2648,7 +2685,7 @@ export component M3CollapsibleCard inherits Rectangle {
                                 text: root.badge-text;
                                 font-size: Theme.font-label-small;
                                 font-weight: 700;
-                                color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-secondary-container;
+                                color: Theme.is-minecraft || Theme.is-fortnite ? #FFFFFF : Theme.on-secondary-container;
                                 vertical-alignment: center;
                             }
                         }
@@ -2658,17 +2695,17 @@ export component M3CollapsibleCard inherits Rectangle {
                     Rectangle {
                         width: 32px;
                         height: 32px;
-                        border-radius: Theme.is-minecraft ? 0px : 16px;
-                        border-width: Theme.is-minecraft ? 1px : (Theme.is-glass ? 1px : 0px);
-                        border-color: Theme.is-minecraft ? #000000 : (Theme.is-glass ? #ffffff35 : Colors.transparent);
-                        background: Theme.is-minecraft ? #00000044 : (Theme.is-glass ? #ffffff18 : Theme.surface-container-high);
+                        border-radius: Theme.is-minecraft ? 0px : (Theme.is-fortnite ? 4px : 16px);
+                        border-width: Theme.is-minecraft ? 1px : (Theme.is-fortnite ? 1px : 0px);
+                        border-color: Theme.is-minecraft ? #000000 : (Theme.is-fortnite ? (root.expanded ? #F7E600 : #00D2FF) : Colors.transparent);
+                        background: Theme.is-minecraft ? #00000044 : (Theme.is-fortnite ? (root.expanded ? #F7E60022 : #152654) : Theme.surface-container-high);
                         y: Math.floor((parent.height - self.height) / 2px) * 1px;
 
                         Text {
                             text: root.expanded ? "▲" : "▼";
                             font-size: 11px;
                             font-weight: 700;
-                            color: Theme.is-minecraft || Theme.is-glass ? #FFFFFF : Theme.on-surface-variant;
+                            color: Theme.is-minecraft ? #FFFFFF : (Theme.is-fortnite ? (root.expanded ? #F7E600 : #00D2FF) : Theme.on-surface-variant);
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             x: Math.floor((parent.width - self.width) / 2px) * 1px;
