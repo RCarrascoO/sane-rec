@@ -2632,7 +2632,7 @@ fn copy_file_to_clipboard(path: &std::path::Path) {
         use std::os::windows::process::CommandExt;
         let path_str = path.to_string_lossy().to_string();
         let escaped = path_str.replace("'", "''");
-        let ps_cmd = format!("Set-Clipboard -Path '{}'", escaped);
+        let ps_cmd = format!("Set-Clipboard -Value '{}'", escaped);
         let _ = std::process::Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
             .creation_flags(0x08000000)

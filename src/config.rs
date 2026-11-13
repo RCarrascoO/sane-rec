@@ -29,7 +29,7 @@ impl Default for ReplayConfig {
     fn default() -> Self {
         Self {
             duration_secs: 30,
-            max_memory_mb: 150,
+            max_memory_mb: 500,
         }
     }
 }
@@ -859,7 +859,7 @@ mod tests {
         let cfg = Config::default();
 
         assert_eq!(cfg.replay.duration_secs, 30);
-        assert_eq!(cfg.replay.max_memory_mb, 150);
+        assert_eq!(cfg.replay.max_memory_mb, 500);
 
         assert_eq!(cfg.video.target, "portal");
         assert_eq!(cfg.video.fps, 60);

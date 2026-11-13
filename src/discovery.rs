@@ -632,7 +632,7 @@ pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> 
     use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         EnumWindows, FindWindowW, GetClientRect, GetWindowTextLengthW, GetWindowTextW,
-        IsWindowVisible,
+        IsIconic, IsWindowVisible,
     };
 
     let title_clean = win_title.trim();
@@ -685,6 +685,10 @@ pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> 
     }
 
     if target_hwnd.is_null() {
+        return None;
+    }
+
+    if unsafe { IsIconic(target_hwnd) } != 0 {
         return None;
     }
 

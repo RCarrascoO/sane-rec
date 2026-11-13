@@ -1,5 +1,17 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.6.2 - 2026-11-13 (0.6.2)
+- **Fixed:**
+  - **Eliminación Definitiva del Stuttering y Descarte de Cuadros a los 12-13s en Windows**:
+    - Feeder de audio TCP sincronizado estrictamente al reloj de pared (`expected_frames`) con despacho inmediato (catch-up mode), eliminando la deriva acumulativa del scheduler Win32 y la subalimentación del pipeline de audio.
+    - Purgado preventivo de muestras acumuladas en colas WASAPI durante la inicialización de FFmpeg.
+    - Expansión de la cola de entrada de vídeo `-thread_queue_size` a `2048` fotogramas en FFmpeg (`gdigrab`), garantizando un margen de retención holgado ante variaciones temporales.
+    - Aplicación estricta de `-r <fps>` con `-fps_mode cfr` en los perfiles de codificación de Windows para asegurar fluidez perfecta y constante a 60 FPS.
+  - **Ampliación de Memoria Predeterminada del Replay Buffer**: incremento del búfer base en RAM de `150 MB` a `500 MB` en `Config::default()` para soportar repeticiones instantáneas en 1080p60 a altas tasas de bits sin descarte prematuro de segmentos.
+  - **Normalización de Rutas en Concat Demuxer**: conversión de separadores de ruta `\` a `/` en la lista temporal de segmentos para evitar errores de escape de caracteres en FFmpeg sobre Windows.
+  - **Protección contra Cuelgues DWM en Ventanas Minimizadas**: detección de ventanas minimizadas con `IsIconic` en `get_window_capture_rect` para evitar coordenadas de recorte espurias `(-32000, -32000)`.
+  - **Compatibilidad de Portapapeles con PowerShell 5.1**: cambio de parámetro en comando `Set-Clipboard` de `-Path` a `-Value` para compatibilidad transparente en todas las versiones de Windows 10/11 sin requerir PowerShell Core.
+
 ## v0.6.1 - 2026-11-10 (0.6.1)
 - **Added:**
   - **Tema Fortnite Edition** (`#091128` Lobby oscuro, amarillo vibrante `#F7E600` con borde superior blanco de `2px`, cian `#00D2FF` y cortes angulares `4px`), con migración transparente desde configuraciones previas `liquid-glass`.

@@ -1433,7 +1433,8 @@ impl ReplayEngine {
         let run_concat = |segs: &[PathBuf]| -> std::result::Result<(), String> {
             let mut list_content = String::new();
             for seg in segs {
-                list_content.push_str(&format!("file '{}'\n", seg.display()));
+                let seg_str = seg.to_string_lossy().replace('\\', "/");
+                list_content.push_str(&format!("file '{}'\n", seg_str));
             }
             if let Err(e) = std::fs::write(&list_file, list_content) {
                 return Err(format!("Error al escribir lista concat: {}", e));
@@ -2319,10 +2320,37 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
             };
             let _ = stream.set_nodelay(true);
 
-            let mut next_tick = Instant::now() + Duration::from_millis(20);
+            // Al conectar FFmpeg, purgar cualquier muestra residual acumulada durante el arranque
+            if let Ok(mut q) = system_buffer.lock() {
+                q.clear();
+            }
+            if let Ok(mut q) = mic_buffer.lock() {
+                q.clear();
+            }
+
+            let start_time = Instant::now();
+            let mut total_frames_sent: u64 = 0;
             let mut send_buf = vec![0u8; 3840]; // 960 frames * 2 canales * 2 bytes = 3840 bytes
 
             while !stop_flag_clone.load(Ordering::Relaxed) {
+                let elapsed = start_time.elapsed();
+                let expected_frames = (elapsed.as_secs_f64() * 48000.0) as u64;
+
+                let sys_has_chunk = system_buffer
+                    .lock()
+                    .map(|q| q.len() >= 1920)
+                    .unwrap_or(false);
+                let mic_has_chunk = mic_buffer
+                    .lock()
+                    .map(|q| q.len() >= 1920)
+                    .unwrap_or(false);
+
+                // Si vamos al día con el reloj de pared y no hay acumulación en buffers, ceder CPU
+                if total_frames_sent >= expected_frames && !sys_has_chunk && !mic_has_chunk {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+
                 {
                     let mut sys_q = system_buffer.lock().unwrap();
                     let mut mic_q = mic_buffer.lock().unwrap();
@@ -2356,14 +2384,7 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
                     break;
                 }
 
-                let now = Instant::now();
-                if next_tick > now {
-                    std::thread::sleep(next_tick - now);
-                }
-                next_tick += Duration::from_millis(20);
-                if next_tick < Instant::now() {
-                    next_tick = Instant::now() + Duration::from_millis(20);
-                }
+                total_frames_sent += 960;
             }
         })
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
@@ -2430,7 +2451,7 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
         "-fflags",
         "+nobuffer+flush_packets",
         "-thread_queue_size",
-        "512",
+        "2048",
     ]);
 
     if target.starts_with("title=") || target.starts_with("window:") {
@@ -2512,7 +2533,8 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
         .unwrap_or(EncoderProfile::SaneSafe);
 
     let scale_filter = build_windows_scale_filter(&config.video.scale);
-    cmd.args(["-vf", &scale_filter, "-fps_mode", "cfr"]);
+    let fps_str = config.video.fps.to_string();
+    cmd.args(["-vf", &scale_filter, "-r", &fps_str, "-fps_mode", "cfr"]);
 
     match profile {
         EncoderProfile::SaneSafe => {
