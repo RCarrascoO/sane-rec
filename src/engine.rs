@@ -792,13 +792,19 @@ impl ReplayEngine {
             let fps = cfg.video.fps.max(15);
             let fps_str = fps.to_string();
 
+            // -bsf:v dump_extra solo aplica a H.264; en HEVC, VP9 o AV1 corrompe el MPEG-TS o falla FFmpeg
+            let is_h264 = cfg.video.codec.contains("264")
+                || cfg.profile.active_profile.contains("264")
+                || cfg.profile.active_profile == "sane-safe"
+                || cfg.profile.active_profile == "amd-hardware"
+                || cfg.profile.active_profile == "nvidia-hardware"
+                || cfg.profile.active_profile == "intel-hardware";
+
+            cmd.args(["-g", &fps_str, "-keyint_min", &fps_str]);
+            if is_h264 {
+                cmd.args(["-bsf:v", "dump_extra"]);
+            }
             cmd.args([
-                "-g",
-                &fps_str,
-                "-keyint_min",
-                &fps_str,
-                "-bsf:v",
-                "dump_extra",
                 "-f",
                 "mpegts",
                 "-mpegts_flags",
@@ -1233,12 +1239,39 @@ impl ReplayEngine {
 
             cmd.stdin(Stdio::piped())
                 .stdout(Stdio::null())
-                .stderr(Stdio::null());
+                .stderr(Stdio::piped());
             cmd
         };
 
         let mut cmd = build_cont_cmd(&config, audio_port, &output_path);
         let mut child = cmd.spawn()?;
+
+        // Captura stderr para crash reports (no descartamos errores del encoder)
+        let stderr_log_cont = Arc::new(Mutex::new(String::new()));
+        if let Some(mut err_pipe) = child.stderr.take() {
+            let log_clone = Arc::clone(&stderr_log_cont);
+            std::thread::Builder::new()
+                .name("sane-rec-cont-stderr".into())
+                .spawn(move || {
+                    use std::io::Read;
+                    let mut buf = [0u8; 4096];
+                    let mut ring = Vec::new();
+                    while let Ok(n) = err_pipe.read(&mut buf) {
+                        if n == 0 {
+                            break;
+                        }
+                        ring.extend_from_slice(&buf[..n]);
+                        if ring.len() > 16384 {
+                            let drain_len = ring.len() - 16384;
+                            ring.drain(..drain_len);
+                        }
+                        if let Ok(mut guard) = log_clone.lock() {
+                            *guard = String::from_utf8_lossy(&ring).into_owned();
+                        }
+                    }
+                })
+                .ok();
+        }
 
         // Verificación de salud inicial (350ms) y fallback automático a SaneSafe CPU
         std::thread::sleep(Duration::from_millis(350));
@@ -1251,6 +1284,13 @@ impl ReplayEngine {
         if failed {
             let code = child.try_wait().ok().flatten().and_then(|s| s.code());
             crate::crash_handler::log_engine_failure("Inicio de Grabación Continua (Windows)", code);
+            let err_text = stderr_log_cont.lock().map(|g| g.clone()).unwrap_or_default();
+            if !err_text.is_empty() {
+                crate::crash_handler::write_crash_report(
+                    "Fallo al iniciar grabación continua en Windows (FFmpeg stderr)",
+                    &err_text,
+                );
+            }
 
             if let Some(stop) = audio_stop.take() {
                 stop.store(true, Ordering::SeqCst);
@@ -1279,6 +1319,31 @@ impl ReplayEngine {
 
                 let mut fallback_cmd = build_cont_cmd(&config, audio_port, &output_path);
                 child = fallback_cmd.spawn()?;
+
+                if let Some(mut err_pipe) = child.stderr.take() {
+                    let log_clone = Arc::clone(&stderr_log_cont);
+                    std::thread::Builder::new()
+                        .name("sane-rec-cont-fallback-stderr".into())
+                        .spawn(move || {
+                            use std::io::Read;
+                            let mut buf = [0u8; 4096];
+                            let mut ring = Vec::new();
+                            while let Ok(n) = err_pipe.read(&mut buf) {
+                                if n == 0 {
+                                    break;
+                                }
+                                ring.extend_from_slice(&buf[..n]);
+                                if ring.len() > 16384 {
+                                    let drain_len = ring.len() - 16384;
+                                    ring.drain(..drain_len);
+                                }
+                                if let Ok(mut guard) = log_clone.lock() {
+                                    *guard = String::from_utf8_lossy(&ring).into_owned();
+                                }
+                            }
+                        })
+                        .ok();
+                }
 
                 std::thread::sleep(Duration::from_millis(350));
                 if let Ok(Some(status)) = child.try_wait() {
@@ -2403,11 +2468,16 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
 
                 // Control estricto de ritmo (48 kHz estéreo):
                 // Si ya enviamos todos los fotogramas esperados hasta el tiempo real transcurrido,
-                // esperamos en fracciones cortas de milisegundo sin saturar el socket TCP con ráfagas adelantadas.
+                // dormimos de forma proporcional evitando spin-wait de 100% CPU y sin sobre-dormir.
                 if total_frames_sent >= expected_frames {
                     let diff_frames = total_frames_sent - expected_frames;
-                    let sleep_ms = ((diff_frames as f64 / 48.0).min(10.0)).max(1.0) as u64;
-                    std::thread::sleep(Duration::from_millis(sleep_ms));
+                    let diff_ms = diff_frames / 48; // 48 frames por milisegundo a 48000 Hz
+                    if diff_ms >= 2 {
+                        let sleep_ms = ((diff_ms - 1).min(10)).max(1);
+                        std::thread::sleep(Duration::from_millis(sleep_ms));
+                    } else {
+                        std::thread::yield_now();
+                    }
                     continue;
                 }
 
@@ -2723,16 +2793,17 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     "fast" | "quality" => "quality",
                     _ => "speed",
                 };
-                let win_codec = if codec.contains("hevc") || codec.contains("265") {
-                    "hevc_amf"
-                } else {
-                    "h264_amf"
-                };
+                let is_amf_hevc = codec.contains("hevc") || codec.contains("265");
+                let win_codec = if is_amf_hevc { "hevc_amf" } else { "h264_amf" };
+                // hevc_amf: ultralowlatency falla en muchos drivers Adrenalin → usar lowlatency
+                // hevc_amf: nv12 es más compatible que yuv420p para AMF HEVC
+                let amf_usage = if is_amf_hevc { "lowlatency" } else { "ultralowlatency" };
+                let amf_pix_fmt = if is_amf_hevc { "nv12" } else { "yuv420p" };
                 cmd.args([
                     "-c:v",
                     win_codec,
                     "-usage",
-                    "ultralowlatency",
+                    amf_usage,
                     "-quality",
                     amf_quality,
                     "-rc",
@@ -2744,7 +2815,7 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                     "-bf",
                     "0",
                     "-pix_fmt",
-                    "yuv420p",
+                    amf_pix_fmt,
                 ]);
             } else if codec.contains("qsv") {
                 let qsv_preset = match config.video.preset.as_str() {

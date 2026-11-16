@@ -1,5 +1,13 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.6.4 - 2026-11-16 (0.6.4)
+- **Fixed (Windows):**
+  - **Audio/Video Lag a 15 FPS eliminado**: el audio feeder de Windows dormía obligatoriamente ≥ 1 ms (2-4 ms reales en el scheduler de Win32) incluso cuando el adelanto era mínimo (< 20 ms), estrangulando la frecuencia de envío. Ahora usa `std::thread::yield_now()` cuando el adelanto es < 960 frames (< 20 ms) y solo duerme cuando hay un adelanto real (≥ 960 frames), sin el `max(1.0)` forzado.
+  - **`hevc_amf` grababa solo audio**: `-bsf:v dump_extra` es exclusivo de H.264 y corrompe/elimina el video en MPEG-TS cuando el códec es HEVC/H.265 (`hevc_amf`, `libx265`). Ahora se aplica condicionalmente solo para codecs H.264.
+  - **`hevc_amf` perfil Custom**: cambia `-usage ultralowlatency` a `-usage lowlatency` (evita fallo en drivers Adrenalin) y usa `-pix_fmt nv12` en lugar de `yuv420p` para mayor compatibilidad AMF HEVC.
+  - **Stderr de grabación continua capturado**: el proceso FFmpeg en `start_record` ahora usa `Stdio::piped()` en lugar de `Stdio::null()` para stderr, con un hilo lector que almacena los últimos 16 KB en un ring buffer para crash reports.
+  - **Zoom/Recorte en captura de ventana con DPI scaling**: `get_window_capture_rect` ahora escala las coordenadas lógicas a píxeles físicos usando `GetDpiForWindow` cuando DPI ≠ 96 (125%, 150%, etc.), corrigiendo el zoom centrado que afectaba a monitores HiDPI.
+
 ## v0.6.3 - 2026-11-16 (0.6.3)
 - **Fixed:**
   - **Corrección Definitiva del Descarte de Cuadros y Stuttering de 12+ Segundos en Windows**:

@@ -1,6 +1,6 @@
 [package]
 name = "sane-rec"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2021"
 authors = ["RCarrascoO"]
 description = "Lightweight Material Design 3 Instant Replay & Screen Recorder for Linux and Windows with CPU-first architecture"
@@ -37,5 +37,6 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
 ] }
 

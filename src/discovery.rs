@@ -708,7 +708,22 @@ pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> 
 
     let client_w = (client_rect.right - client_rect.left).max(2) as u32;
     let client_h = (client_rect.bottom - client_rect.top).max(2) as u32;
-    let (w, h) = truncate_to_even_dimensions(client_w, client_h);
+
+    // gdigrab captura en píxeles físicos del escritorio; escalar dimensiones si DPI != 96 (100%)
+    // top_left ya se encuentra en coordenadas de pantalla físicas gracias a ClientToScreen
+    use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+    let dpi = unsafe { GetDpiForWindow(target_hwnd) };
+    let (phys_w, phys_h) = if dpi > 0 && dpi != 96 {
+        let scale = dpi as f64 / 96.0;
+        (
+            ((client_w as f64 * scale).round() as u32).max(2),
+            ((client_h as f64 * scale).round() as u32).max(2),
+        )
+    } else {
+        (client_w, client_h)
+    };
+
+    let (w, h) = truncate_to_even_dimensions(phys_w, phys_h);
 
     Some((top_left.x, top_left.y, w, h))
 }
