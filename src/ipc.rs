@@ -219,6 +219,8 @@ pub fn send_command_sync(action: &str) -> Result<IpcResponse> {
 
     let (conn_timeout, rw_timeout) = if action == "status" {
         (Duration::from_millis(500), Duration::from_millis(1500))
+    } else if action == "save" {
+        (Duration::from_millis(1500), Duration::from_secs(30))
     } else {
         (Duration::from_millis(1500), Duration::from_secs(5))
     };
@@ -260,6 +262,8 @@ pub fn send_command_sync_at(path: &Path, action: &str) -> Result<IpcResponse> {
 
     let (_conn_timeout, rw_timeout) = if action == "status" {
         (Duration::from_millis(500), Duration::from_millis(1500))
+    } else if action == "save" {
+        (Duration::from_millis(1500), Duration::from_secs(30))
     } else {
         (Duration::from_millis(1500), Duration::from_secs(5))
     };

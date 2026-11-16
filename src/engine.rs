@@ -1655,8 +1655,10 @@ impl ReplayEngine {
         let mut remux_cmd = new_hidden_command(resolve_binary("ffmpeg"));
         remux_cmd.args([
             "-y",
+            "-avoid_negative_ts",
+            "make_zero",
             "-fflags",
-            "+genpts+igndts",
+            "+genpts",
             "-f",
             "mpegts",
             "-i",
@@ -1706,8 +1708,10 @@ impl ReplayEngine {
             let mut transcode_cmd = new_hidden_command(resolve_binary("ffmpeg"));
             transcode_cmd.args([
                 "-y",
+                "-avoid_negative_ts",
+                "make_zero",
                 "-fflags",
-                "+genpts+igndts",
+                "+genpts",
                 "-f",
                 "mpegts",
                 "-i",
@@ -2071,6 +2075,7 @@ pub struct WindowsAudioResampler {
     curr_channel: usize,
     curr_frame_left: f32,
     curr_frame_right: f32,
+    staging: Vec<f32>,
 }
 
 impl WindowsAudioResampler {
@@ -2090,77 +2095,90 @@ impl WindowsAudioResampler {
             curr_channel: 0,
             curr_frame_left: 0.0,
             curr_frame_right: 0.0,
+            staging: Vec::with_capacity(3840),
         }
     }
 
-    pub fn push_sample(&mut self, s: f32, out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+    pub fn push_sample_staged(&mut self, s: f32) {
         if self.curr_channel == 0 {
             self.curr_frame_left = s;
             if self.channels == 1 {
                 self.curr_frame_right = s;
-                self.feed_frame(out);
+                self.feed_frame_staged();
             }
         } else if self.curr_channel == 1 {
             self.curr_frame_right = s;
             if self.channels == 2 {
-                self.feed_frame(out);
+                self.feed_frame_staged();
             }
         } else if self.curr_channel == self.channels - 1 {
-            self.feed_frame(out);
+            self.feed_frame_staged();
         }
         self.curr_channel = (self.curr_channel + 1) % self.channels;
     }
 
-    fn feed_frame(&mut self, out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+    pub fn push_sample(&mut self, s: f32, out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+        self.push_sample_staged(s);
+        self.flush(out);
+    }
+
+    fn feed_frame_staged(&mut self) {
         let next_left = self.curr_frame_left;
         let next_right = self.curr_frame_right;
 
         if (self.from_rate - self.to_rate).abs() < 1.0 {
-            let mut q = out.lock().unwrap();
-            q.push_back(next_left * self.volume);
-            q.push_back(next_right * self.volume);
-            if q.len() > 192000 {
-                q.drain(..96000);
-            }
+            self.staging.push(next_left * self.volume);
+            self.staging.push(next_right * self.volume);
             return;
         }
 
-        let mut q = out.lock().unwrap();
         while self.pos < 1.0 {
             let t = self.pos as f32;
             let l = (1.0 - t) * self.prev_left + t * next_left;
             let r = (1.0 - t) * self.prev_right + t * next_right;
-            q.push_back(l * self.volume);
-            q.push_back(r * self.volume);
+            self.staging.push(l * self.volume);
+            self.staging.push(r * self.volume);
             self.pos += self.ratio;
         }
         self.pos -= 1.0;
         self.prev_left = next_left;
         self.prev_right = next_right;
+    }
 
-        if q.len() > 192000 {
-            q.drain(..96000);
+    pub fn flush(&mut self, out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+        if self.staging.is_empty() {
+            return;
+        }
+        if let Ok(mut q) = out.lock() {
+            q.extend(self.staging.drain(..));
+            if q.len() > 96000 {
+                let excess = q.len() - 48000;
+                q.drain(..excess);
+            }
         }
     }
 
     pub fn process_f32(&mut self, data: &[f32], out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
         for &s in data {
-            self.push_sample(s, out);
+            self.push_sample_staged(s);
         }
+        self.flush(out);
     }
 
     pub fn process_i16(&mut self, data: &[i16], out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
         for &s in data {
             let f = s as f32 / 32768.0;
-            self.push_sample(f, out);
+            self.push_sample_staged(f);
         }
+        self.flush(out);
     }
 
     pub fn process_u16(&mut self, data: &[u16], out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
         for &s in data {
             let f = (s as f32 - 32768.0) / 32768.0;
-            self.push_sample(f, out);
+            self.push_sample_staged(f);
         }
+        self.flush(out);
     }
 }
 
@@ -2313,12 +2331,54 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
         }
     }
 
-            let _ = listener.set_nonblocking(false);
-            let (mut stream, _) = match listener.accept() {
-                Ok(conn) => conn,
-                Err(_) => return,
+            let _ = listener.set_nonblocking(true);
+            let mut stream_opt = None;
+            while !stop_flag_clone.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((conn, _)) => {
+                        stream_opt = Some(conn);
+                        break;
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(_) => return,
+                }
+            }
+            let mut stream = match stream_opt {
+                Some(s) => s,
+                None => return,
             };
+            let _ = stream.set_nonblocking(false);
             let _ = stream.set_nodelay(true);
+
+            #[cfg(target_os = "windows")]
+            #[link(name = "winmm")]
+            extern "system" {
+                fn timeBeginPeriod(uperiod: u32) -> u32;
+                fn timeEndPeriod(uperiod: u32) -> u32;
+            }
+
+            struct WinHighPrecisionTimer;
+            impl WinHighPrecisionTimer {
+                fn new() -> Self {
+                    #[cfg(target_os = "windows")]
+                    unsafe {
+                        timeBeginPeriod(1);
+                    }
+                    Self
+                }
+            }
+            impl Drop for WinHighPrecisionTimer {
+                fn drop(&mut self) {
+                    #[cfg(target_os = "windows")]
+                    unsafe {
+                        timeEndPeriod(1);
+                    }
+                }
+            }
+
+            let _precision_timer = WinHighPrecisionTimer::new();
 
             // Al conectar FFmpeg, purgar cualquier muestra residual acumulada durante el arranque
             if let Ok(mut q) = system_buffer.lock() {
@@ -2336,24 +2396,34 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
                 let elapsed = start_time.elapsed();
                 let expected_frames = (elapsed.as_secs_f64() * 48000.0) as u64;
 
-                let sys_has_chunk = system_buffer
-                    .lock()
-                    .map(|q| q.len() >= 1920)
-                    .unwrap_or(false);
-                let mic_has_chunk = mic_buffer
-                    .lock()
-                    .map(|q| q.len() >= 1920)
-                    .unwrap_or(false);
+                // Protección contra drift / congelación prolongada de reloj (> 1s)
+                if expected_frames > total_frames_sent + 48000 {
+                    total_frames_sent = expected_frames;
+                }
 
-                // Si vamos al día con el reloj de pared y no hay acumulación en buffers, ceder CPU
-                if total_frames_sent >= expected_frames && !sys_has_chunk && !mic_has_chunk {
-                    std::thread::sleep(Duration::from_millis(5));
+                // Control estricto de ritmo (48 kHz estéreo):
+                // Si ya enviamos todos los fotogramas esperados hasta el tiempo real transcurrido,
+                // esperamos en fracciones cortas de milisegundo sin saturar el socket TCP con ráfagas adelantadas.
+                if total_frames_sent >= expected_frames {
+                    let diff_frames = total_frames_sent - expected_frames;
+                    let sleep_ms = ((diff_frames as f64 / 48.0).min(10.0)).max(1.0) as u64;
+                    std::thread::sleep(Duration::from_millis(sleep_ms));
                     continue;
                 }
 
                 {
                     let mut sys_q = system_buffer.lock().unwrap();
                     let mut mic_q = mic_buffer.lock().unwrap();
+
+                    // Purgar acumulación si el buffer excede 100ms (4800 frames = 9600 muestras)
+                    if sys_q.len() > 9600 {
+                        let excess = sys_q.len() - 4800;
+                        sys_q.drain(..excess);
+                    }
+                    if mic_q.len() > 9600 {
+                        let excess = mic_q.len() - 4800;
+                        mic_q.drain(..excess);
+                    }
 
                     let mut offset = 0;
                     for _ in 0..960 {
@@ -2445,7 +2515,7 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
     // Input 0: Video (baja latencia y búfer ágil para 60 FPS en resoluciones altas)
     cmd.args([
         "-probesize",
-        "32K",
+        "32M",
         "-analyzeduration",
         "0",
         "-fflags",

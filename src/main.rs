@@ -770,38 +770,55 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let engine_clone = local_engine.clone();
         let output_dir = config.storage.output_dir.clone();
         let daemon_flag = daemon_running_flag.clone();
+        let is_saving = Arc::new(std::sync::atomic::AtomicBool::new(false));
         ui.on_save_clip(move || {
-            let is_daemon = daemon_flag.load(std::sync::atomic::Ordering::SeqCst);
-            let res = if is_daemon {
-                ipc::send_command_sync("save").map(|resp| {
-                    resp.data
-                        .and_then(|d| d.get("path").and_then(|p| p.as_str().map(PathBuf::from)))
-                        .unwrap_or_else(|| PathBuf::from("clip.mp4"))
-                })
-            } else if let Some(ref eng) = engine_clone {
-                eng.save_clip()
-                    .map_err(|e| ipc::IpcError::Custom(e.to_string()))
-            } else {
-                Err(ipc::IpcError::Custom("No engine available".into()))
-            };
-
-            match res {
-                Ok(path) => {
-                    if let Some(ui) = ui_weak.upgrade() {
-                        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                            ui.set_last_saved_clip(filename.into());
-                            show_toast(&ui, "save", &format!("Replay guardado: {}", filename));
-                        }
-                        let out_dir = resolve_active_output_dir(&engine_clone, &output_dir);
-                        update_gallery_model(&ui, &out_dir);
-                    }
+            let ui_weak = ui_weak.clone();
+            if is_saving.compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst).is_err() {
+                if let Some(ui) = ui_weak.upgrade() {
+                    show_toast(&ui, "warning", "Ya se está guardando un replay...");
                 }
-                Err(e) => {
-                    if let Some(ui) = ui_weak.upgrade() {
-                        show_toast(&ui, "warning", &format!("No se pudo guardar clip: {}", e));
-                    }
-                }
+                return;
             }
+
+            let is_daemon = daemon_flag.load(std::sync::atomic::Ordering::SeqCst);
+            let engine_clone = engine_clone.clone();
+            let output_dir = output_dir.clone();
+            let is_saving_flag = is_saving.clone();
+
+            std::thread::spawn(move || {
+                let res = if is_daemon {
+                    ipc::send_command_sync("save").map(|resp| {
+                        resp.data
+                            .and_then(|d| d.get("path").and_then(|p| p.as_str().map(PathBuf::from)))
+                            .unwrap_or_else(|| PathBuf::from("clip.mp4"))
+                    })
+                } else if let Some(ref eng) = engine_clone {
+                    eng.save_clip()
+                        .map_err(|e| ipc::IpcError::Custom(e.to_string()))
+                } else {
+                    Err(ipc::IpcError::Custom("No engine available".into()))
+                };
+
+                is_saving_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        match res {
+                            Ok(path) => {
+                                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                                    ui.set_last_saved_clip(filename.into());
+                                    show_toast(&ui, "save", &format!("Replay guardado: {}", filename));
+                                }
+                                let out_dir = resolve_active_output_dir(&engine_clone, &output_dir);
+                                update_gallery_model(&ui, &out_dir);
+                            }
+                            Err(e) => {
+                                show_toast(&ui, "warning", &format!("No se pudo guardar clip: {}", e));
+                            }
+                        }
+                    }
+                });
+            });
         });
     }
 

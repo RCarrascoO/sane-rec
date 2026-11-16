@@ -1,5 +1,21 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.6.3 - 2026-11-16 (0.6.3)
+- **Fixed:**
+  - **Corrección Definitiva del Descarte de Cuadros y Stuttering de 12+ Segundos en Windows**:
+    - Implementación de temporizador de alta precisión Win32 (`timeBeginPeriod(1)` de `winmm.dll`) con RAII estricto en el worker thread de audio feeder, reduciendo la granularidad de los sleeps del scheduler de Windows de 15.6 ms a 1 ms exacto.
+    - Regulación estricta de ritmo de audio a 48 kHz basada en tiempo real (`elapsed` / `expected_frames`) que previene ráfagas de audio adelantadas hacia el socket TCP de FFmpeg y evita la saturación de la cola de entrelazado de video (`interleave_packet`).
+    - Eliminación de la contención de cerraduras (lock contention) en `WindowsAudioResampler` mediante acumulación local por bloque (`staging`), reduciendo los bloqueos de Mutex de 48.000 por segundo a un único bloqueo por ráfaga WASAPI.
+    - Purga activa de retraso de buffers acumulados por encima de 100 ms para mantener sincronización audiovisual perfecta en tiempo real.
+    - Corrección de `-probesize` en `gdigrab` de `32K` a `32M`, garantizando análisis íntegro de fotogramas sin fallas de inicialización de códec.
+  - **Remux Limpio de Clips MP4 en RAM sin Transcodificación**:
+    - Sustitución de `-fflags +igndts` por `-avoid_negative_ts make_zero -fflags +genpts` en `save_clip`, erradicando el error `non monotonically increasing dts` y permitiendo remux ultrarrápido por copia directa (`-c:v copy`).
+  - **Desacoplamiento No Bloqueante de Guardado en la Interfaz Slint**:
+    - Ejecución asíncrona de `save_clip` desde `ui.on_save_clip` en hilo secundario con notificación por `invoke_from_event_loop`, eliminando congelamientos de la interfaz gráfica y el estado "(No responde)" de Windows al guardar repeticiones.
+    - Extensión del timeout de lectura en IPC síncrono para la acción `save` de 5 s a 30 s para prevenir errores falsos de tiempo de espera al escribir clips voluminosos a disco.
+  - **Sincronización de Versión en Componentes Slint y Tests**:
+    - Sincronización de propiedades `app-version` en `app_window.slint` y `components.slint` con `Cargo.toml` (`v0.6.3`), asegurando el paso del 100% de la suite de pruebas.
+
 ## v0.6.2 - 2026-11-13 (0.6.2)
 - **Fixed:**
   - **Eliminación Definitiva del Stuttering y Descarte de Cuadros a los 12-13s en Windows**:
