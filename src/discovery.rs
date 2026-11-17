@@ -723,7 +723,7 @@ pub fn get_window_monitor_crop(hwnd: windows_sys::Win32::Foundation::HWND) -> Op
     let hr = unsafe {
         DwmGetWindowAttribute(
             hwnd,
-            DWMWA_EXTENDED_FRAME_BOUNDS,
+            DWMWA_EXTENDED_FRAME_BOUNDS as u32,
             &mut win_rect as *mut RECT as *mut core::ffi::c_void,
             std::mem::size_of::<RECT>() as u32,
         )
@@ -740,7 +740,7 @@ pub fn get_window_monitor_crop(hwnd: windows_sys::Win32::Foundation::HWND) -> Op
 
     // 3. Obtener geometría y szDevice del monitor
     let mut mi: MONITORINFOEXW = unsafe { std::mem::zeroed() };
-    mi.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+    mi.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
     let ok = unsafe {
         GetMonitorInfoW(hmon, &mut mi as *mut MONITORINFOEXW as *mut MONITORINFO)
     };
@@ -751,21 +751,21 @@ pub fn get_window_monitor_crop(hwnd: windows_sys::Win32::Foundation::HWND) -> Op
     let dev_len = mi.szDevice.iter().position(|&c| c == 0).unwrap_or(mi.szDevice.len());
     let device_name = String::from_utf16_lossy(&mi.szDevice[..dev_len]);
 
-    let mon_w = (mi.rcMonitor.right - mi.rcMonitor.left).max(2) as u32;
-    let mon_h = (mi.rcMonitor.bottom - mi.rcMonitor.top).max(2) as u32;
+    let mon_w = (mi.monitorInfo.rcMonitor.right - mi.monitorInfo.rcMonitor.left).max(2) as u32;
+    let mon_h = (mi.monitorInfo.rcMonitor.bottom - mi.monitorInfo.rcMonitor.top).max(2) as u32;
 
     // Intersección euclidiana rigurosa en el espacio absoluto de la pantalla
-    let inter_left = win_rect.left.max(mi.rcMonitor.left);
-    let inter_top = win_rect.top.max(mi.rcMonitor.top);
-    let inter_right = win_rect.right.min(mi.rcMonitor.right);
-    let inter_bottom = win_rect.bottom.min(mi.rcMonitor.bottom);
+    let inter_left = win_rect.left.max(mi.monitorInfo.rcMonitor.left);
+    let inter_top = win_rect.top.max(mi.monitorInfo.rcMonitor.top);
+    let inter_right = win_rect.right.min(mi.monitorInfo.rcMonitor.right);
+    let inter_bottom = win_rect.bottom.min(mi.monitorInfo.rcMonitor.bottom);
 
     if inter_right <= inter_left + 1 || inter_bottom <= inter_top + 1 {
         return None;
     }
 
-    let rel_x = (inter_left - mi.rcMonitor.left) as u32;
-    let rel_y = (inter_top - mi.rcMonitor.top) as u32;
+    let rel_x = (inter_left - mi.monitorInfo.rcMonitor.left) as u32;
+    let rel_y = (inter_top - mi.monitorInfo.rcMonitor.top) as u32;
     let avail_w = (inter_right - inter_left) as u32;
     let avail_h = (inter_bottom - inter_top) as u32;
 
@@ -823,7 +823,7 @@ pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> 
     if unsafe {
         DwmGetWindowAttribute(
             hwnd,
-            DWMWA_EXTENDED_FRAME_BOUNDS,
+            DWMWA_EXTENDED_FRAME_BOUNDS as u32,
             &mut win_rect as *mut RECT as *mut core::ffi::c_void,
             std::mem::size_of::<RECT>() as u32,
         )
