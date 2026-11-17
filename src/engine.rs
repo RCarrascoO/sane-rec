@@ -39,6 +39,15 @@ pub struct EngineStatus {
     pub output_dir: PathBuf,
 }
 
+/// Backend de captura de video para Windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsCaptureBackend {
+    /// Desktop Duplication API (DXGI / D3D11) - Captura de pantalla a 60 FPS con aceleración de hardware.
+    DdaGrab,
+    /// GDI Screen Grabber - Fallback universal de compatibilidad y captura de ventanas individuales.
+    GdiGrab,
+}
+
 #[derive(Debug)]
 pub enum EngineError {
     Io(std::io::Error),
@@ -110,6 +119,12 @@ pub struct ReplayEngine {
     win_replay_audio_stop: Mutex<Option<Arc<AtomicBool>>>,
     #[allow(dead_code)]
     win_continuous_audio_stop: Mutex<Option<Arc<AtomicBool>>>,
+    #[allow(dead_code)]
+    win_replay_backend: Mutex<WindowsCaptureBackend>,
+    #[allow(dead_code)]
+    win_continuous_backend: Mutex<WindowsCaptureBackend>,
+    #[allow(dead_code)]
+    continuous_stderr_log: Arc<Mutex<String>>,
 }
 
 impl ReplayEngine {
@@ -147,6 +162,9 @@ impl ReplayEngine {
             win_buffer_running: Arc::new(AtomicBool::new(false)),
             win_replay_audio_stop: Mutex::new(None),
             win_continuous_audio_stop: Mutex::new(None),
+            win_replay_backend: Mutex::new(WindowsCaptureBackend::DdaGrab),
+            win_continuous_backend: Mutex::new(WindowsCaptureBackend::DdaGrab),
+            continuous_stderr_log: Arc::new(Mutex::new(String::new())),
         };
 
         // Limpieza automática de segmentos antiguos en RAM al inicializar
@@ -782,12 +800,12 @@ impl ReplayEngine {
             }
         };
 
-        let build_replay_cmd = |cfg: &Config, port: Option<u16>| -> Command {
+        let build_replay_cmd = |cfg: &Config, port: Option<u16>, backend: WindowsCaptureBackend| -> (Command, WindowsCaptureBackend) {
             let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
             cmd.arg("-y");
 
-            apply_windows_input_args(&mut cmd, cfg, port);
-            apply_windows_profile_args(&mut cmd, cfg, port.is_some());
+            let actual_backend = apply_windows_input_args(&mut cmd, cfg, port, backend);
+            apply_windows_profile_args(&mut cmd, cfg, port.is_some(), actual_backend);
 
             let fps = cfg.video.fps.max(15);
             let fps_str = fps.to_string();
@@ -815,10 +833,11 @@ impl ReplayEngine {
             cmd.stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
-            cmd
+            (cmd, actual_backend)
         };
 
-        let mut cmd = build_replay_cmd(&config, audio_port);
+        let (mut cmd, actual_backend) = build_replay_cmd(&config, audio_port, WindowsCaptureBackend::DdaGrab);
+        *self.win_replay_backend.lock().unwrap() = actual_backend;
         let mut child = cmd.spawn()?;
 
         let stderr_log = Arc::new(Mutex::new(String::new()));
@@ -891,7 +910,8 @@ impl ReplayEngine {
                 audio_port = retry_port;
                 audio_stop = retry_stop;
 
-                let mut fallback_cmd = build_replay_cmd(&config, audio_port);
+                let (mut fallback_cmd, fallback_backend) = build_replay_cmd(&config, audio_port, WindowsCaptureBackend::GdiGrab);
+                *self.win_replay_backend.lock().unwrap() = fallback_backend;
                 child = fallback_cmd.spawn()?;
 
                 let fallback_stderr_log = Arc::new(Mutex::new(String::new()));
@@ -1170,7 +1190,7 @@ impl ReplayEngine {
             .unwrap()
             .take()
             .unwrap_or_else(|| PathBuf::from("recording.mp4"));
-        *self.continuous_start_time.lock().unwrap() = None;
+        let elapsed = self.continuous_start_time.lock().unwrap().take().map(|t| t.elapsed());
 
         unsafe {
             libc::kill(child.id() as i32, libc::SIGINT);
@@ -1190,6 +1210,27 @@ impl ReplayEngine {
             .show();
 
         play_feedback_sound("complete");
+
+        let current_cfg = Config::load().unwrap_or_else(|_| self.config());
+        if current_cfg.storage.benchmark_mode {
+            let stderr_str = std::fs::read_to_string(crate::crash_handler::get_engine_log_path()).unwrap_or_default();
+            let ctx = crate::benchmark::BenchmarkContext {
+                output_path: &output_path,
+                config: &current_cfg,
+                encoder_stderr: if stderr_str.is_empty() { None } else { Some(&stderr_str) },
+                capture_backend: "Wayland / PipeWire (wf-recorder)",
+                is_replay_clip: false,
+                elapsed_duration: elapsed,
+            };
+            if let Err(e) = crate::benchmark::generate_benchmark_report(&ctx) {
+                eprintln!("Aviso: No se pudo generar reporte de benchmark: {}", e);
+            }
+        }
+
+        if current_cfg.storage.dual_clip {
+            let target_mb = current_cfg.storage.discord_target_mb;
+            crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
+        }
 
         Ok(output_path)
     }
@@ -1227,29 +1268,32 @@ impl ReplayEngine {
             }
         };
 
-        let build_cont_cmd = |cfg: &Config, port: Option<u16>, out: &Path| -> Command {
+        let build_cont_cmd = |cfg: &Config, port: Option<u16>, out: &Path, backend: WindowsCaptureBackend| -> (Command, WindowsCaptureBackend) {
             let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
             cmd.arg("-y");
 
-            apply_windows_input_args(&mut cmd, cfg, port);
-            apply_windows_profile_args(&mut cmd, cfg, port.is_some());
+            let actual_backend = apply_windows_input_args(&mut cmd, cfg, port, backend);
+            apply_windows_profile_args(&mut cmd, cfg, port.is_some(), actual_backend);
 
-            cmd.args(["-movflags", "+faststart"]);
+            if out.extension().map_or(false, |ext| ext == "mp4") {
+                cmd.args(["-movflags", "+faststart"]);
+            }
             cmd.arg(out);
 
             cmd.stdin(Stdio::piped())
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped());
-            cmd
+            (cmd, actual_backend)
         };
 
-        let mut cmd = build_cont_cmd(&config, audio_port, &output_path);
+        *self.continuous_stderr_log.lock().unwrap() = String::new();
+        let (mut cmd, actual_backend) = build_cont_cmd(&config, audio_port, &output_path, WindowsCaptureBackend::DdaGrab);
+        *self.win_continuous_backend.lock().unwrap() = actual_backend;
         let mut child = cmd.spawn()?;
 
-        // Captura stderr para crash reports (no descartamos errores del encoder)
-        let stderr_log_cont = Arc::new(Mutex::new(String::new()));
+        // Captura stderr para telemetría y crash reports (no descartamos errores del encoder)
         if let Some(mut err_pipe) = child.stderr.take() {
-            let log_clone = Arc::clone(&stderr_log_cont);
+            let log_clone = Arc::clone(&self.continuous_stderr_log);
             std::thread::Builder::new()
                 .name("sane-rec-cont-stderr".into())
                 .spawn(move || {
@@ -1273,7 +1317,7 @@ impl ReplayEngine {
                 .ok();
         }
 
-        // Verificación de salud inicial (350ms) y fallback automático a SaneSafe CPU
+        // Verificación de salud inicial (350ms) y fallback automático a SaneSafe CPU con GDI
         std::thread::sleep(Duration::from_millis(350));
         let failed = match child.try_wait() {
             Ok(Some(_)) => true,
@@ -1284,7 +1328,7 @@ impl ReplayEngine {
         if failed {
             let code = child.try_wait().ok().flatten().and_then(|s| s.code());
             crate::crash_handler::log_engine_failure("Inicio de Grabación Continua (Windows)", code);
-            let err_text = stderr_log_cont.lock().map(|g| g.clone()).unwrap_or_default();
+            let err_text = self.continuous_stderr_log.lock().map(|g| g.clone()).unwrap_or_default();
             if !err_text.is_empty() {
                 crate::crash_handler::write_crash_report(
                     "Fallo al iniciar grabación continua en Windows (FFmpeg stderr)",
@@ -1317,11 +1361,12 @@ impl ReplayEngine {
                 audio_port = retry_port;
                 audio_stop = retry_stop;
 
-                let mut fallback_cmd = build_cont_cmd(&config, audio_port, &output_path);
+                let (mut fallback_cmd, fallback_backend) = build_cont_cmd(&config, audio_port, &output_path, WindowsCaptureBackend::GdiGrab);
+                *self.win_continuous_backend.lock().unwrap() = fallback_backend;
                 child = fallback_cmd.spawn()?;
 
                 if let Some(mut err_pipe) = child.stderr.take() {
-                    let log_clone = Arc::clone(&stderr_log_cont);
+                    let log_clone = Arc::clone(&self.continuous_stderr_log);
                     std::thread::Builder::new()
                         .name("sane-rec-cont-fallback-stderr".into())
                         .spawn(move || {
@@ -1393,14 +1438,28 @@ impl ReplayEngine {
             .unwrap()
             .take()
             .unwrap_or_else(|| PathBuf::from("recording.mp4"));
-        *self.continuous_start_time.lock().unwrap() = None;
+        let elapsed = self.continuous_start_time.lock().unwrap().take().map(|t| t.elapsed());
 
         if let Some(mut stdin) = child.stdin.take() {
             use std::io::Write;
             let _ = stdin.write_all(b"q\n");
             let _ = stdin.flush();
         }
-        let _ = child.wait();
+
+        let mut exited = false;
+        for _ in 0..30 {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    exited = true;
+                    break;
+                }
+                _ => std::thread::sleep(Duration::from_millis(100)),
+            }
+        }
+        if !exited {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
 
         let _ = notify_rust::Notification::new()
             .appname("sane-rec")
@@ -1410,6 +1469,31 @@ impl ReplayEngine {
             .show();
 
         play_feedback_sound("complete");
+
+        let current_cfg = Config::load().unwrap_or_else(|_| self.config());
+        if current_cfg.storage.benchmark_mode {
+            let stderr_str = self.continuous_stderr_log.lock().map(|g| g.clone()).unwrap_or_default();
+            let backend_name = match *self.win_continuous_backend.lock().unwrap() {
+                WindowsCaptureBackend::DdaGrab => "Desktop Duplication API (ddagrab / DXGI)",
+                WindowsCaptureBackend::GdiGrab => "GDI Screen Grabber (gdigrab)",
+            };
+            let ctx = crate::benchmark::BenchmarkContext {
+                output_path: &output_path,
+                config: &current_cfg,
+                encoder_stderr: if stderr_str.is_empty() { None } else { Some(&stderr_str) },
+                capture_backend: backend_name,
+                is_replay_clip: false,
+                elapsed_duration: elapsed,
+            };
+            if let Err(e) = crate::benchmark::generate_benchmark_report(&ctx) {
+                eprintln!("Aviso: No se pudo generar reporte de benchmark: {}", e);
+            }
+        }
+
+        if current_cfg.storage.dual_clip {
+            let target_mb = current_cfg.storage.discord_target_mb;
+            crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
+        }
 
         Ok(output_path)
     }
@@ -1624,8 +1708,23 @@ impl ReplayEngine {
 
         play_feedback_sound("screen-capture");
 
-        // Si el modo "doble clip" está activo, genera en segundo plano la copia optimizada para Discord
+        // Si el modo benchmark está activo, genera el informe exhaustivo .benchmark.txt
         let current_cfg = Config::load().unwrap_or_else(|_| self.config());
+        if current_cfg.storage.benchmark_mode {
+            let ctx = crate::benchmark::BenchmarkContext {
+                output_path: &output_path,
+                config: &current_cfg,
+                encoder_stderr: None,
+                capture_backend: "Wayland / PipeWire (RAM Ring Buffer)",
+                is_replay_clip: true,
+                elapsed_duration: Some(Duration::from_secs(current_cfg.replay.duration_secs as u64)),
+            };
+            if let Err(e) = crate::benchmark::generate_benchmark_report(&ctx) {
+                eprintln!("Aviso: No se pudo generar reporte de benchmark: {}", e);
+            }
+        }
+
+        // Si el modo "doble clip" está activo, genera en segundo plano la copia optimizada para Discord
         if current_cfg.storage.dual_clip {
             let target_mb = current_cfg.storage.discord_target_mb;
             crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
@@ -1866,6 +1965,24 @@ impl ReplayEngine {
         play_feedback_sound("screen-capture");
 
         let current_cfg = Config::load().unwrap_or_else(|_| self.config());
+        if current_cfg.storage.benchmark_mode {
+            let backend_name = match *self.win_replay_backend.lock().unwrap() {
+                WindowsCaptureBackend::DdaGrab => "Desktop Duplication API (ddagrab / DXGI) -> RAM Ring Buffer",
+                WindowsCaptureBackend::GdiGrab => "GDI Screen Grabber (gdigrab) -> RAM Ring Buffer",
+            };
+            let ctx = crate::benchmark::BenchmarkContext {
+                output_path: &output_path,
+                config: &current_cfg,
+                encoder_stderr: None,
+                capture_backend: backend_name,
+                is_replay_clip: true,
+                elapsed_duration: Some(Duration::from_secs(current_cfg.replay.duration_secs as u64)),
+            };
+            if let Err(e) = crate::benchmark::generate_benchmark_report(&ctx) {
+                eprintln!("Aviso: No se pudo generar reporte de benchmark: {}", e);
+            }
+        }
+
         if current_cfg.storage.dual_clip {
             let target_mb = current_cfg.storage.discord_target_mb;
             crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
@@ -2532,55 +2649,18 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
     Ok((port, stop_flag))
 }
 
-/// Aplica los argumentos de entrada y captura de pantalla y audio en Windows (gdigrab + audio TCP).
-#[cfg(target_os = "windows")]
-fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Option<u16>) {
+/// Aplica los argumentos de entrada y captura de pantalla y audio en Windows.
+/// Utiliza Desktop Duplication API (ddagrab / DXGI) para captura nativa a 60 FPS acelerada por hardware,
+/// con fallback automático o selector para gdigrab cuando se capturan ventanas individuales.
+#[cfg(any(target_os = "windows", test))]
+pub fn apply_windows_input_args(
+    cmd: &mut Command,
+    config: &Config,
+    audio_port: Option<u16>,
+    requested_backend: WindowsCaptureBackend,
+) -> WindowsCaptureBackend {
     let fps_str = config.video.fps.to_string();
     let target = config.video.target.trim();
-
-    let apply_desktop_capture = |cmd: &mut Command, target_name: &str| {
-        let outputs = crate::discovery::get_connected_outputs();
-        let matched_output = outputs
-            .iter()
-            .find(|o| o.name.eq_ignore_ascii_case(target_name))
-            .or_else(|| outputs.iter().find(|o| o.is_current))
-            .or_else(|| outputs.first());
-
-        if let Some(o) = matched_output {
-            if o.width > 0 && o.height > 0 {
-                let w = (o.width & !1).max(2);
-                let h = (o.height & !1).max(2);
-                cmd.args([
-                    "-f",
-                    "gdigrab",
-                    "-framerate",
-                    &fps_str,
-                    "-offset_x",
-                    &o.x.to_string(),
-                    "-offset_y",
-                    &o.y.to_string(),
-                    "-video_size",
-                    &format!("{}x{}", w, h),
-                    "-draw_mouse",
-                    "1",
-                    "-i",
-                    "desktop",
-                ]);
-                return;
-            }
-        }
-
-        cmd.args([
-            "-f",
-            "gdigrab",
-            "-framerate",
-            &fps_str,
-            "-draw_mouse",
-            "1",
-            "-i",
-            "desktop",
-        ]);
-    };
 
     // Input 0: Video (baja latencia y búfer ágil para 60 FPS en resoluciones altas)
     cmd.args([
@@ -2594,16 +2674,15 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
         "2048",
     ]);
 
-    if target.starts_with("title=") || target.starts_with("window:") {
+    let actual_backend = if target.starts_with("title=") || target.starts_with("window:") {
         let win_title = target
             .strip_prefix("title=")
             .or_else(|| target.strip_prefix("window:"))
             .unwrap_or(target)
             .trim();
 
-        // Para capturar juegos DirectX 11 / DirectX 12 / Vulkan / OpenGL (Fortnite, Valorant, CS2, Minecraft, etc.)
-        // sin pantalla negra ni congelamiento, obtenemos la geometría de la ventana en vivo y capturamos
-        // a través del compositor DWM de Windows (-i desktop con offset y video_size exactos recortados a la ventana).
+        // Para capturar juegos DirectX 11 / DirectX 12 / Vulkan / OpenGL en ventana
+        // a través del compositor DWM con offset y video_size exactos.
         if let Some((x, y, w, h)) = crate::discovery::get_window_capture_rect(win_title) {
             if w >= 64 && h >= 64 {
                 cmd.args([
@@ -2623,14 +2702,113 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
                     "desktop",
                 ]);
             } else {
-                apply_desktop_capture(cmd, "desktop");
+                cmd.args([
+                    "-f",
+                    "gdigrab",
+                    "-framerate",
+                    &fps_str,
+                    "-draw_mouse",
+                    "1",
+                    "-i",
+                    "desktop",
+                ]);
             }
         } else {
-            apply_desktop_capture(cmd, "desktop");
+            cmd.args([
+                "-f",
+                "gdigrab",
+                "-framerate",
+                &fps_str,
+                "-draw_mouse",
+                "1",
+                "-i",
+                "desktop",
+            ]);
         }
+        WindowsCaptureBackend::GdiGrab
     } else {
-        apply_desktop_capture(cmd, target);
-    }
+        match requested_backend {
+            WindowsCaptureBackend::DdaGrab => {
+                let outputs = crate::discovery::get_connected_outputs();
+                let output_idx = if !target.is_empty() && !target.eq_ignore_ascii_case("desktop") {
+                    outputs
+                        .iter()
+                        .position(|o| o.name.eq_ignore_ascii_case(target))
+                        .unwrap_or(0)
+                } else {
+                    outputs
+                        .iter()
+                        .position(|o| o.is_current)
+                        .unwrap_or(0)
+                };
+
+                cmd.args([
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    &format!(
+                        "ddagrab=output_idx={}:framerate={}:draw_mouse=1",
+                        output_idx, fps_str
+                    ),
+                ]);
+                WindowsCaptureBackend::DdaGrab
+            }
+            WindowsCaptureBackend::GdiGrab => {
+                let outputs = crate::discovery::get_connected_outputs();
+                let matched_output = outputs
+                    .iter()
+                    .find(|o| o.name.eq_ignore_ascii_case(target))
+                    .or_else(|| outputs.iter().find(|o| o.is_current))
+                    .or_else(|| outputs.first());
+
+                if let Some(o) = matched_output {
+                    if o.width > 0 && o.height > 0 {
+                        let w = (o.width & !1).max(2);
+                        let h = (o.height & !1).max(2);
+                        cmd.args([
+                            "-f",
+                            "gdigrab",
+                            "-framerate",
+                            &fps_str,
+                            "-offset_x",
+                            &o.x.to_string(),
+                            "-offset_y",
+                            &o.y.to_string(),
+                            "-video_size",
+                            &format!("{}x{}", w, h),
+                            "-draw_mouse",
+                            "1",
+                            "-i",
+                            "desktop",
+                        ]);
+                    } else {
+                        cmd.args([
+                            "-f",
+                            "gdigrab",
+                            "-framerate",
+                            &fps_str,
+                            "-draw_mouse",
+                            "1",
+                            "-i",
+                            "desktop",
+                        ]);
+                    }
+                } else {
+                    cmd.args([
+                        "-f",
+                        "gdigrab",
+                        "-framerate",
+                        &fps_str,
+                        "-draw_mouse",
+                        "1",
+                        "-i",
+                        "desktop",
+                    ]);
+                }
+                WindowsCaptureBackend::GdiGrab
+            }
+        }
+    };
 
     // Input 1: Audio PCM crudo continuo s16le a 48000 Hz estéreo vía TCP local
     if let Some(port) = audio_port {
@@ -2648,6 +2826,8 @@ fn apply_windows_input_args(cmd: &mut Command, config: &Config, audio_port: Opti
             &tcp_url,
         ]);
     }
+
+    actual_backend
 }
 
 /// Genera el filtro de video de Windows optimizado para resoluciones escaladas o nativas
@@ -2664,8 +2844,13 @@ pub fn build_windows_scale_filter(scale: &str) -> String {
 }
 
 /// Configura los parámetros de codificación de hardware y CPU en Windows según el perfil activo.
-#[cfg(target_os = "windows")]
-fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: bool) {
+#[cfg(any(target_os = "windows", test))]
+pub fn apply_windows_profile_args(
+    cmd: &mut Command,
+    config: &Config,
+    has_audio: bool,
+    backend: WindowsCaptureBackend,
+) {
     let profile = config
         .profile
         .active_profile
@@ -2673,8 +2858,18 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
         .unwrap_or(EncoderProfile::SaneSafe);
 
     let scale_filter = build_windows_scale_filter(&config.video.scale);
+    let full_filter = if backend == WindowsCaptureBackend::DdaGrab {
+        format!("hwdownload,format=bgra,{}", scale_filter)
+    } else {
+        scale_filter
+    };
     let fps_str = config.video.fps.to_string();
-    cmd.args(["-vf", &scale_filter, "-r", &fps_str, "-fps_mode", "cfr"]);
+    cmd.args(["-vf", &full_filter, "-r", &fps_str, "-fps_mode", "cfr"]);
+
+    let cpu_threads = std::thread::available_parallelism()
+        .map(|n| n.get().clamp(4, 8))
+        .unwrap_or(4)
+        .to_string();
 
     match profile {
         EncoderProfile::SaneSafe => {
@@ -2686,7 +2881,7 @@ fn apply_windows_profile_args(cmd: &mut Command, config: &Config, has_audio: boo
                 "-tune",
                 "zerolatency",
                 "-threads",
-                "4",
+                &cpu_threads,
                 "-crf",
                 "23",
                 "-bf",
@@ -3532,5 +3727,57 @@ mod tests {
 
         let f_custom = build_windows_scale_filter("1280x1024");
         assert!(!f_custom.contains("setdar") && !f_custom.contains("16/9") && !f_custom.contains("16:9"));
+    }
+
+    #[test]
+    fn test_apply_windows_input_args_ddagrab_and_window_fallback() {
+        let mut config = Config::default();
+        config.video.target = "desktop".to_string();
+        config.video.fps = 60;
+
+        let mut cmd = Command::new("ffmpeg");
+        let backend = apply_windows_input_args(&mut cmd, &config, None, WindowsCaptureBackend::DdaGrab);
+        assert_eq!(backend, WindowsCaptureBackend::DdaGrab);
+
+        let args: Vec<String> = cmd.get_args().map(|s| s.to_string_lossy().to_string()).collect();
+        assert!(args.contains(&"-f".to_string()));
+        assert!(args.contains(&"lavfi".to_string()));
+        assert!(args.iter().any(|a| a.starts_with("ddagrab=")));
+        assert!(args.iter().any(|a| a.contains("framerate=60")));
+
+        // Test window target automatically uses GDI grab
+        let mut win_config = Config::default();
+        win_config.video.target = "title=Fortnite".to_string();
+        let mut win_cmd = Command::new("ffmpeg");
+        let win_backend = apply_windows_input_args(&mut win_cmd, &win_config, None, WindowsCaptureBackend::DdaGrab);
+        assert_eq!(win_backend, WindowsCaptureBackend::GdiGrab);
+
+        let win_args: Vec<String> = win_cmd.get_args().map(|s| s.to_string_lossy().to_string()).collect();
+        assert!(win_args.contains(&"gdigrab".to_string()));
+    }
+
+    #[test]
+    fn test_apply_windows_profile_args_filters_and_threads() {
+        let mut config = Config::default();
+        config.profile.active_profile = "sane-safe".to_string();
+        config.video.fps = 60;
+        config.video.scale = "1920x1080".to_string();
+
+        // 1. Con DdaGrab, el filtro DEBE comenzar con hwdownload,format=bgra
+        let mut dda_cmd = Command::new("ffmpeg");
+        apply_windows_profile_args(&mut dda_cmd, &config, false, WindowsCaptureBackend::DdaGrab);
+        let dda_args: Vec<String> = dda_cmd.get_args().map(|s| s.to_string_lossy().to_string()).collect();
+        let vf_idx = dda_args.iter().position(|a| a == "-vf").expect("should have -vf");
+        assert!(dda_args[vf_idx + 1].starts_with("hwdownload,format=bgra,scale=1920:1080"));
+        assert!(dda_args.contains(&"libx264".to_string()));
+        assert!(dda_args.contains(&"-threads".to_string()));
+
+        // 2. Con GdiGrab, el filtro NO debe tener hwdownload
+        let mut gdi_cmd = Command::new("ffmpeg");
+        apply_windows_profile_args(&mut gdi_cmd, &config, false, WindowsCaptureBackend::GdiGrab);
+        let gdi_args: Vec<String> = gdi_cmd.get_args().map(|s| s.to_string_lossy().to_string()).collect();
+        let gdi_vf_idx = gdi_args.iter().position(|a| a == "-vf").expect("should have -vf");
+        assert!(!gdi_args[gdi_vf_idx + 1].contains("hwdownload"));
+        assert_eq!(gdi_args[gdi_vf_idx + 1], "scale=1920:1080,setsar=1/1");
     }
 }

@@ -586,6 +586,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_selected_fps(config.video.fps as i32);
     ui.set_selected_format(config.storage.format.clone().into());
     ui.set_dual_clip(config.storage.dual_clip);
+    ui.set_benchmark_mode(config.storage.benchmark_mode);
     ui.set_discord_target_mb(config.storage.discord_target_mb as i32);
     ui.set_selected_screen(config.video.target.clone().into());
     let initial_resolution = if config.video.scale.is_empty() || config.video.scale == "none" {
@@ -1032,30 +1033,58 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let engine_clone = local_engine.clone();
         let output_dir_rec = config.storage.output_dir.clone();
         let daemon_flag = daemon_running_flag.clone();
+        let is_toggling = Arc::new(std::sync::atomic::AtomicBool::new(false));
         ui.on_toggle_recording(move || {
+            let ui_weak = ui_weak.clone();
+            if is_toggling
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .is_err()
+            {
+                return;
+            }
+
             let is_daemon = daemon_flag.load(std::sync::atomic::Ordering::SeqCst);
-            let is_recording = if is_daemon {
-                if let Ok(resp) = ipc::send_command_sync("record_toggle") {
-                    resp.message.map_or(false, |m| m.contains("iniciada"))
+            let engine_clone = engine_clone.clone();
+            let output_dir_rec = output_dir_rec.clone();
+            let is_toggling_flag = is_toggling.clone();
+
+            std::thread::spawn(move || {
+                let is_recording = if is_daemon {
+                    if let Ok(resp) = ipc::send_command_sync("record_toggle") {
+                        resp.message.map_or(false, |m| m.contains("iniciada"))
+                    } else {
+                        false
+                    }
+                } else if let Some(ref eng) = engine_clone {
+                    eng.toggle_continuous_recording().unwrap_or(false)
                 } else {
                     false
-                }
-            } else if let Some(ref eng) = engine_clone {
-                eng.toggle_continuous_recording().unwrap_or(false)
-            } else {
-                false
-            };
+                };
 
-            if let Some(ui) = ui_weak.upgrade() {
-                ui.set_is_recording(is_recording);
-                let out_dir = resolve_active_output_dir(&engine_clone, &output_dir_rec);
-                if is_recording {
-                    show_toast(&ui, "record", &format!("Grabación continua iniciada ({})", ui.get_shortcut_record()));
-                } else {
-                    show_toast(&ui, "stop", "Grabación continua finalizada y guardada");
-                    update_gallery_model(&ui, &out_dir);
-                }
-            }
+                is_toggling_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_is_recording(is_recording);
+                        let out_dir = resolve_active_output_dir(&engine_clone, &output_dir_rec);
+                        if is_recording {
+                            show_toast(
+                                &ui,
+                                "record",
+                                &format!("Grabación continua iniciada ({})", ui.get_shortcut_record()),
+                            );
+                        } else {
+                            show_toast(&ui, "stop", "Grabación continua finalizada y guardada");
+                            update_gallery_model(&ui, &out_dir);
+                        }
+                    }
+                });
+            });
         });
     }
 
@@ -2181,6 +2210,33 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     "Modo Doble Clip desactivado"
                 };
                 show_toast(&ui, "chat", msg);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        let daemon_flag = daemon_running_flag.clone();
+        ui.on_toggle_benchmark_mode(move |enabled| {
+            if let Some(ref eng) = engine_clone {
+                let mut cfg = eng.config();
+                cfg.storage.benchmark_mode = enabled;
+                let _ = cfg.save();
+                eng.update_config(cfg);
+            } else if let Ok(mut cfg) = Config::load() {
+                cfg.storage.benchmark_mode = enabled;
+                let _ = cfg.save();
+            }
+            notify_daemon_reload_async(&daemon_flag);
+
+            if let Some(ui) = ui_weak.upgrade() {
+                let msg = if enabled {
+                    "Modo Benchmark activado: Generará .benchmark.txt al grabar/guardar"
+                } else {
+                    "Modo Benchmark desactivado"
+                };
+                show_toast(&ui, "bolt", msg);
             }
         });
     }

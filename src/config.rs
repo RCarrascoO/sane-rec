@@ -126,6 +126,8 @@ pub struct StorageConfig {
     pub dual_clip: bool,
     #[serde(default = "default_discord_target_mb")]
     pub discord_target_mb: u32,
+    #[serde(default)]
+    pub benchmark_mode: bool,
 }
 
 impl Default for StorageConfig {
@@ -136,6 +138,7 @@ impl Default for StorageConfig {
             format: "mp4".to_string(),
             dual_clip: false,
             discord_target_mb: default_discord_target_mb(),
+            benchmark_mode: false,
         }
     }
 }

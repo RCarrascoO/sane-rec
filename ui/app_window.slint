@@ -108,6 +108,7 @@ export component AppWindow inherits Window {
     callback refresh-hardware-profiles();
     callback trigger-update();
     callback toggle-dual-clip(bool);
+    callback toggle-benchmark-mode(bool);
     callback set-discord-target-mb(int);
     callback compress-clip-for-discord(string);
     callback change-output-dir(string);
@@ -137,10 +138,11 @@ export component AppWindow inherits Window {
     in-out property <int> replay-duration: 30;
     in-out property <string> selected-format: "mp4";
     in-out property <bool> dual-clip: false;
+    in-out property <bool> benchmark-mode: false;
     in-out property <int> discord-target-mb: 10;
 
     // Auto-actualizador
-    in-out property <string> app-version: "v0.6.4";
+    in-out property <string> app-version: "v0.7.0";
     in-out property <bool> has-update: false;
     in-out property <string> update-version: "";
     in-out property <bool> is-updating: false;
@@ -545,6 +547,17 @@ export component AppWindow inherits Window {
                                             root.toggle-recording();
                                         }
                                     }
+
+                                    M3Button {
+                                        text: root.benchmark-mode ? "Benchmark: ON" : "Benchmark: OFF";
+                                        icon-name: "bolt";
+                                        variant: root.benchmark-mode ? "filled" : "outlined";
+                                        btn-height: 48px;
+                                        clicked => {
+                                            root.benchmark-mode = !root.benchmark-mode;
+                                            root.toggle-benchmark-mode(root.benchmark-mode);
+                                        }
+                                    }
                                 }
 
                                 if root.width < 720px: VerticalLayout {
@@ -569,6 +582,17 @@ export component AppWindow inherits Window {
                                         clicked => {
                                             root.is-recording = !root.is-recording;
                                             root.toggle-recording();
+                                        }
+                                    }
+
+                                    M3Button {
+                                        text: root.benchmark-mode ? "Modo Benchmark: Activo (.benchmark.txt)" : "Activar Modo Benchmark";
+                                        icon-name: "bolt";
+                                        variant: root.benchmark-mode ? "filled" : "outlined";
+                                        btn-height: 40px;
+                                        clicked => {
+                                            root.benchmark-mode = !root.benchmark-mode;
+                                            root.toggle-benchmark-mode(root.benchmark-mode);
                                         }
                                     }
                                 }
@@ -2759,6 +2783,41 @@ export component AppWindow inherits Window {
                                                     root.discord-target-mb = 25;
                                                     root.set-discord-target-mb(25);
                                                 }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Modo Benchmark y Telemetría
+                                VerticalLayout {
+                                    spacing: 12px;
+
+                                    HorizontalLayout {
+                                        alignment: space-between;
+
+                                        VerticalLayout {
+                                            spacing: 2px;
+
+                                            Text {
+                                                text: "Modo Benchmark y Telemetría de Grabación";
+                                                font-size: Theme.font-title-small;
+                                                font-weight: 600;
+                                                color: Theme.on-surface;
+                                            }
+
+                                            Text {
+                                                text: "Genera automáticamente un informe detallado (.benchmark.txt) con FPS reales, drops y rendimiento";
+                                                font-size: Theme.font-body-small;
+                                                color: Theme.on-surface-variant;
+                                            }
+                                        }
+
+                                        M3Switch {
+                                            y: Math.floor((parent.height - self.height) / 2px) * 1px;
+                                            checked: root.benchmark-mode;
+                                            toggled(state) => {
+                                                root.benchmark-mode = state;
+                                                root.toggle-benchmark-mode(state);
                                             }
                                         }
                                     }

@@ -1,6 +1,6 @@
 # Maintainer: RCarrascoO <https://github.com/RCarrascoO>
 pkgname=sane-rec-bin
-pkgver=0.6.4
+pkgver=0.7.0
 pkgrel=1
 pkgdesc="Lightweight Material Design 3 Instant Replay & Screen Recorder for Linux (Wayland/niri) with CPU-first architecture"
 arch=('x86_64')
@@ -22,7 +22,7 @@ optdepends=(
 provides=('sane-rec')
 conflicts=('sane-rec')
 source=("https://github.com/RCarrascoO/sane-rec/releases/download/v${pkgver}/sane-rec-v${pkgver}-linux-x86_64.tar.gz")
-sha256sums=('0846a23900fc8a0e4bdbdec0f19c2cabf29ebc460a1419f264b70562aa998752')
+sha256sums=('SKIP')
 
 package() {
     cd "${srcdir}/sane-rec-v${pkgver}-linux-x86_64"

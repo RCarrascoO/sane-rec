@@ -1,5 +1,18 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.7.0 - 2026-11-16 (0.7.0)
+- **Added:**
+  - **Fase 2 de Arquitectura de Grabación en Windows (60 FPS con DXGI Desktop Duplication)**:
+    - Modernización del pipeline de captura mediante Desktop Duplication API (`ddagrab` / DXGI / D3D11), alcanzando 60 FPS estables sin cuellos de botella de software.
+    - Descarga GPU a CPU optimizada con `-vf "hwdownload,format=bgra,..."` para alimentar `libx264` con apenas ~3.1% de ancho de banda PCIe.
+    - Fallback dinámico automático a `gdigrab` y perfil seguro `SaneSafe` CPU ante fallas de compatibilidad D3D11 o RDP.
+    - Soporte robusto de captura de ventanas específicas manteniendo composición DWM.
+    - Hilos de codificación dinámicos para CPU según núcleos del procesador (`std::thread::available_parallelism()`).
+  - **Modo Benchmark y Suite de Telemetría Activable (`.benchmark.txt`)**:
+    - Botón de acción rápida en el Dashboard ("Benchmark: ON/OFF") y switch en Ajustes para auditar grabaciones y repeticiones.
+    - Generación automática de informe forense `<video>.benchmark.txt` con FPS reales, pérdidas de cuadros (`drop`), cuadros duplicados (`dup`), velocidad del codificador (`speed`), estado de pistas A/V y veredicto de rendimiento ("PASS / EXCELENTE").
+    - Notificación nativa de escritorio y telemetría de encoder capturada en tiempo real.
+
 ## v0.6.4 - 2026-11-16 (0.6.4)
 - **Fixed (Windows):**
   - **Audio/Video Lag a 15 FPS eliminado**: el audio feeder de Windows dormía obligatoriamente ≥ 1 ms (2-4 ms reales en el scheduler de Win32) incluso cuando el adelanto era mínimo (< 20 ms), estrangulando la frecuencia de envío. Ahora usa `std::thread::yield_now()` cuando el adelanto es < 960 frames (< 20 ms) y solo duerme cuando hay un adelanto real (≥ 960 frames), sin el `max(1.0)` forzado.

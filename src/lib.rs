@@ -1,4 +1,5 @@
 pub mod audio_monitor;
+pub mod benchmark;
 pub mod compressor;
 pub mod config;
 pub mod crash_handler;
@@ -10,6 +11,7 @@ pub mod profiles_manager;
 pub mod updater;
 
 pub use audio_monitor::AudioPeakMonitor;
+pub use benchmark::{generate_benchmark_report, BenchmarkContext};
 pub use compressor::{
     compress_to_target_size, get_discord_clip_path, get_video_duration_secs,
     spawn_discord_compression,

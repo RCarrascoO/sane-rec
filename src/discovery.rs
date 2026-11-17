@@ -1052,6 +1052,11 @@ pub fn delete_clip(path: &Path) -> std::io::Result<()> {
         ));
     }
 
+    let bench_file = path.with_extension("benchmark.txt");
+    if bench_file.exists() && bench_file.is_file() {
+        let _ = std::fs::remove_file(bench_file);
+    }
+
     std::fs::remove_file(path)
 }
 
