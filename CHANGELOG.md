@@ -1,5 +1,19 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.7.1 - 2026-11-17 (0.7.1)
+- **Added:**
+  - **Captura de Ventanas a 60 FPS con DXGI (DWM Bounds & Hardware Crop)**:
+    - Superación del zoom y lag en modo ventana (App-Focus) mediante `DwmGetWindowAttribute` (`DWMWA_EXTENDED_FRAME_BOUNDS`) y detección automática del monitor contenedor con `MonitorFromWindow` / `GetMonitorInfoW`.
+    - Captura por hardware DXGI (`ddagrab`) con filtro de recorte crop en GPU/SIMD (`-vf hwdownload,format=bgra,crop=w:h:x:y`), erradicando el descarte masivo de cuadros (1000+ dup frames de `gdigrab`).
+    - Aislamiento de GDI exclusivamente como red de seguridad / fallback de emergencia.
+  - **Suite de Benchmark y Telemetría Extendida (`.benchmark.txt`)**:
+    - Registro de CLI exacta ejecutada, métricas de RAM física consumida por el búfer de repeticiones, topología y DPI de ventana, drift de sincronización A/V y detección automática de alertas de rendimiento.
+- **Fixed:**
+  - **Corrección de Mapeo y Detección de Monitores Dobles**:
+    - Resolución de la inversión entre pantallas horizontales y verticales correlacionando `szDevice` / `DeviceName` y priorizando el monitor principal en el índice de captura.
+  - **Escalado Dinámico del Búfer Circular en RAM (120s / 180s Replays)**:
+    - Eliminación del corte prematuro a los 86s mediante cálculo adaptativo de `max_bytes` según la duración solicitada (hasta 1.5 GB de RAM para 120s @ 60 FPS).
+
 ## v0.7.0 - 2026-11-16 (0.7.0)
 - **Added:**
   - **Fase 2 de Arquitectura de Grabación en Windows (60 FPS con DXGI Desktop Duplication)**:

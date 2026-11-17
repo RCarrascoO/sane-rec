@@ -112,7 +112,7 @@ pub struct ReplayEngine {
     start_lock: Mutex<()>,
     is_saving: Arc<AtomicBool>,
     #[allow(dead_code)]
-    win_ram_buffer: Arc<Mutex<std::collections::VecDeque<(Instant, Vec<u8>)>>>,
+    win_ram_buffer: Arc<Mutex<std::collections::VecDeque<(Instant, Arc<Vec<u8>>)>>>,
     #[allow(dead_code)]
     win_buffer_running: Arc<AtomicBool>,
     #[allow(dead_code)]
@@ -978,7 +978,10 @@ impl ReplayEngine {
         let ram_buf = Arc::clone(&self.win_ram_buffer);
         let running_flag = Arc::clone(&self.win_buffer_running);
         let dur_secs = config.replay.duration_secs;
-        let max_bytes = (config.replay.max_memory_mb as usize) * 1024 * 1024;
+        // Escalar dinámicamente el límite de RAM según la duración solicitada (12 MB/s para 60 FPS)
+        // para garantizar que repeticiones de 120s o superiores nunca se trunquen prematuramente
+        let max_mb = (config.replay.max_memory_mb as usize).max((dur_secs as usize) * 12);
+        let max_bytes = max_mb * 1024 * 1024;
 
         std::thread::Builder::new()
             .name("sane-rec-win-ram-buffer".into())
@@ -986,6 +989,7 @@ impl ReplayEngine {
                 use std::io::Read;
                 let mut raw_buf = vec![0u8; 65424]; // 348 paquetes MPEG-TS de 188 bytes
                 let mut leftover: Vec<u8> = Vec::with_capacity(376);
+                let mut current_bytes: usize = 0;
                 while running_flag.load(Ordering::Relaxed) {
                     match stdout.read(&mut raw_buf) {
                         Ok(0) => break,
@@ -1005,23 +1009,27 @@ impl ReplayEngine {
                                 continue;
                             }
                             let chunk: Vec<u8> = leftover.drain(..aligned_len).collect();
+                            let chunk_arc = Arc::new(chunk);
+                            let chunk_len = chunk_arc.len();
                             let now = Instant::now();
                             if let Ok(mut q) = ram_buf.lock() {
-                                q.push_back((now, chunk));
+                                q.push_back((now, Arc::clone(&chunk_arc)));
+                                current_bytes += chunk_len;
 
                                 let cutoff = Duration::from_secs((dur_secs + 3) as u64);
                                 while let Some(front) = q.front() {
                                     if now.duration_since(front.0) > cutoff {
-                                        q.pop_front();
+                                        if let Some(removed) = q.pop_front() {
+                                            current_bytes = current_bytes.saturating_sub(removed.1.len());
+                                        }
                                     } else {
                                         break;
                                     }
                                 }
 
-                                let mut total_len: usize = q.iter().map(|(_, c)| c.len()).sum();
-                                while total_len > max_bytes && q.len() > 10 {
+                                while current_bytes > max_bytes && q.len() > 10 {
                                     if let Some(removed) = q.pop_front() {
-                                        total_len = total_len.saturating_sub(removed.1.len());
+                                        current_bytes = current_bytes.saturating_sub(removed.1.len());
                                     } else {
                                         break;
                                     }
@@ -1221,6 +1229,7 @@ impl ReplayEngine {
                 capture_backend: "Wayland / PipeWire (wf-recorder)",
                 is_replay_clip: false,
                 elapsed_duration: elapsed,
+                ram_buffer_stats: None,
             };
             if let Err(e) = crate::benchmark::generate_benchmark_report(&ctx) {
                 eprintln!("Aviso: No se pudo generar reporte de benchmark: {}", e);
@@ -1484,6 +1493,7 @@ impl ReplayEngine {
                 capture_backend: backend_name,
                 is_replay_clip: false,
                 elapsed_duration: elapsed,
+                ram_buffer_stats: None,
             };
             if let Err(e) = crate::benchmark::generate_benchmark_report(&ctx) {
                 eprintln!("Aviso: No se pudo generar reporte de benchmark: {}", e);
@@ -1718,6 +1728,7 @@ impl ReplayEngine {
                 capture_backend: "Wayland / PipeWire (RAM Ring Buffer)",
                 is_replay_clip: true,
                 elapsed_duration: Some(Duration::from_secs(current_cfg.replay.duration_secs as u64)),
+                ram_buffer_stats: None,
             };
             if let Err(e) = crate::benchmark::generate_benchmark_report(&ctx) {
                 eprintln!("Aviso: No se pudo generar reporte de benchmark: {}", e);
@@ -1736,7 +1747,7 @@ impl ReplayEngine {
     /// Guarda un replay del búfer actual tomando los chunks en RAM física y escribiéndolos instantáneamente a MP4 sin recodificar en Windows.
     #[cfg(target_os = "windows")]
     pub fn save_clip(&self) -> Result<PathBuf> {
-        let chunks = {
+        let (chunks, ram_stats) = {
             let q = self.win_ram_buffer.lock().unwrap();
             if q.is_empty() {
                 return Err(EngineError::NoSegments);
@@ -1744,12 +1755,29 @@ impl ReplayEngine {
             let dur = self.config().replay.duration_secs;
             let now = Instant::now();
             let cutoff = Duration::from_secs((dur + 1) as u64);
-            let list: Vec<Vec<u8>> = q
+            let list: Vec<Arc<Vec<u8>>> = q
                 .iter()
                 .filter(|(t, _)| now.duration_since(*t) <= cutoff)
-                .map(|(_, bytes)| bytes.clone())
+                .map(|(_, bytes)| Arc::clone(bytes))
                 .collect();
-            list
+
+            let total_bytes: u64 = list.iter().map(|c| c.len() as u64).sum();
+            let oldest = q.front().map(|(t, _)| {
+                let elapsed = now.saturating_duration_since(*t);
+                std::time::SystemTime::now().checked_sub(elapsed).unwrap_or(std::time::SystemTime::now())
+            });
+            let newest = q.back().map(|(t, _)| {
+                let elapsed = now.saturating_duration_since(*t);
+                std::time::SystemTime::now().checked_sub(elapsed).unwrap_or(std::time::SystemTime::now())
+            });
+            let stats = crate::benchmark::RamBufferStats {
+                segments: list.len(),
+                bytes: total_bytes,
+                oldest,
+                newest,
+                truncated: false,
+            };
+            (list, stats)
         };
 
         if chunks.is_empty() {
@@ -1773,49 +1801,62 @@ impl ReplayEngine {
         let filename = format!("{}.{}", timestamp, config.storage.format);
         let output_path = config.storage.output_dir.join(filename);
 
-        // 1. Unificar los paquetes MPEG-TS en memoria
-        let mut raw_bytes = Vec::with_capacity(chunks.iter().map(|c| c.len()).sum());
-        for chunk in &chunks {
-            raw_bytes.extend_from_slice(chunk);
-        }
-
-        // 2. Localizar inicio limpio del stream MPEG-TS (recorriendo de 188 en 188 bytes)
+        // Localizar inicio limpio del stream MPEG-TS sin copiar buffers:
         // Buscando el primer paquete donde packet[0] == 0x47 y (packet[1] & 0x40) != 0 (PUSI),
         // dando prioridad a PID 0x0000 (PAT).
+        let mut start_chunk = 0;
         let mut start_offset = 0;
-        let mut found_clean_start = false;
-        let total_pkts = raw_bytes.len() / 188;
-        let mut first_pusi = None;
+        let mut found_pat = false;
+        let mut first_pusi: Option<(usize, usize)> = None;
 
-        for i in 0..total_pkts {
-            let offset = i * 188;
-            let pkt = &raw_bytes[offset..offset + 188];
-            if pkt[0] == 0x47 && (pkt[1] & 0x40) != 0 {
-                let pid = (((pkt[1] & 0x1F) as u16) << 8) | (pkt[2] as u16);
-                if pid == 0 {
-                    start_offset = offset;
-                    found_clean_start = true;
-                    break;
-                } else if first_pusi.is_none() {
-                    first_pusi = Some(offset);
+        'find_start: for (c_idx, chunk) in chunks.iter().enumerate() {
+            let total_pkts = chunk.len() / 188;
+            for p in 0..total_pkts {
+                let offset = p * 188;
+                let pkt = &chunk[offset..offset + 188];
+                if pkt[0] == 0x47 && (pkt[1] & 0x40) != 0 {
+                    let pid = (((pkt[1] & 0x1F) as u16) << 8) | (pkt[2] as u16);
+                    if pid == 0 {
+                        start_chunk = c_idx;
+                        start_offset = offset;
+                        found_pat = true;
+                        break 'find_start;
+                    } else if first_pusi.is_none() {
+                        first_pusi = Some((c_idx, offset));
+                    }
                 }
             }
         }
 
-        if !found_clean_start {
-            if let Some(offset) = first_pusi {
+        if !found_pat {
+            if let Some((c_idx, offset)) = first_pusi {
+                start_chunk = c_idx;
                 start_offset = offset;
-                found_clean_start = true;
             }
         }
 
-        let stream_data: Arc<Vec<u8>> = if found_clean_start && (raw_bytes.len() - start_offset > 188 * 10) {
-            Arc::new(raw_bytes[start_offset..].to_vec())
-        } else {
-            Arc::new(raw_bytes)
+        let stream_chunks = Arc::new(chunks);
+        let stream_to_pipe = |mut stdin: std::process::ChildStdin,
+                              data: Arc<Vec<Arc<Vec<u8>>>>,
+                              s_chunk: usize,
+                              s_offset: usize| {
+            std::thread::spawn(move || {
+                use std::io::Write;
+                for (i, chunk) in data.iter().enumerate().skip(s_chunk) {
+                    let slice = if i == s_chunk {
+                        &chunk[s_offset..]
+                    } else {
+                        &chunk[..]
+                    };
+                    if stdin.write_all(slice).is_err() {
+                        break;
+                    }
+                }
+                let _ = stdin.flush();
+            });
         };
 
-        // 3. Remux primario directo con ffmpeg leyendo desde pipe:0 en RAM
+        // 1. Remux primario directo con ffmpeg leyendo desde pipe:0 en RAM por streaming de chunks
         let mut remux_cmd = new_hidden_command(resolve_binary("ffmpeg"));
         remux_cmd.args([
             "-y",
@@ -1846,13 +1887,8 @@ impl ReplayEngine {
 
         let copy_succeeded = match remux_cmd.spawn() {
             Ok(mut child) => {
-                if let Some(mut stdin) = child.stdin.take() {
-                    let data = Arc::clone(&stream_data);
-                    std::thread::spawn(move || {
-                        use std::io::Write;
-                        let _ = stdin.write_all(&data);
-                        let _ = stdin.flush();
-                    });
+                if let Some(stdin) = child.stdin.take() {
+                    stream_to_pipe(stdin, Arc::clone(&stream_chunks), start_chunk, start_offset);
                 }
                 match child.wait_with_output() {
                     Ok(ref out) if out.status.success() => {
@@ -1866,7 +1902,7 @@ impl ReplayEngine {
             Err(_) => false,
         };
 
-        // 4. Fallback de transcodificación de rescate alimentando pipe:0 en RAM si el remux directo falla o pesa < 1024 bytes
+        // 2. Fallback de transcodificación de rescate alimentando pipe:0 en RAM si el remux directo falla o pesa < 1024 bytes
         if !copy_succeeded {
             eprintln!("Aviso: Remux directo en pipe devolvió error o archivo <1KB; ejecutando transcodificación de rescate.");
             let mut transcode_cmd = new_hidden_command(resolve_binary("ffmpeg"));
@@ -1911,13 +1947,8 @@ impl ReplayEngine {
 
             let transcode_res = match transcode_cmd.spawn() {
                 Ok(mut child) => {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        let data = Arc::clone(&stream_data);
-                        std::thread::spawn(move || {
-                            use std::io::Write;
-                            let _ = stdin.write_all(&data);
-                            let _ = stdin.flush();
-                        });
+                    if let Some(stdin) = child.stdin.take() {
+                        stream_to_pipe(stdin, Arc::clone(&stream_chunks), start_chunk, start_offset);
                     }
                     child.wait_with_output()
                 }
@@ -1977,6 +2008,7 @@ impl ReplayEngine {
                 capture_backend: backend_name,
                 is_replay_clip: true,
                 elapsed_duration: Some(Duration::from_secs(current_cfg.replay.duration_secs as u64)),
+                ram_buffer_stats: Some(ram_stats),
             };
             if let Err(e) = crate::benchmark::generate_benchmark_report(&ctx) {
                 eprintln!("Aviso: No se pudo generar reporte de benchmark: {}", e);
@@ -2681,9 +2713,26 @@ pub fn apply_windows_input_args(
             .unwrap_or(target)
             .trim();
 
-        // Para capturar juegos DirectX 11 / DirectX 12 / Vulkan / OpenGL en ventana
-        // a través del compositor DWM con offset y video_size exactos.
-        if let Some((x, y, w, h)) = crate::discovery::get_window_capture_rect(win_title) {
+        // 1. Intentar captura por hardware acelerada DXGI con recorte DWM exacto a 60 FPS
+        if let Some(crop_info) = crate::discovery::get_window_monitor_crop_by_title(win_title) {
+            let outputs = crate::discovery::get_connected_outputs();
+            let output_idx = outputs
+                .iter()
+                .position(|o| o.name.eq_ignore_ascii_case(&crop_info.device_name))
+                .unwrap_or(0);
+
+            cmd.args([
+                "-f",
+                "lavfi",
+                "-i",
+                &format!(
+                    "ddagrab=output_idx={}:framerate={}:draw_mouse=1",
+                    output_idx, fps_str
+                ),
+            ]);
+            WindowsCaptureBackend::DdaGrab
+        } else if let Some((x, y, w, h)) = crate::discovery::get_window_capture_rect(win_title) {
+            // 2. Fallback defensivo a GDI con coordenadas normalizadas si DWM no estuvo disponible
             if w >= 64 && h >= 64 {
                 cmd.args([
                     "-f",
@@ -2713,6 +2762,7 @@ pub fn apply_windows_input_args(
                     "desktop",
                 ]);
             }
+            WindowsCaptureBackend::GdiGrab
         } else {
             cmd.args([
                 "-f",
@@ -2724,8 +2774,8 @@ pub fn apply_windows_input_args(
                 "-i",
                 "desktop",
             ]);
+            WindowsCaptureBackend::GdiGrab
         }
-        WindowsCaptureBackend::GdiGrab
     } else {
         match requested_backend {
             WindowsCaptureBackend::DdaGrab => {
@@ -2858,8 +2908,26 @@ pub fn apply_windows_profile_args(
         .unwrap_or(EncoderProfile::SaneSafe);
 
     let scale_filter = build_windows_scale_filter(&config.video.scale);
+    let target = config.video.target.trim();
+    let crop_filter = if (target.starts_with("title=") || target.starts_with("window:"))
+        && backend == WindowsCaptureBackend::DdaGrab
+    {
+        let win_title = target
+            .strip_prefix("title=")
+            .or_else(|| target.strip_prefix("window:"))
+            .unwrap_or(target)
+            .trim();
+        crate::discovery::get_window_monitor_crop_by_title(win_title).map(|c| c.crop_filter)
+    } else {
+        None
+    };
+
     let full_filter = if backend == WindowsCaptureBackend::DdaGrab {
-        format!("hwdownload,format=bgra,{}", scale_filter)
+        if let Some(crop) = crop_filter {
+            format!("hwdownload,format=bgra,{},{}", crop, scale_filter)
+        } else {
+            format!("hwdownload,format=bgra,{}", scale_filter)
+        }
     } else {
         scale_filter
     };

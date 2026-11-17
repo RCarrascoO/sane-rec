@@ -18,7 +18,7 @@ pub struct OutputInfo {
     pub y: i32,
 }
 
-/// Representa la información de una ventana abierta en el compositor Wayland.
+/// Representa la información de una ventana abierta en el compositor Wayland o Windows.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WindowInfo {
     pub id: u64,
@@ -26,6 +26,20 @@ pub struct WindowInfo {
     pub app_id: String,
     pub pid: u32,
     pub is_focused: bool,
+}
+
+/// Información de recorte y asignación de monitor para captura por hardware DXGI de ventanas.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowMonitorCrop {
+    /// Identificador Win32 del monitor, ej. "\\\\.\\DISPLAY1" (coincide con OutputInfo.name)
+    pub device_name: String,
+    /// Coordenadas relativas en píxeles dentro del monitor
+    pub rel_x: i32,
+    pub rel_y: i32,
+    pub width: u32,
+    pub height: u32,
+    /// Filtro listo para FFmpeg: "crop=w:h:x:y"
+    pub crop_filter: String,
 }
 
 /// Representa un dispositivo de audio detectado por PipeWire / PulseAudio.
@@ -294,6 +308,9 @@ pub fn get_connected_outputs() -> Vec<OutputInfo> {
 
         dev_idx += 1;
     }
+
+    // Priorizar el monitor principal en el índice 0 para sincronizar con DXGI output_idx=0
+    outputs.sort_by_key(|o| !o.is_current);
 
     if outputs.is_empty() {
         let sys_w = unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(0) as u32;
@@ -624,15 +641,12 @@ pub fn truncate_to_even_dimensions(width: u32, height: u32) -> (u32, u32) {
     (w, h)
 }
 
-/// Busca una ventana por título y devuelve las coordenadas (x, y, width, height) del área cliente interna
-/// truncada a dimensiones pares (mínimo 2x2).
+/// Busca una ventana por título y devuelve su HWND si está visible y no minimizada.
 #[cfg(target_os = "windows")]
-pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> {
-    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
-    use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+pub fn find_window_hwnd(win_title: &str) -> Option<windows_sys::Win32::Foundation::HWND> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, FindWindowW, GetClientRect, GetWindowTextLengthW, GetWindowTextW,
-        IsIconic, IsWindowVisible,
+        EnumWindows, FindWindowW, GetWindowTextLengthW, GetWindowTextW, IsIconic, IsWindowVisible,
     };
 
     let title_clean = win_title.trim();
@@ -645,8 +659,6 @@ pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> 
 
     let mut target_hwnd = unsafe { FindWindowW(std::ptr::null(), wide_title.as_ptr()) };
 
-    // Si FindWindowW no encuentra la ventana exacta (por diferencias en sufijos o mayúsculas),
-    // buscar mediante EnumWindows
     if target_hwnd.is_null() {
         struct SearchContext<'a> {
             query: &'a str,
@@ -684,48 +696,145 @@ pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> 
         target_hwnd = ctx.found_hwnd;
     }
 
-    if target_hwnd.is_null() {
-        return None;
-    }
-
-    if unsafe { IsIconic(target_hwnd) } != 0 {
-        return None;
-    }
-
-    let mut client_rect: RECT = unsafe { std::mem::zeroed() };
-    if unsafe { GetClientRect(target_hwnd, &mut client_rect) } == 0 {
-        return None;
-    }
-
-    if (client_rect.right - client_rect.left) <= 0 || (client_rect.bottom - client_rect.top) <= 0 {
-        return None;
-    }
-
-    let mut top_left = POINT { x: 0, y: 0 };
-    if unsafe { ClientToScreen(target_hwnd, &mut top_left) } == 0 {
-        return None;
-    }
-
-    let client_w = (client_rect.right - client_rect.left).max(2) as u32;
-    let client_h = (client_rect.bottom - client_rect.top).max(2) as u32;
-
-    // gdigrab captura en píxeles físicos del escritorio; escalar dimensiones si DPI != 96 (100%)
-    // top_left ya se encuentra en coordenadas de pantalla físicas gracias a ClientToScreen
-    use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
-    let dpi = unsafe { GetDpiForWindow(target_hwnd) };
-    let (phys_w, phys_h) = if dpi > 0 && dpi != 96 {
-        let scale = dpi as f64 / 96.0;
-        (
-            ((client_w as f64 * scale).round() as u32).max(2),
-            ((client_h as f64 * scale).round() as u32).max(2),
-        )
+    if target_hwnd.is_null() || unsafe { IsIconic(target_hwnd) } != 0 {
+        None
     } else {
-        (client_w, client_h)
+        Some(target_hwnd)
+    }
+}
+
+/// Obtiene el recorte y monitor de una ventana usando DWM y APIs Win32.
+#[cfg(target_os = "windows")]
+pub fn get_window_monitor_crop(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<WindowMonitorCrop> {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
     };
 
-    let (w, h) = truncate_to_even_dimensions(phys_w, phys_h);
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsIconic;
 
-    Some((top_left.x, top_left.y, w, h))
+    if hwnd.is_null() || unsafe { IsIconic(hwnd) } != 0 {
+        return None;
+    }
+
+    // 1. Obtener coordenadas físicas reales de la ventana con DWM (omite distorsión de DPI y bordes virtuales)
+    let mut win_rect: RECT = unsafe { std::mem::zeroed() };
+    let hr = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut win_rect as *mut RECT as *mut core::ffi::c_void,
+            std::mem::size_of::<RECT>() as u32,
+        )
+    };
+    if hr != 0 {
+        return None;
+    }
+
+    // 2. Localizar el monitor donde reside la ventana
+    let hmon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    if hmon.is_null() {
+        return None;
+    }
+
+    // 3. Obtener geometría y szDevice del monitor
+    let mut mi: MONITORINFOEXW = unsafe { std::mem::zeroed() };
+    mi.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+    let ok = unsafe {
+        GetMonitorInfoW(hmon, &mut mi as *mut MONITORINFOEXW as *mut MONITORINFO)
+    };
+    if ok == 0 {
+        return None;
+    }
+
+    let dev_len = mi.szDevice.iter().position(|&c| c == 0).unwrap_or(mi.szDevice.len());
+    let device_name = String::from_utf16_lossy(&mi.szDevice[..dev_len]);
+
+    let mon_w = (mi.rcMonitor.right - mi.rcMonitor.left).max(2) as u32;
+    let mon_h = (mi.rcMonitor.bottom - mi.rcMonitor.top).max(2) as u32;
+
+    // Intersección euclidiana rigurosa en el espacio absoluto de la pantalla
+    let inter_left = win_rect.left.max(mi.rcMonitor.left);
+    let inter_top = win_rect.top.max(mi.rcMonitor.top);
+    let inter_right = win_rect.right.min(mi.rcMonitor.right);
+    let inter_bottom = win_rect.bottom.min(mi.rcMonitor.bottom);
+
+    if inter_right <= inter_left + 1 || inter_bottom <= inter_top + 1 {
+        return None;
+    }
+
+    let rel_x = (inter_left - mi.rcMonitor.left) as u32;
+    let rel_y = (inter_top - mi.rcMonitor.top) as u32;
+    let avail_w = (inter_right - inter_left) as u32;
+    let avail_h = (inter_bottom - inter_top) as u32;
+
+    let x_even = rel_x & !1;
+    let y_even = rel_y & !1;
+    let mut w_even = avail_w & !1;
+    let mut h_even = avail_h & !1;
+
+    // Clamping defensivo estricto para evitar que crop exceda los límites del fotograma
+    if x_even + w_even > mon_w {
+        w_even = mon_w.saturating_sub(x_even) & !1;
+    }
+    if y_even + h_even > mon_h {
+        h_even = mon_h.saturating_sub(y_even) & !1;
+    }
+
+    if w_even < 2 || h_even < 2 {
+        return None;
+    }
+
+    let crop_filter = format!("crop={}:{}:{}:{}", w_even, h_even, x_even, y_even);
+
+    Some(WindowMonitorCrop {
+        device_name,
+        rel_x: x_even as i32,
+        rel_y: y_even as i32,
+        width: w_even,
+        height: h_even,
+        crop_filter,
+    })
+}
+
+/// Obtiene el recorte y monitor de una ventana dado su título.
+#[cfg(target_os = "windows")]
+pub fn get_window_monitor_crop_by_title(win_title: &str) -> Option<WindowMonitorCrop> {
+    let hwnd = find_window_hwnd(win_title)?;
+    get_window_monitor_crop(hwnd)
+}
+
+/// En sistemas no-Windows, devuelve None.
+#[cfg(not(target_os = "windows"))]
+pub fn get_window_monitor_crop_by_title(_win_title: &str) -> Option<WindowMonitorCrop> {
+    None
+}
+
+/// Busca una ventana por título y devuelve las coordenadas absolutas (x, y, width, height) del escritorio
+/// virtual para gdigrab fallback.
+#[cfg(target_os = "windows")]
+pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> {
+    let hwnd = find_window_hwnd(win_title)?;
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+
+    let mut win_rect: RECT = unsafe { std::mem::zeroed() };
+    if unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut win_rect as *mut RECT as *mut core::ffi::c_void,
+            std::mem::size_of::<RECT>() as u32,
+        )
+    } == 0
+    {
+        let w = (win_rect.right - win_rect.left).max(2) as u32;
+        let h = (win_rect.bottom - win_rect.top).max(2) as u32;
+        let (w_even, h_even) = truncate_to_even_dimensions(w, h);
+        return Some((win_rect.left & !1, win_rect.top & !1, w_even, h_even));
+    }
+    None
 }
 
 /// En sistemas no-Windows, devuelve None.

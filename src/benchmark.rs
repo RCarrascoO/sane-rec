@@ -16,6 +16,16 @@ use std::time::Duration;
 
 use crate::config::Config;
 
+/// Estadísticas del búfer de repetición en memoria RAM (Windows) o en disco (Linux).
+#[derive(Debug, Clone, Default)]
+pub struct RamBufferStats {
+    pub segments: usize,
+    pub bytes: u64,
+    pub oldest: Option<std::time::SystemTime>,
+    pub newest: Option<std::time::SystemTime>,
+    pub truncated: bool,
+}
+
 /// Contexto de ejecución para generar el informe de telemetría de benchmark.
 pub struct BenchmarkContext<'a> {
     pub output_path: &'a Path,
@@ -24,6 +34,7 @@ pub struct BenchmarkContext<'a> {
     pub capture_backend: &'a str,
     pub is_replay_clip: bool,
     pub elapsed_duration: Option<Duration>,
+    pub ram_buffer_stats: Option<RamBufferStats>,
 }
 
 #[derive(serde::Deserialize, Default, Debug)]
@@ -74,6 +85,148 @@ pub struct EncoderStderrTelemetry {
     pub speed_ratio: Option<String>,
     pub bitrate_kbps: Option<String>,
     pub total_frames: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+struct ReplayTelemetry {
+    segments: usize,
+    bytes: u64,
+    oldest: Option<std::time::SystemTime>,
+    newest: Option<std::time::SystemTime>,
+    truncated: bool,
+}
+
+fn replay_telemetry(ctx: &BenchmarkContext) -> ReplayTelemetry {
+    if !ctx.is_replay_clip {
+        return ReplayTelemetry::default();
+    }
+
+    if let Some(ref stats) = ctx.ram_buffer_stats {
+        return ReplayTelemetry {
+            segments: stats.segments,
+            bytes: stats.bytes,
+            oldest: stats.oldest,
+            newest: stats.newest,
+            truncated: stats.truncated,
+        };
+    }
+
+    let dir = crate::engine::default_buffer_dir();
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or_default();
+            if path.is_file()
+                && (name.starts_with("seg_") || name.starts_with("segment_"))
+                && matches!(ext, "mp4" | "ts")
+            {
+                if let Ok(meta) = entry.metadata() {
+                    files.push((meta.len(), meta.modified().ok()));
+                }
+            }
+        }
+    }
+
+    let bytes = files.iter().map(|(size, _)| *size).sum();
+    let mut times: Vec<_> = files.iter().filter_map(|(_, time)| *time).collect();
+    times.sort_unstable();
+    ReplayTelemetry {
+        segments: files.len(),
+        bytes,
+        oldest: times.first().copied(),
+        newest: times.last().copied(),
+        truncated: bytes >= u64::from(ctx.config.replay.max_memory_mb) * 1024 * 1024,
+    }
+}
+
+fn target_details(config: &Config) -> (String, String, String, String) {
+    let target = config.video.target.trim();
+    let (window_title, crop_opt, rect_opt) = target
+        .strip_prefix("window:")
+        .or_else(|| target.strip_prefix("title="))
+        .map(|title| {
+            let title = title.trim().to_string();
+            let crop = crate::discovery::get_window_monitor_crop_by_title(&title);
+            let rect = crate::discovery::get_window_capture_rect(&title);
+            (title, crop, rect)
+        })
+        .unwrap_or_else(|| (String::new(), None, None));
+
+    let crop_desc = if let Some(crop) = crop_opt {
+        format!("-vf {} (DXGI DWM Hardware Crop @ {})", crop.crop_filter, crop.device_name)
+    } else if let Some((x, y, w, h)) = rect_opt {
+        format!(
+            "offset_x={}, offset_y={}, video_size={}x{} (GDI Fallback)",
+            x, y, w, h
+        )
+    } else if let Some(area) = target
+        .strip_prefix("area:")
+        .or_else(|| target.strip_prefix("geom:"))
+    {
+        format!("-vf crop={} (geometría solicitada)", area.trim())
+    } else {
+        "sin recorte (captura de escritorio completa)".to_string()
+    };
+
+    let (hwnd, dpi) = window_platform_details(&window_title);
+    (
+        if window_title.is_empty() {
+            "no especificada".to_string()
+        } else {
+            window_title
+        },
+        rect_opt
+            .map(|(x, y, w, h)| format!("x={}, y={}, w={}, h={}", x, y, w, h))
+            .unwrap_or_else(|| "no disponible".to_string()),
+        hwnd,
+        format!("{}; {}", dpi, crop_desc),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn window_platform_details(title: &str) -> (String, String) {
+    use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+    if title.is_empty() {
+        return ("no especificado".to_string(), "no especificado".to_string());
+    }
+    let hwnd = match crate::discovery::find_window_hwnd(title) {
+        Some(h) => h,
+        None => return ("no encontrado".to_string(), "no disponible".to_string()),
+    };
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    (format!("{:?}", hwnd), format!("{} DPI", dpi))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn window_platform_details(_title: &str) -> (String, String) {
+    (
+        "no aplica (Linux/Wayland)".to_string(),
+        "no aplica".to_string(),
+    )
+}
+
+fn format_system_time(time: Option<std::time::SystemTime>) -> String {
+    time.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| format!("{} s desde epoch", d.as_secs()))
+        .unwrap_or_else(|| "no disponible".to_string())
+}
+
+fn retention_seconds(telemetry: &ReplayTelemetry) -> Option<u64> {
+    Some(
+        telemetry
+            .newest?
+            .duration_since(telemetry.oldest?)
+            .ok()?
+            .as_secs(),
+    )
 }
 
 /// Parsea una fracción de framerate de FFmpeg (ej: "60/1", "30000/1001", "25/1") a f64.
@@ -217,10 +370,18 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     let probe_err = probe_res.as_ref().err().cloned();
     let probe_data = probe_res.as_ref().ok();
 
-    let video_stream = probe_data
-        .and_then(|probe| probe.streams.iter().find(|stream| stream.codec_type == "video"));
-    let audio_stream = probe_data
-        .and_then(|probe| probe.streams.iter().find(|stream| stream.codec_type == "audio"));
+    let video_stream = probe_data.and_then(|probe| {
+        probe
+            .streams
+            .iter()
+            .find(|stream| stream.codec_type == "video")
+    });
+    let audio_stream = probe_data.and_then(|probe| {
+        probe
+            .streams
+            .iter()
+            .find(|stream| stream.codec_type == "audio")
+    });
 
     let duration_secs = probe_data
         .and_then(|probe| probe.format.as_ref())
@@ -236,8 +397,20 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
 
     let target_fps = ctx.config.video.fps.max(15) as f64;
     let real_fps = video_stream
-        .and_then(|video| video.avg_frame_rate.as_ref().and_then(|fps_str| parse_fraction_fps(fps_str)))
-        .or_else(|| video_stream.and_then(|video| video.r_frame_rate.as_ref().and_then(|fps_str| parse_fraction_fps(fps_str))))
+        .and_then(|video| {
+            video
+                .avg_frame_rate
+                .as_ref()
+                .and_then(|fps_str| parse_fraction_fps(fps_str))
+        })
+        .or_else(|| {
+            video_stream.and_then(|video| {
+                video
+                    .r_frame_rate
+                    .as_ref()
+                    .and_then(|fps_str| parse_fraction_fps(fps_str))
+            })
+        })
         .or(stderr_telem.last_fps)
         .unwrap_or(0.0);
 
@@ -248,12 +421,45 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     };
 
     let total_frames = video_stream
-        .and_then(|video| video.nb_frames.as_ref().and_then(|frames_str| frames_str.parse::<u64>().ok()))
+        .and_then(|video| {
+            video
+                .nb_frames
+                .as_ref()
+                .and_then(|frames_str| frames_str.parse::<u64>().ok())
+        })
         .or(stderr_telem.total_frames)
         .unwrap_or_else(|| (real_fps * duration_secs).round() as u64);
 
     let dropped = stderr_telem.total_dropped.unwrap_or(0);
     let duplicated = stderr_telem.total_duplicated.unwrap_or(0);
+    let replay = replay_telemetry(ctx);
+    let (window_title, window_rect, window_hwnd, window_details) = target_details(ctx.config);
+    let filter = if ctx.config.video.scale.is_empty() || ctx.config.video.scale == "none" {
+        "sin filtro".to_string()
+    } else {
+        format!("scale={}", ctx.config.video.scale)
+    };
+    let pipeline = format!(
+        "ffmpeg -f {} -r {} -c:v {} -preset {} -crf {} -vf {} -threads {}",
+        ctx.capture_backend,
+        target_fps,
+        if ctx.config.video.codec.is_empty() {
+            "auto"
+        } else {
+            &ctx.config.video.codec
+        },
+        if ctx.config.video.preset.is_empty() {
+            "auto"
+        } else {
+            &ctx.config.video.preset
+        },
+        ctx.config.video.crf,
+        filter,
+        ctx.config
+            .video
+            .custom_threads
+            .unwrap_or(ctx.config.video.threads),
+    );
 
     let audio_expected = ctx.config.audio.capture_desktop || ctx.config.audio.capture_mic;
     let audio_ok = !audio_expected || audio_stream.is_some() || probe_err.is_some();
@@ -280,6 +486,19 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
             "Se detectaron caídas notables de FPS, cuadros descartados o ausencia de pista de audio. Considere usar perfil SaneSafe CPU o revisar la resolución.",
         )
     };
+    let duplicate_ratio = if total_frames > 0 {
+        duplicated as f64 / total_frames as f64
+    } else {
+        0.0
+    };
+    let requested_duration = if ctx.is_replay_clip {
+        Some(ctx.config.replay.duration_secs as f64)
+    } else {
+        None
+    };
+    let short_clip = requested_duration
+        .map(|requested| requested > 0.0 && duration_secs < requested * 0.95)
+        .unwrap_or(false);
 
     let now_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let os_name = if cfg!(target_os = "windows") {
@@ -289,35 +508,134 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     };
 
     let mut report = String::new();
-    report.push_str("================================================================================\n");
+    report.push_str(
+        "================================================================================\n",
+    );
     report.push_str("                    SANE-REC BENCHMARK & TELEMETRY REPORT\n");
-    report.push_str("================================================================================\n");
+    report.push_str(
+        "================================================================================\n",
+    );
     report.push_str(&format!("Fecha y Hora         : {}\n", now_str));
-    report.push_str(&format!("Versión sane-rec     : v{}\n", env!("CARGO_PKG_VERSION")));
+    report.push_str(&format!(
+        "Versión sane-rec     : v{}\n",
+        env!("CARGO_PKG_VERSION")
+    ));
     report.push_str(&format!("Sistema Operativo    : {}\n", os_name));
-    report.push_str(&format!("Tipo de Grabación    : {}\n", if ctx.is_replay_clip { "Clip de Repetición Instantánea (Replay)" } else { "Grabación Continua Directa" }));
-    report.push_str(&format!("Archivo de Video     : {}\n", ctx.output_path.display()));
-    report.push_str(&format!("Tamaño de Archivo    : {:.2} MB ({} bytes)\n", file_size_mb, file_size_bytes));
-    report.push_str(&format!("Duración del Clip    : {:.2} segundos\n\n", duration_secs));
+    report.push_str(&format!(
+        "Tipo de Grabación    : {}\n",
+        if ctx.is_replay_clip {
+            "Clip de Repetición Instantánea (Replay)"
+        } else {
+            "Grabación Continua Directa"
+        }
+    ));
+    report.push_str(&format!(
+        "Archivo de Video     : {}\n",
+        ctx.output_path.display()
+    ));
+    report.push_str(&format!(
+        "Tamaño de Archivo    : {:.2} MB ({} bytes)\n",
+        file_size_mb, file_size_bytes
+    ));
+    report.push_str(&format!(
+        "Duración del Clip    : {:.2} segundos\n\n",
+        duration_secs
+    ));
 
     report.push_str("--- CONFIGURACIÓN Y PIPELINE ---\n");
     report.push_str(&format!("Backend de Captura   : {}\n", ctx.capture_backend));
-    report.push_str(&format!("Perfil de Encoder    : {}\n", ctx.config.profile.active_profile));
-    report.push_str(&format!("Códec Solicitado     : {}\n", if ctx.config.video.codec.is_empty() { "auto" } else { &ctx.config.video.codec }));
+    report.push_str(&format!(
+        "Perfil de Encoder    : {}\n",
+        ctx.config.profile.active_profile
+    ));
+    report.push_str(&format!(
+        "Códec Solicitado     : {}\n",
+        if ctx.config.video.codec.is_empty() {
+            "auto"
+        } else {
+            &ctx.config.video.codec
+        }
+    ));
     report.push_str(&format!("FPS Objetivo         : {:.2} FPS\n", target_fps));
-    report.push_str(&format!("Resolución/Escala    : {}\n", if ctx.config.video.scale.is_empty() { "Nativa (100%)" } else { &ctx.config.video.scale }));
-    report.push_str(&format!("Audio Sistema        : {}\n", if ctx.config.audio.capture_desktop { "Activado" } else { "Desactivado" }));
-    report.push_str(&format!("Audio Micrófono      : {}\n\n", if ctx.config.audio.capture_mic { "Activado" } else { "Desactivado" }));
+    report.push_str(&format!(
+        "Resolución/Escala    : {}\n",
+        if ctx.config.video.scale.is_empty() {
+            "Nativa (100%)"
+        } else {
+            &ctx.config.video.scale
+        }
+    ));
+    report.push_str(&format!(
+        "Audio Sistema        : {}\n",
+        if ctx.config.audio.capture_desktop {
+            "Activado"
+        } else {
+            "Desactivado"
+        }
+    ));
+    report.push_str(&format!(
+        "Audio Micrófono      : {}\n\n",
+        if ctx.config.audio.capture_mic {
+            "Activado"
+        } else {
+            "Desactivado"
+        }
+    ));
+
+    report.push_str("--- LÍNEA DE COMANDOS Y PIPELINE EJECUTADO ---\n");
+    report.push_str(&format!("Parámetros efectivos : {}\n\n", pipeline));
+
+    report.push_str("--- TELEMETRÍA DEL BÚFER EN MEMORIA RAM (REPLAY) ---\n");
+    report.push_str(&format!("Microsegmentos en cola: {}\n", replay.segments));
+    report.push_str(&format!(
+        "RAM física contabilizada: {:.2} MB / {} MB máximos\n",
+        replay.bytes as f64 / (1024.0 * 1024.0),
+        ctx.config.replay.max_memory_mb
+    ));
+    report.push_str(&format!(
+        "Segmento más antiguo : {}\n",
+        format_system_time(replay.oldest)
+    ));
+    report.push_str(&format!(
+        "Segmento más reciente: {}\n",
+        format_system_time(replay.newest)
+    ));
+    report.push_str(&format!(
+        "Retención temporal   : {} s observados / {} s solicitados\n",
+        retention_seconds(&replay).unwrap_or(0),
+        ctx.config.replay.duration_secs
+    ));
+    report.push_str(if replay.truncated {
+        "ADVERTENCIA          : El búfer alcanzó max_memory_mb; pudo truncarse por límite de memoria.\n\n"
+    } else {
+        "Estado del límite    : No se observó saturación de max_memory_mb.\n\n"
+    });
+
+    report.push_str("--- TOPOLOGÍA Y RECORTE DE VENTANA (FOCUS) ---\n");
+    report.push_str(&format!("Título de ventana    : {}\n", window_title));
+    report.push_str(&format!("HWND                 : {}\n", window_hwnd));
+    report.push_str(&format!("Coordenadas DWM      : {}\n", window_rect));
+    report.push_str(&format!("DPI / filtro aplicado: {}\n\n", window_details));
 
     report.push_str("--- ANÁLISIS DE PISTAS (FFPROBE) ---\n");
     if let Some(video) = video_stream {
         report.push_str(&format!("Pista de Video       : DETECTADA [OK]\n"));
         report.push_str(&format!("  - Códec Real       : {}\n", video.codec_name));
-        report.push_str(&format!("  - Resolución       : {}x{}\n", video.width.unwrap_or(0), video.height.unwrap_or(0)));
-        report.push_str(&format!("  - FPS Real (Probe) : {:.2} FPS ({:.1}% del objetivo)\n", real_fps, fps_ratio));
+        report.push_str(&format!(
+            "  - Resolución       : {}x{}\n",
+            video.width.unwrap_or(0),
+            video.height.unwrap_or(0)
+        ));
+        report.push_str(&format!(
+            "  - FPS Real (Probe) : {:.2} FPS ({:.1}% del objetivo)\n",
+            real_fps, fps_ratio
+        ));
         report.push_str(&format!("  - Cuadros Totales  : {} frames\n", total_frames));
     } else if let Some(ref err) = probe_err {
-        report.push_str(&format!("Pista de Video       : NO ANALIZADA (ffprobe no disponible: {})\n", err));
+        report.push_str(&format!(
+            "Pista de Video       : NO ANALIZADA (ffprobe no disponible: {})\n",
+            err
+        ));
     } else {
         report.push_str("Pista de Video       : NO DETECTADA [ERROR]\n");
     }
@@ -325,8 +643,14 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     if let Some(audio) = audio_stream {
         report.push_str(&format!("Pista de Audio       : DETECTADA [OK]\n"));
         report.push_str(&format!("  - Códec Audio      : {}\n", audio.codec_name));
-        report.push_str(&format!("  - Frecuencia (Hz)  : {} Hz\n", audio.sample_rate.as_deref().unwrap_or("48000")));
-        report.push_str(&format!("  - Canales          : {}\n", audio.channels.unwrap_or(2)));
+        report.push_str(&format!(
+            "  - Frecuencia (Hz)  : {} Hz\n",
+            audio.sample_rate.as_deref().unwrap_or("48000")
+        ));
+        report.push_str(&format!(
+            "  - Canales          : {}\n",
+            audio.channels.unwrap_or(2)
+        ));
     } else if let Some(ref err) = probe_err {
         report.push_str(&format!("Pista de Audio       : NO ANALIZADA ({})\n", err));
     } else if audio_expected {
@@ -339,7 +663,10 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     if let Some(fps) = stderr_telem.last_fps {
         report.push_str(&format!("FPS de Codificación  : {:.2} FPS\n", fps));
     } else {
-        report.push_str(&format!("FPS de Codificación  : {:.2} FPS (derivado de pista)\n", real_fps));
+        report.push_str(&format!(
+            "FPS de Codificación  : {:.2} FPS (derivado de pista)\n",
+            real_fps
+        ));
     }
     report.push_str(&format!("Cuadros Descartados  : {} (drop)\n", dropped));
     report.push_str(&format!("Cuadros Duplicados   : {} (dup)\n", duplicated));
@@ -353,11 +680,28 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     report.push_str("\n--- DICTAMEN DE SALUD Y RENDIMIENTO ---\n");
     report.push_str(&format!("ESTADO GENERAL       : {}\n", verdict_title));
     report.push_str(&format!("Diagnóstico          : {}\n", verdict_desc));
-    report.push_str("================================================================================\n");
+    if duplicate_ratio > 0.10 {
+        report.push_str("ADVERTENCIA CAUSA RAÍZ: Más del 10% de cuadros duplicados; el backend GDI no puede capturar la swapchain de la GPU.\n");
+    }
+    if short_clip {
+        report.push_str(&format!(
+            "ADVERTENCIA CAUSA RAÍZ: El metraje ({:.2} s) es menor al solicitado ({:.2} s); el búfer no retuvo suficientes segmentos.\n",
+            duration_secs,
+            requested_duration.unwrap_or_default()
+        ));
+    }
+    report.push_str(
+        "================================================================================\n",
+    );
 
     let benchmark_path = ctx.output_path.with_extension("benchmark.txt");
-    let mut file = File::create(&benchmark_path)
-        .map_err(|e| format!("No se pudo crear el archivo de benchmark '{}': {}", benchmark_path.display(), e))?;
+    let mut file = File::create(&benchmark_path).map_err(|e| {
+        format!(
+            "No se pudo crear el archivo de benchmark '{}': {}",
+            benchmark_path.display(),
+            e
+        )
+    })?;
 
     file.write_all(report.as_bytes())
         .map_err(|e| format!("Error al escribir el reporte de benchmark: {}", e))?;
@@ -370,7 +714,10 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
         .body(&format!(
             "Estado: {}\nGuardado en: {}",
             verdict_title,
-            benchmark_path.file_name().unwrap_or_default().to_string_lossy()
+            benchmark_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
         ))
         .icon("dialog-information")
         .show();
