@@ -667,7 +667,7 @@ pub fn get_open_windows() -> Vec<WindowInfo> {
         1
     }
 
-    let mut raw_candidates = Vec::new();
+    let mut raw_candidates: Vec<WinCandidate> = Vec::new();
     unsafe {
         EnumWindows(Some(enum_window_callback), &mut raw_candidates as *mut _ as LPARAM);
     }
