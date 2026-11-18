@@ -20,10 +20,10 @@ Documento de planificación técnica para las próximas versiones de sane-rec.
   │    • Afinado fino del uso de CPU/GPU en captura DXGI             │
   │    • Reducción al mínimo de overhead durante gameplay            │
   ├──────────────────────────────────────────────────────────────────┤
-  │ 4. FRONTEND UPDATE (Salto visual en Slint)                       │
-  │    • Rediseño y modernización del tema principal y botones       │
-  │    • Soporte pulido de temas de la comunidad                     │
-  │    • Mejor integración y renderizado visual en Windows           │
+  │ 4. FRONTEND & UX UPDATE (Salto Visual en Slint & System Tray)    │
+  │    • Rediseño de tema principal, componentes y comunidad         │
+  │    • System Tray (Windows & Linux): Cierre a 2do plano sin cortar│
+  │      el búfer, icono en bandeja y menú contextual rápido         │
   └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -73,8 +73,27 @@ Esta actualización unifica el soporte y optimización de aceleración por GPU d
 
 ---
 
-## 4. Frontend Update (Renovación Visual Completa en Slint)
+## 4. Frontend & UX Update (Renovación Visual en Slint & System Tray Multiplataforma)
+
+### 4.1. Renovación Visual en Slint
 - **Modernización de la Interfaz:**
   - Rediseñar el tema visual principal, paletas de colores, contraste y tipografía.
   - Refinar el selector de fuentes, botones, switches y vistas de galería.
   - Compatibilidad pulida con temas personalizados de la comunidad y coherencia estética en Windows (DWM) y Linux (Wayland).
+
+### 4.2. System Tray Multiplataforma (Cierre a Segundo Plano)
+- **Comportamiento "Cerrar a la Bandeja" (Close-to-Tray):**
+  - Interceptar el evento de cierre de ventana (`close-requested` de Slint) para que al pulsar el botón de cerrar la ventana principal se oculte (`hide()`) en lugar de matar el proceso.
+  - El búfer de repetición instantánea en RAM física y la escucha de hotkeys globales (F9 / F10) continúan operando de forma transparente en segundo plano sin interrumpir la grabación del juego.
+- **Implementación Multiplataforma Nativa:**
+  - **Linux (Wayland & X11):** Integración con el estándar `StatusNotifierItem` (SNI sobre D-Bus `org.kde.StatusNotifierItem`), compatible de forma nativa con Niri (waybar / quickshell), Hyprland, KDE Plasma y GNOME (vía AppIndicator).
+  - **Windows (Win32):** Integración mediante `Shell_NotifyIconW` con icono de aplicación `.ico` en el área de notificación (bandeja del sistema de la barra de tareas de Windows 10 y 11).
+- **Menú Contextual e Interacción Rápida:**
+  - **Clic izquierdo:** Restaurar y traer al frente la ventana principal de `sane-rec`.
+  - **Clic derecho (Menú contextual):**
+    - *Mostrar sane-rec*
+    - *Guardar repetición (F10)*
+    - *Iniciar / Detener grabación (F9)*
+    - *Separador*
+    - *Estado del búfer (ej. "Búfer: 45s activo")*
+    - *Salir definitivamente* (cierre total y ordenado del proceso y liberación de recursos).
