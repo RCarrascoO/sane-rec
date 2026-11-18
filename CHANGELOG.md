@@ -1,5 +1,17 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.7.2 - 2026-11-18 (0.7.2)
+- **Fixed (Windows App-Focus / Window Mode):**
+  - **Eliminación del Zoom 800x450 en Modo Ventana / Splash Screens (Fortnite, Unreal Engine, EAC)**:
+    - Clasificador y ranking de candidatos de ventana por superficie visible real en DWM (`width * height`), garantizando que la ventana principal de juego (1360x768 / 1080p) tenga prioridad sobre ventanas splash / launchers auxiliares de 800x450 con idéntico título.
+    - Soporte directo de resolución por identificador nativo (`hwnd:0x...`, `HWND:0x...`, `0x...`) y desambiguación estricta de títulos puramente numéricos.
+    - Filtrado robusto de ventanas de utilidad (`WS_EX_TOOLWINDOW`), minimizadas (`IsIconic`) y cloaked por el compositor DWM (`DWMWA_CLOAKED`).
+  - **Deduplicación de Ventanas en la UI**:
+    - Agrupación en `get_open_windows` por `(title, pid)` seleccionando el handle con mayor superficie de renderizado.
+  - **Optimización de Telemetría de Benchmark y Pipeline de Recorte**:
+    - Resolución de HWND en una única pasada en `target_details`, erradicando llamadas redundantes a `EnumWindows`.
+    - Extracción de la aritmética euclidiana de recorte a `calculate_window_crop_rect` con clamping defensivo contra los bordes del monitor y suite de pruebas unitarias multiplataforma.
+
 ## v0.7.1 - 2026-11-17 (0.7.1)
 - **Added:**
   - **Captura de Ventanas a 60 FPS con DXGI (DWM Bounds & Hardware Crop)**:

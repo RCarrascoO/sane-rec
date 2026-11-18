@@ -593,15 +593,36 @@ pub fn get_open_windows() -> Vec<WindowInfo> {
 /// Obtiene las ventanas abiertas y visibles en Windows usando Win32 EnumWindows.
 #[cfg(target_os = "windows")]
 pub fn get_open_windows() -> Vec<WindowInfo> {
-    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-        IsWindowVisible,
+        EnumWindows, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+        IsIconic, IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
     };
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
+
+    struct WinCandidate {
+        info: WindowInfo,
+        area: u64,
+    }
 
     unsafe extern "system" fn enum_window_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let list = &mut *(lparam as *mut Vec<WindowInfo>);
-        if IsWindowVisible(hwnd) != 0 {
+        let list = &mut *(lparam as *mut Vec<WinCandidate>);
+        if IsWindowVisible(hwnd) != 0 && IsIconic(hwnd) == 0 {
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            if (ex_style as u32 & WS_EX_TOOLWINDOW) != 0 {
+                return 1;
+            }
+
+            let mut cloaked: u32 = 0;
+            if DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_CLOAKED as u32,
+                &mut cloaked as *mut u32 as *mut core::ffi::c_void,
+                std::mem::size_of::<u32>() as u32,
+            ) == 0 && cloaked != 0 {
+                return 1;
+            }
+
             let length = GetWindowTextLengthW(hwnd);
             if length > 0 {
                 let mut buffer = vec![0u16; (length + 1) as usize];
@@ -611,15 +632,34 @@ pub fn get_open_windows() -> Vec<WindowInfo> {
                         .trim()
                         .to_string();
                     if !title.is_empty() && title != "Program Manager" && title != "Settings" {
-                        let mut pid: u32 = 0;
-                        GetWindowThreadProcessId(hwnd, &mut pid);
-                        list.push(WindowInfo {
-                            id: hwnd as usize as u64,
-                            app_id: title.clone(),
-                            title,
-                            pid,
-                            is_focused: false,
-                        });
+                        let mut win_rect: RECT = std::mem::zeroed();
+                        let area = if DwmGetWindowAttribute(
+                            hwnd,
+                            DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+                            &mut win_rect as *mut RECT as *mut core::ffi::c_void,
+                            std::mem::size_of::<RECT>() as u32,
+                        ) == 0 {
+                            let w = (win_rect.right - win_rect.left).max(0) as u64;
+                            let h = (win_rect.bottom - win_rect.top).max(0) as u64;
+                            w * h
+                        } else {
+                            0
+                        };
+
+                        if area >= 10000 {
+                            let mut pid: u32 = 0;
+                            GetWindowThreadProcessId(hwnd, &mut pid);
+                            list.push(WinCandidate {
+                                info: WindowInfo {
+                                    id: hwnd as usize as u64,
+                                    app_id: format!("hwnd:0x{:x}", hwnd as usize),
+                                    title,
+                                    pid,
+                                    is_focused: false,
+                                },
+                                area,
+                            });
+                        }
                     }
                 }
             }
@@ -627,11 +667,27 @@ pub fn get_open_windows() -> Vec<WindowInfo> {
         1
     }
 
-    let mut windows = Vec::new();
+    let mut raw_candidates = Vec::new();
     unsafe {
-        EnumWindows(Some(enum_window_callback), &mut windows as *mut _ as LPARAM);
+        EnumWindows(Some(enum_window_callback), &mut raw_candidates as *mut _ as LPARAM);
     }
-    windows
+
+    let mut map: std::collections::HashMap<(String, u32), WinCandidate> = std::collections::HashMap::new();
+    for cand in raw_candidates {
+        let key = (cand.info.title.to_lowercase(), cand.info.pid);
+        match map.entry(key) {
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert(cand);
+            }
+            std::collections::hash_map::Entry::Occupied(mut o) => {
+                if cand.area > o.get().area {
+                    o.insert(cand);
+                }
+            }
+        }
+    }
+
+    map.into_values().map(|c| c.info).collect()
 }
 
 /// Trunca ancho y alto a números pares (mínimo 2) para compatibilidad con encoders de video.
@@ -641,66 +697,138 @@ pub fn truncate_to_even_dimensions(width: u32, height: u32) -> (u32, u32) {
     (w, h)
 }
 
-/// Busca una ventana por título y devuelve su HWND si está visible y no minimizada.
+/// Busca una ventana por título o HWND directo y devuelve el HWND óptimo con mayor superficie visible.
 #[cfg(target_os = "windows")]
 pub fn find_window_hwnd(win_title: &str) -> Option<windows_sys::Win32::Foundation::HWND> {
-    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, FindWindowW, GetWindowTextLengthW, GetWindowTextW, IsIconic, IsWindowVisible,
+        EnumWindows, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW, IsIconic,
+        IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
     };
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 
     let title_clean = win_title.trim();
     if title_clean.is_empty() {
         return None;
     }
 
-    let mut wide_title: Vec<u16> = title_clean.encode_utf16().collect();
-    wide_title.push(0);
+    // 1. Soporte para HWND directo: "hwnd:0x4032c", "hwnd:4032" o formato hexadecimal "0x4032c"
+    // H-01: Exigir prefijo "hwnd:"/"HWND:" o formato hexadecimal ("0x"/"0X") para evitar que títulos
+    // puramente numéricos (ej. juegos "2048", "1917") se interpreten como HWNDs arbitrarios.
+    let target_raw = title_clean
+        .strip_prefix("window:")
+        .unwrap_or(title_clean)
+        .trim();
 
-    let mut target_hwnd = unsafe { FindWindowW(std::ptr::null(), wide_title.as_ptr()) };
+    if let Some(num_str) = target_raw.strip_prefix("hwnd:").or_else(|| target_raw.strip_prefix("HWND:")) {
+        let num_str = num_str.trim();
+        let raw = if let Some(hex_part) = num_str.strip_prefix("0x").or_else(|| num_str.strip_prefix("0X")) {
+            usize::from_str_radix(hex_part, 16).ok()
+        } else {
+            num_str.parse::<usize>().ok()
+        };
+        if let Some(raw_val) = raw {
+            let hwnd = raw_val as HWND;
+            if !hwnd.is_null() && unsafe { IsWindowVisible(hwnd) } != 0 && unsafe { IsIconic(hwnd) } == 0 {
+                return Some(hwnd);
+            }
+        }
+    } else if let Some(hex_part) = target_raw.strip_prefix("0x").or_else(|| target_raw.strip_prefix("0X")) {
+        if let Ok(raw_val) = usize::from_str_radix(hex_part, 16) {
+            let hwnd = raw_val as HWND;
+            if !hwnd.is_null() && unsafe { IsWindowVisible(hwnd) } != 0 && unsafe { IsIconic(hwnd) } == 0 {
+                return Some(hwnd);
+            }
+        }
+    }
 
-    if target_hwnd.is_null() {
-        struct SearchContext<'a> {
-            query: &'a str,
-            found_hwnd: HWND,
+    // 2. Búsqueda por título textual con puntuación de candidatos por área de renderizado
+    struct Candidate {
+        hwnd: HWND,
+        area: u64,
+        exact_title: bool,
+    }
+
+    struct EnumContext<'a> {
+        query: &'a str,
+        query_lower: String,
+        candidates: Vec<Candidate>,
+    }
+
+    unsafe extern "system" fn search_enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = &mut *(lparam as *mut EnumContext);
+        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
+            return 1;
         }
 
-        unsafe extern "system" fn search_enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
-            let ctx = &mut *(lparam as *mut SearchContext);
-            if IsWindowVisible(hwnd) != 0 {
-                let len = GetWindowTextLengthW(hwnd);
-                if len > 0 {
-                    let mut buf = vec![0u16; (len + 1) as usize];
-                    GetWindowTextW(hwnd, buf.as_mut_ptr(), len + 1);
-                    let t = String::from_utf16_lossy(&buf[..len as usize]);
-                    if t.eq_ignore_ascii_case(ctx.query)
-                        || t.to_lowercase().contains(&ctx.query.to_lowercase())
-                    {
-                        ctx.found_hwnd = hwnd;
-                        return 0;
-                    }
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        if (ex_style as u32 & WS_EX_TOOLWINDOW) != 0 {
+            return 1;
+        }
+
+        let mut cloaked: u32 = 0;
+        if DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED as u32,
+            &mut cloaked as *mut u32 as *mut core::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        ) == 0 && cloaked != 0 {
+            return 1;
+        }
+
+        let len = GetWindowTextLengthW(hwnd);
+        if len > 0 {
+            let mut buf = vec![0u16; (len + 1) as usize];
+            let written = GetWindowTextW(hwnd, buf.as_mut_ptr(), len + 1);
+            if written > 0 {
+                let title = String::from_utf16_lossy(&buf[..written as usize]);
+                let title_trimmed = title.trim();
+
+                let is_exact = title_trimmed.eq_ignore_ascii_case(ctx.query);
+                let is_partial = !is_exact && title_trimmed.to_lowercase().contains(&ctx.query_lower);
+
+                if is_exact || is_partial {
+                    let mut win_rect: RECT = std::mem::zeroed();
+                    let area = if DwmGetWindowAttribute(
+                        hwnd,
+                        DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+                        &mut win_rect as *mut RECT as *mut core::ffi::c_void,
+                        std::mem::size_of::<RECT>() as u32,
+                    ) == 0 {
+                        let rect_w = (win_rect.right - win_rect.left).max(0) as u64;
+                        let rect_h = (win_rect.bottom - win_rect.top).max(0) as u64;
+                        rect_w * rect_h
+                    } else {
+                        0
+                    };
+
+                    ctx.candidates.push(Candidate {
+                        hwnd,
+                        area,
+                        exact_title: is_exact,
+                    });
                 }
             }
-            1
         }
-
-        let mut ctx = SearchContext {
-            query: title_clean,
-            found_hwnd: std::ptr::null_mut(),
-        };
-
-        unsafe {
-            EnumWindows(Some(search_enum_cb), &mut ctx as *mut _ as LPARAM);
-        }
-
-        target_hwnd = ctx.found_hwnd;
+        1
     }
 
-    if target_hwnd.is_null() || unsafe { IsIconic(target_hwnd) } != 0 {
-        None
-    } else {
-        Some(target_hwnd)
+    let mut ctx = EnumContext {
+        query: title_clean,
+        query_lower: title_clean.to_lowercase(),
+        candidates: Vec::new(),
+    };
+
+    unsafe {
+        EnumWindows(Some(search_enum_cb), &mut ctx as *mut _ as LPARAM);
     }
+
+    ctx.candidates.sort_by(|a, b| {
+        b.exact_title.cmp(&a.exact_title)
+            .then_with(|| b.area.cmp(&a.area))
+    });
+
+    ctx.candidates.first().map(|c| c.hwnd)
 }
 
 /// Obtiene el recorte y monitor de una ventana usando DWM y APIs Win32.
@@ -751,40 +879,16 @@ pub fn get_window_monitor_crop(hwnd: windows_sys::Win32::Foundation::HWND) -> Op
     let dev_len = mi.szDevice.iter().position(|&c| c == 0).unwrap_or(mi.szDevice.len());
     let device_name = String::from_utf16_lossy(&mi.szDevice[..dev_len]);
 
-    let mon_w = (mi.monitorInfo.rcMonitor.right - mi.monitorInfo.rcMonitor.left).max(2) as u32;
-    let mon_h = (mi.monitorInfo.rcMonitor.bottom - mi.monitorInfo.rcMonitor.top).max(2) as u32;
-
-    // Intersección euclidiana rigurosa en el espacio absoluto de la pantalla
-    let inter_left = win_rect.left.max(mi.monitorInfo.rcMonitor.left);
-    let inter_top = win_rect.top.max(mi.monitorInfo.rcMonitor.top);
-    let inter_right = win_rect.right.min(mi.monitorInfo.rcMonitor.right);
-    let inter_bottom = win_rect.bottom.min(mi.monitorInfo.rcMonitor.bottom);
-
-    if inter_right <= inter_left + 1 || inter_bottom <= inter_top + 1 {
-        return None;
-    }
-
-    let rel_x = (inter_left - mi.monitorInfo.rcMonitor.left) as u32;
-    let rel_y = (inter_top - mi.monitorInfo.rcMonitor.top) as u32;
-    let avail_w = (inter_right - inter_left) as u32;
-    let avail_h = (inter_bottom - inter_top) as u32;
-
-    let x_even = rel_x & !1;
-    let y_even = rel_y & !1;
-    let mut w_even = avail_w & !1;
-    let mut h_even = avail_h & !1;
-
-    // Clamping defensivo estricto para evitar que crop exceda los límites del fotograma
-    if x_even + w_even > mon_w {
-        w_even = mon_w.saturating_sub(x_even) & !1;
-    }
-    if y_even + h_even > mon_h {
-        h_even = mon_h.saturating_sub(y_even) & !1;
-    }
-
-    if w_even < 2 || h_even < 2 {
-        return None;
-    }
+    let (x_even, y_even, w_even, h_even) = calculate_window_crop_rect(
+        win_rect.left,
+        win_rect.top,
+        win_rect.right,
+        win_rect.bottom,
+        mi.monitorInfo.rcMonitor.left,
+        mi.monitorInfo.rcMonitor.top,
+        mi.monitorInfo.rcMonitor.right,
+        mi.monitorInfo.rcMonitor.bottom,
+    )?;
 
     let crop_filter = format!("crop={}:{}:{}:{}", w_even, h_even, x_even, y_even);
 
@@ -796,6 +900,55 @@ pub fn get_window_monitor_crop(hwnd: windows_sys::Win32::Foundation::HWND) -> Op
         height: h_even,
         crop_filter,
     })
+}
+
+/// Calcula la intersección euclidiana y el recorte par relativo entre una ventana y un monitor.
+/// Devuelve `Some((rel_x_even, rel_y_even, width_even, height_even))` o `None` si no hay intersección válida.
+pub fn calculate_window_crop_rect(
+    win_left: i32,
+    win_top: i32,
+    win_right: i32,
+    win_bottom: i32,
+    mon_left: i32,
+    mon_top: i32,
+    mon_right: i32,
+    mon_bottom: i32,
+) -> Option<(u32, u32, u32, u32)> {
+    let mon_w = (mon_right - mon_left).max(2) as u32;
+    let mon_h = (mon_bottom - mon_top).max(2) as u32;
+
+    let inter_left = win_left.max(mon_left);
+    let inter_top = win_top.max(mon_top);
+    let inter_right = win_right.min(mon_right);
+    let inter_bottom = win_bottom.min(mon_bottom);
+
+    if inter_right <= inter_left + 1 || inter_bottom <= inter_top + 1 {
+        return None;
+    }
+
+    let rel_x = (inter_left - mon_left) as u32;
+    let rel_y = (inter_top - mon_top) as u32;
+    let avail_w = (inter_right - inter_left) as u32;
+    let avail_h = (inter_bottom - inter_top) as u32;
+
+    let x_even = rel_x & !1;
+    let y_even = rel_y & !1;
+    let mut w_even = avail_w & !1;
+    let mut h_even = avail_h & !1;
+
+    // Clamping defensivo estricto para evitar que crop exceda los límites del monitor
+    if x_even + w_even > mon_w {
+        w_even = mon_w.saturating_sub(x_even) & !1;
+    }
+    if y_even + h_even > mon_h {
+        h_even = mon_h.saturating_sub(y_even) & !1;
+    }
+
+    if w_even < 2 || h_even < 2 {
+        return None;
+    }
+
+    Some((x_even, y_even, w_even, h_even))
 }
 
 /// Obtiene el recorte y monitor de una ventana dado su título.
@@ -811,13 +964,17 @@ pub fn get_window_monitor_crop_by_title(_win_title: &str) -> Option<WindowMonito
     None
 }
 
-/// Busca una ventana por título y devuelve las coordenadas absolutas (x, y, width, height) del escritorio
-/// virtual para gdigrab fallback.
+/// Obtiene las coordenadas absolutas (x, y, width, height) del escritorio virtual para un HWND.
 #[cfg(target_os = "windows")]
-pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> {
-    let hwnd = find_window_hwnd(win_title)?;
+pub fn get_window_capture_rect_by_hwnd(
+    hwnd: windows_sys::Win32::Foundation::HWND,
+) -> Option<(i32, i32, u32, u32)> {
     use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+
+    if hwnd.is_null() {
+        return None;
+    }
 
     let mut win_rect: RECT = unsafe { std::mem::zeroed() };
     if unsafe {
@@ -829,12 +986,20 @@ pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> 
         )
     } == 0
     {
-        let w = (win_rect.right - win_rect.left).max(2) as u32;
-        let h = (win_rect.bottom - win_rect.top).max(2) as u32;
-        let (w_even, h_even) = truncate_to_even_dimensions(w, h);
-        return Some((win_rect.left & !1, win_rect.top & !1, w_even, h_even));
+        let width = (win_rect.right - win_rect.left).max(2) as u32;
+        let height = (win_rect.bottom - win_rect.top).max(2) as u32;
+        let (width_even, height_even) = truncate_to_even_dimensions(width, height);
+        return Some((win_rect.left & !1, win_rect.top & !1, width_even, height_even));
     }
     None
+}
+
+/// Busca una ventana por título y devuelve las coordenadas absolutas (x, y, width, height) del escritorio
+/// virtual para gdigrab fallback.
+#[cfg(target_os = "windows")]
+pub fn get_window_capture_rect(win_title: &str) -> Option<(i32, i32, u32, u32)> {
+    let hwnd = find_window_hwnd(win_title)?;
+    get_window_capture_rect_by_hwnd(hwnd)
 }
 
 /// En sistemas no-Windows, devuelve None.
@@ -1557,5 +1722,31 @@ mod tests {
         // Dimensiones mínimas aseguran al menos 2x2
         assert_eq!(truncate_to_even_dimensions(0, 0), (2, 2));
         assert_eq!(truncate_to_even_dimensions(1, 1), (2, 2));
+    }
+
+    #[test]
+    fn test_calculate_window_crop_rect() {
+        // 1. Ventana centrada normal en monitor primario 1920x1080
+        // Ventana de 1360x768 en (100, 100)
+        let res = calculate_window_crop_rect(100, 100, 1460, 868, 0, 0, 1920, 1080);
+        assert_eq!(res, Some((100, 100, 1360, 768)));
+
+        // 2. Ventana parcialmente fuera del borde izquierdo y superior
+        // Ventana en (-50, -30) que se extiende hasta (800, 600)
+        let res = calculate_window_crop_rect(-50, -30, 800, 600, 0, 0, 1920, 1080);
+        assert_eq!(res, Some((0, 0, 800, 600)));
+
+        // 3. Ventana en monitor secundario con coordenadas negativas: (-1920, 0) a (0, 1080)
+        // Ventana en (-1820, 50) de 1024x768 -> (-1820 + 1024 = -796, 50 + 768 = 818)
+        let res = calculate_window_crop_rect(-1820, 50, -796, 818, -1920, 0, 0, 1080);
+        assert_eq!(res, Some((100, 50, 1024, 768)));
+
+        // 4. Ventana que desborda el límite derecho e inferior del monitor (clamping defensivo)
+        let res = calculate_window_crop_rect(1000, 800, 2200, 1200, 0, 0, 1920, 1080);
+        assert_eq!(res, Some((1000, 800, 920, 280)));
+
+        // 5. Ventana completamente fuera del monitor
+        let res = calculate_window_crop_rect(2000, 2000, 2500, 2500, 0, 0, 1920, 1080);
+        assert_eq!(res, None);
     }
 }

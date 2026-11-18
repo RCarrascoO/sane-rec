@@ -147,19 +147,35 @@ fn replay_telemetry(ctx: &BenchmarkContext) -> ReplayTelemetry {
     }
 }
 
-fn target_details(config: &Config) -> (String, String, String, String) {
+fn target_details(config: &Config) -> (String, String, String, String, Option<String>) {
     let target = config.video.target.trim();
-    let (window_title, crop_opt, rect_opt) = target
+    let (window_title, crop_opt, rect_opt, hwnd_desc, dpi_desc) = target
         .strip_prefix("window:")
         .or_else(|| target.strip_prefix("title="))
         .map(|title| {
             let title = title.trim().to_string();
-            let crop = crate::discovery::get_window_monitor_crop_by_title(&title);
-            let rect = crate::discovery::get_window_capture_rect(&title);
-            (title, crop, rect)
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(hwnd) = crate::discovery::find_window_hwnd(&title) {
+                    let crop = crate::discovery::get_window_monitor_crop(hwnd);
+                    let rect = crate::discovery::get_window_capture_rect_by_hwnd(hwnd);
+                    let (h_str, d_str) = window_platform_details_by_hwnd(hwnd);
+                    (title, crop, rect, h_str, d_str)
+                } else {
+                    (title, None, None, "no encontrado".to_string(), "no disponible".to_string())
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let crop = crate::discovery::get_window_monitor_crop_by_title(&title);
+                let rect = crate::discovery::get_window_capture_rect(&title);
+                let (h_str, d_str) = window_platform_details(&title);
+                (title, crop, rect, h_str, d_str)
+            }
         })
-        .unwrap_or_else(|| (String::new(), None, None));
+        .unwrap_or_else(|| (String::new(), None, None, "no especificado".to_string(), "no especificado".to_string()));
 
+    let effective_crop = crop_opt.as_ref().map(|c| c.crop_filter.clone());
     let crop_desc = if let Some(crop) = crop_opt {
         format!("-vf {} (DXGI DWM Hardware Crop @ {})", crop.crop_filter, crop.device_name)
     } else if let Some((x, y, w, h)) = rect_opt {
@@ -176,7 +192,6 @@ fn target_details(config: &Config) -> (String, String, String, String) {
         "sin recorte (captura de escritorio completa)".to_string()
     };
 
-    let (hwnd, dpi) = window_platform_details(&window_title);
     (
         if window_title.is_empty() {
             "no especificada".to_string()
@@ -186,23 +201,28 @@ fn target_details(config: &Config) -> (String, String, String, String) {
         rect_opt
             .map(|(x, y, w, h)| format!("x={}, y={}, w={}, h={}", x, y, w, h))
             .unwrap_or_else(|| "no disponible".to_string()),
-        hwnd,
-        format!("{}; {}", dpi, crop_desc),
+        hwnd_desc,
+        format!("{}; {}", dpi_desc, crop_desc),
+        effective_crop,
     )
 }
 
 #[cfg(target_os = "windows")]
-fn window_platform_details(title: &str) -> (String, String) {
+fn window_platform_details_by_hwnd(hwnd: windows_sys::Win32::Foundation::HWND) -> (String, String) {
     use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    (format!("{:?}", hwnd), format!("{} DPI", dpi))
+}
+
+#[cfg(target_os = "windows")]
+fn window_platform_details(title: &str) -> (String, String) {
     if title.is_empty() {
         return ("no especificado".to_string(), "no especificado".to_string());
     }
-    let hwnd = match crate::discovery::find_window_hwnd(title) {
-        Some(h) => h,
-        None => return ("no encontrado".to_string(), "no disponible".to_string()),
-    };
-    let dpi = unsafe { GetDpiForWindow(hwnd) };
-    (format!("{:?}", hwnd), format!("{} DPI", dpi))
+    match crate::discovery::find_window_hwnd(title) {
+        Some(hwnd) => window_platform_details_by_hwnd(hwnd),
+        None => ("no encontrado".to_string(), "no disponible".to_string()),
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -433,11 +453,17 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     let dropped = stderr_telem.total_dropped.unwrap_or(0);
     let duplicated = stderr_telem.total_duplicated.unwrap_or(0);
     let replay = replay_telemetry(ctx);
-    let (window_title, window_rect, window_hwnd, window_details) = target_details(ctx.config);
-    let filter = if ctx.config.video.scale.is_empty() || ctx.config.video.scale == "none" {
-        "sin filtro".to_string()
+    let (window_title, window_rect, window_hwnd, window_details, crop_filter_opt) = target_details(ctx.config);
+    let scale_filter = if ctx.config.video.scale.is_empty() || ctx.config.video.scale == "none" {
+        None
     } else {
-        format!("scale={}", ctx.config.video.scale)
+        Some(format!("scale={}", ctx.config.video.scale))
+    };
+    let filter = match (crop_filter_opt, scale_filter) {
+        (Some(c), Some(s)) => format!("{},{}", c, s),
+        (Some(c), None) => c,
+        (None, Some(s)) => s,
+        (None, None) => "sin filtro".to_string(),
     };
     let pipeline = format!(
         "ffmpeg -f {} -r {} -c:v {} -preset {} -crf {} -vf {} -threads {}",
