@@ -577,6 +577,10 @@ impl ReplayEngine {
         let mut cmd = new_hidden_command("wf-recorder");
         cmd.arg("-y");
 
+        // Tasa de cuadros explícita: wf-recorder no debe esperar eventos de daño de pantalla.
+        let fps = if config.video.fps == 0 { 60 } else { config.video.fps };
+        cmd.args(["-r", &format!("{}", fps)]);
+
         // Destino de captura
         apply_target_args(&mut cmd, &config.video.target);
 
@@ -1139,7 +1143,7 @@ impl ReplayEngine {
         let mut child = cmd.spawn()?;
 
         // Manejo seguro de inicio y captura de fallos
-        std::thread::sleep(std::time::Duration::from_millis(400));
+        std::thread::sleep(std::time::Duration::from_millis(600));
         let failed = match child.try_wait() {
             Ok(Some(status)) => !status.success(),
             Err(_) => true,
@@ -1161,7 +1165,6 @@ impl ReplayEngine {
 
                 let mut fallback_config = config.clone();
                 fallback_config.profile.active_profile = EncoderProfile::SaneSafe.to_string();
-                let _ = fallback_config.save();
                 *self.config.lock().unwrap() = fallback_config.clone();
 
                 self.cleanup_audio_modules();
@@ -1222,11 +1225,32 @@ impl ReplayEngine {
 
         let current_cfg = Config::load().unwrap_or_else(|_| self.config());
         if current_cfg.storage.benchmark_mode {
-            let stderr_str = std::fs::read_to_string(crate::crash_handler::get_engine_log_path()).unwrap_or_default();
+            let mut cmd_probe = Command::new("wf-recorder");
+            let fps = if current_cfg.video.fps == 0 { 60 } else { current_cfg.video.fps };
+            cmd_probe.arg("-y").args(["-r", &fps.to_string()]);
+            apply_target_args(&mut cmd_probe, &current_cfg.video.target);
+            apply_profile_args(&mut cmd_probe, &current_cfg);
+            cmd_probe.arg("-f").arg(&output_path);
+            let executed_cmd = format!(
+                "wf-recorder {}",
+                cmd_probe
+                    .get_args()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+
+            let stderr_log = std::fs::read(crate::crash_handler::get_engine_log_path())
+                .map(|bytes| {
+                    let start = bytes.len().saturating_sub(8192);
+                    String::from_utf8_lossy(&bytes[start..]).into_owned()
+                })
+                .unwrap_or_default();
             let ctx = crate::benchmark::BenchmarkContext {
                 output_path: &output_path,
                 config: &current_cfg,
-                encoder_stderr: if stderr_str.is_empty() { None } else { Some(&stderr_str) },
+                encoder_stderr: if stderr_log.is_empty() { None } else { Some(&stderr_log) },
+                executed_command: Some(&executed_cmd),
                 capture_backend: "Wayland / PipeWire (wf-recorder)",
                 is_replay_clip: false,
                 elapsed_duration: elapsed,
@@ -1486,14 +1510,29 @@ impl ReplayEngine {
         let current_cfg = Config::load().unwrap_or_else(|_| self.config());
         if current_cfg.storage.benchmark_mode {
             let stderr_str = self.continuous_stderr_log.lock().map(|g| g.clone()).unwrap_or_default();
-            let backend_name = match *self.win_continuous_backend.lock().unwrap() {
+            let backend = *self.win_continuous_backend.lock().unwrap();
+            let backend_name = match backend {
                 WindowsCaptureBackend::DdaGrab => "Desktop Duplication API (ddagrab / DXGI)",
                 WindowsCaptureBackend::GdiGrab => "GDI Screen Grabber (gdigrab)",
             };
+            let mut cmd_probe = Command::new(resolve_binary("ffmpeg"));
+            cmd_probe.arg("-y");
+            apply_windows_input_args(&mut cmd_probe, &current_cfg, None, backend);
+            apply_windows_profile_args(&mut cmd_probe, &current_cfg, false, backend);
+            cmd_probe.arg(&output_path);
+            let executed_cmd = format!(
+                "ffmpeg {}",
+                cmd_probe
+                    .get_args()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
             let ctx = crate::benchmark::BenchmarkContext {
                 output_path: &output_path,
                 config: &current_cfg,
                 encoder_stderr: if stderr_str.is_empty() { None } else { Some(&stderr_str) },
+                executed_command: Some(&executed_cmd),
                 capture_backend: backend_name,
                 is_replay_clip: false,
                 elapsed_duration: elapsed,
@@ -1729,6 +1768,7 @@ impl ReplayEngine {
                 output_path: &output_path,
                 config: &current_cfg,
                 encoder_stderr: None,
+                executed_command: None,
                 capture_backend: "Wayland / PipeWire (RAM Ring Buffer)",
                 is_replay_clip: true,
                 elapsed_duration: Some(Duration::from_secs(current_cfg.replay.duration_secs as u64)),
@@ -2009,6 +2049,7 @@ impl ReplayEngine {
                 output_path: &output_path,
                 config: &current_cfg,
                 encoder_stderr: None,
+                executed_command: None,
                 capture_backend: backend_name,
                 is_replay_clip: true,
                 elapsed_duration: Some(Duration::from_secs(current_cfg.replay.duration_secs as u64)),

@@ -31,6 +31,7 @@ pub struct BenchmarkContext<'a> {
     pub output_path: &'a Path,
     pub config: &'a Config,
     pub encoder_stderr: Option<&'a str>,
+    pub executed_command: Option<&'a str>,
     pub capture_backend: &'a str,
     pub is_replay_clip: bool,
     pub elapsed_duration: Option<Duration>,
@@ -386,7 +387,17 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
         .unwrap_or(0);
     let file_size_mb = (file_size_bytes as f64) / (1024.0 * 1024.0);
 
-    let probe_res = probe_video_file(ctx.output_path);
+    let duration_hint = ctx
+        .elapsed_duration
+        .map(|elapsed| elapsed.as_secs_f64())
+        .unwrap_or(f64::INFINITY);
+    let mut is_aborted = file_size_bytes < 1024 || duration_hint < 0.5;
+
+    let probe_res: Result<FfprobeOutput, String> = if is_aborted {
+        Err("Inspección ffprobe omitida: grabación abortada (<1 KB o <0.5 s)".to_string())
+    } else {
+        probe_video_file(ctx.output_path)
+    };
     let probe_err = probe_res.as_ref().err().cloned();
     let probe_data = probe_res.as_ref().ok();
 
@@ -409,6 +420,9 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
         .and_then(|dur_str| dur_str.parse::<f64>().ok())
         .or_else(|| ctx.elapsed_duration.map(|elapsed| elapsed.as_secs_f64()))
         .unwrap_or(0.0);
+    if duration_secs < 0.5 {
+        is_aborted = true;
+    }
 
     let stderr_telem = ctx
         .encoder_stderr
@@ -491,7 +505,12 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     let audio_ok = !audio_expected || audio_stream.is_some() || probe_err.is_some();
 
     // Determinación del veredicto del benchmark
-    let (verdict_title, verdict_desc) = if let Some(ref _err_msg) = probe_err {
+    let (verdict_title, verdict_desc) = if is_aborted {
+        (
+            "🚨 CRÍTICO / GRABACIÓN ABORTADA (Fallo Prematuro)",
+            "El codificador no consolidó fotogramas suficientes (<1KB o <0.5s).",
+        )
+    } else if let Some(ref _err_msg) = probe_err {
         (
             "AVISO / INSPECCIÓN LIMITADA",
             "ffprobe no estuvo disponible para introspección binaria detallada; se conservan métricas extraídas del codificador.",
@@ -547,6 +566,21 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
         env!("CARGO_PKG_VERSION")
     ));
     report.push_str(&format!("Sistema Operativo    : {}\n", os_name));
+    report.push_str(&format!(
+        "GPU / Adaptador Gráfico: {}\n",
+        crate::discovery::detect_gpu_info()
+    ));
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(vram) = std::fs::read_to_string("/sys/class/drm/card0/device/mem_info_vram_used") {
+            if let Ok(bytes) = vram.trim().parse::<u64>() {
+                report.push_str(&format!(
+                    "VRAM en Uso          : {:.2} MB\n",
+                    bytes as f64 / (1024.0 * 1024.0)
+                ));
+            }
+        }
+    }
     report.push_str(&format!(
         "Tipo de Grabación    : {}\n",
         if ctx.is_replay_clip {
@@ -609,7 +643,28 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     ));
 
     report.push_str("--- LÍNEA DE COMANDOS Y PIPELINE EJECUTADO ---\n");
-    report.push_str(&format!("Parámetros efectivos : {}\n\n", pipeline));
+    report.push_str(&format!(
+        "Parámetros efectivos : {}\n\n",
+        ctx.executed_command.unwrap_or(&pipeline)
+    ));
+
+    if is_aborted {
+        report.push_str("--- ESTADO DE EJECUCIÓN: GRABACIÓN FALLIDA / ABORTADA ---\n");
+        report.push_str("Diagnóstico Inmediato: El proceso finalizó prematuramente antes de consolidar el stream de video.\n");
+        if let Some(stderr) = ctx.encoder_stderr {
+            let lines: Vec<&str> = stderr
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .collect();
+            if !lines.is_empty() {
+                report.push_str("Últimos registros del motor:\n");
+                for line in lines.iter().rev().take(5).rev() {
+                    report.push_str(&format!("  {}\n", line));
+                }
+            }
+        }
+        report.push('\n');
+    }
 
     report.push_str("--- TELEMETRÍA DEL BÚFER EN MEMORIA RAM (REPLAY) ---\n");
     report.push_str(&format!("Microsegmentos en cola: {}\n", replay.segments));
