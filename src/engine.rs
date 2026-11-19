@@ -1229,6 +1229,7 @@ impl ReplayEngine {
             let fps = if current_cfg.video.fps == 0 { 60 } else { current_cfg.video.fps };
             cmd_probe.arg("-y").args(["-r", &fps.to_string()]);
             apply_target_args(&mut cmd_probe, &current_cfg.video.target);
+            self.apply_audio_args(&mut cmd_probe, &current_cfg);
             apply_profile_args(&mut cmd_probe, &current_cfg);
             cmd_probe.arg("-f").arg(&output_path);
             let executed_cmd = format!(

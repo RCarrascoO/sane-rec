@@ -375,28 +375,30 @@ pub fn probe_video_file(path: &Path) -> Result<FfprobeOutput, String> {
 
 /// Genera el informe de telemetría y benchmark (.benchmark.txt) junto al video de salida.
 pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, String> {
-    if !ctx.output_path.exists() {
-        return Err(format!(
-            "El archivo de salida '{}' no existe para generar el benchmark",
-            ctx.output_path.display()
-        ));
-    }
-
-    let file_size_bytes = std::fs::metadata(ctx.output_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let output_exists = ctx.output_path.exists();
+    let file_size_bytes = if output_exists {
+        std::fs::metadata(ctx.output_path)
+            .map(|m| m.len())
+            .unwrap_or(0)
+    } else {
+        0
+    };
     let file_size_mb = (file_size_bytes as f64) / (1024.0 * 1024.0);
 
-    let duration_hint = ctx
-        .elapsed_duration
-        .map(|elapsed| elapsed.as_secs_f64())
-        .unwrap_or(f64::INFINITY);
-    let mut is_aborted = file_size_bytes < 1024 || duration_hint < 0.5;
-
-    let probe_res: Result<FfprobeOutput, String> = if is_aborted {
-        Err("Inspección ffprobe omitida: grabación abortada (<1 KB o <0.5 s)".to_string())
+    let (probe_res, is_aborted): (Result<FfprobeOutput, String>, bool) = if !output_exists {
+        (
+            Err("Archivo de video no presente en disco (posible eliminación previa por fallo de inicio)".to_string()),
+            true,
+        )
+    } else if file_size_bytes < 1024 {
+        (
+            Err(format!("Inspección ffprobe omitida: archivo truncado o vacío ({} bytes < 1 KB)", file_size_bytes)),
+            true,
+        )
     } else {
-        probe_video_file(ctx.output_path)
+        let res = probe_video_file(ctx.output_path);
+        let failed = res.is_err();
+        (res, failed)
     };
     let probe_err = probe_res.as_ref().err().cloned();
     let probe_data = probe_res.as_ref().ok();
@@ -420,9 +422,6 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
         .and_then(|dur_str| dur_str.parse::<f64>().ok())
         .or_else(|| ctx.elapsed_duration.map(|elapsed| elapsed.as_secs_f64()))
         .unwrap_or(0.0);
-    if duration_secs < 0.5 {
-        is_aborted = true;
-    }
 
     let stderr_telem = ctx
         .encoder_stderr
@@ -508,12 +507,17 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     let (verdict_title, verdict_desc) = if is_aborted {
         (
             "🚨 CRÍTICO / GRABACIÓN ABORTADA (Fallo Prematuro)",
-            "El codificador no consolidó fotogramas suficientes (<1KB o <0.5s).",
+            "El codificador no consolidó fotogramas suficientes (<1KB o fallo en contenedor).",
         )
     } else if let Some(ref _err_msg) = probe_err {
         (
             "AVISO / INSPECCIÓN LIMITADA",
             "ffprobe no estuvo disponible para introspección binaria detallada; se conservan métricas extraídas del codificador.",
+        )
+    } else if duration_secs < 1.0 && video_stream.is_some() && audio_ok {
+        (
+            "BUENO / PRUEBA RÁPIDA (Clip Válido)",
+            "El clip se grabó y finalizó en menos de 1 segundo de forma limpia con pistas de video y audio válidas.",
         )
     } else if real_fps >= (target_fps * 0.95) && dropped <= 2 && audio_ok {
         (
