@@ -44,13 +44,9 @@ pub fn get_discord_clip_path(original_path: &Path) -> PathBuf {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("clip");
-    let ext = original_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("mp4");
     let parent = original_path.parent().unwrap_or_else(|| Path::new("."));
 
-    parent.join(format!("{}_discord.{}", stem, ext))
+    parent.join(format!("{}_discord.mp4", stem))
 }
 
 /// Calcula los parámetros de bitrate y escalado recomendados para comprimir un clip a un tamaño objetivo.
@@ -75,15 +71,13 @@ pub fn calculate_compression_parameters(duration_secs: f64, target_mb: f64) -> (
     let video_bps = (total_bps - audio_bps).max(150_000.0);
     let video_kbps = (video_bps / 1024.0).round() as u32;
 
-    // Escala adaptativa inteligente:
-    // Si el bitrate disponible es modesto, reducir resolución hace que la imagen se vea nítida
-    // en vez de sufrir artefactos en bloques (macroblocking).
+    // Escala adaptativa inteligente garantizando siempre dimensiones pares para evitar errores en x264:
     let scale_filter = if video_kbps < 750 {
-        "scale=-2:min(480\\,ih)"
+        "scale=-2:trunc(min(480\\,ih)/2)*2"
     } else if video_kbps < 1800 {
-        "scale=-2:min(720\\,ih)"
+        "scale=-2:trunc(min(720\\,ih)/2)*2"
     } else {
-        "scale=-2:min(1080\\,ih)"
+        "scale=-2:trunc(min(1080\\,ih)/2)*2"
     };
 
     (video_kbps, audio_kbps, scale_filter)
@@ -233,13 +227,13 @@ mod tests {
         let (video_kbps, audio_kbps, scale) = calculate_compression_parameters(30.0, 10.0);
         assert!(video_kbps > 2000);
         assert_eq!(audio_kbps, 128);
-        assert_eq!(scale, "scale=-2:min(1080\\,ih)");
+        assert_eq!(scale, "scale=-2:trunc(min(1080\\,ih)/2)*2");
 
         // Para 120s a 10MB (debe reducir escala a 480p o 720p para no pixelarse)
         let (v_long, a_long, s_long) = calculate_compression_parameters(120.0, 10.0);
         assert!(v_long < 1000);
         assert_eq!(a_long, 96);
-        assert_eq!(s_long, "scale=-2:min(480\\,ih)");
+        assert_eq!(s_long, "scale=-2:trunc(min(480\\,ih)/2)*2");
     }
 
     #[test]
@@ -249,6 +243,7 @@ mod tests {
 
         let input_file = temp_dir.join("input.mp4");
         let output_file = temp_dir.join("output_discord.mp4");
+        let output_transcoded = temp_dir.join("output_transcoded.mp4");
 
         // Crear clip sintético de 2 segundos con audio silencioso
         let _ = Command::new("ffmpeg")
@@ -264,14 +259,21 @@ mod tests {
             .output();
 
         if input_file.exists() {
+            // 1. Bypass: si el clip ya pesa menos que el objetivo (5.0 MB), se copia directamente
             let res = compress_to_target_size(&input_file, &output_file, 5.0);
             assert!(res.is_ok());
             assert!(output_file.exists());
             let meta = output_file.metadata().unwrap();
             let size_mb = (meta.len() as f64) / (1024.0 * 1024.0);
             assert!(size_mb < 5.0);
-            // Bypass: si el clip ya pesa menos que el objetivo, se copia sin recodificar
             assert_eq!(std::fs::read(&input_file).unwrap(), std::fs::read(&output_file).unwrap());
+
+            // 2. Transcodificación real: con target extremadamente pequeño (0.01 MB), fuerza ejecución de FFmpeg
+            let res_trans = compress_to_target_size(&input_file, &output_transcoded, 0.05);
+            assert!(res_trans.is_ok());
+            assert!(output_transcoded.exists());
+            let trans_meta = output_transcoded.metadata().unwrap();
+            assert!(trans_meta.len() > 0);
         }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
