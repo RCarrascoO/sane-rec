@@ -171,6 +171,12 @@ pub fn compress_to_target_size(
 
 /// Lanza la compresión en un hilo de fondo desacoplado para no bloquear el motor de grabación ni la UI.
 pub fn spawn_discord_compression(input_path: PathBuf, target_mb: u32) {
+    let target_bytes = (target_mb as u64) * 1024 * 1024;
+    let file_size = input_path.metadata().map(|m| m.len()).unwrap_or(0);
+    if file_size <= target_bytes {
+        return;
+    }
+
     std::thread::spawn(move || {
         let output_path = get_discord_clip_path(&input_path);
         match compress_to_target_size(&input_path, &output_path, target_mb as f64) {

@@ -1,5 +1,11 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.7.3 - 2026-11-19 (0.7.3)
+- **Estabilización VA-API (Linux)**: Vinculación explícita de nodo de renderizado `/dev/dri/renderD128` y framerate constante en `wf-recorder`.
+- **Blindaje Multi-Shell contra Rebotes de Atajos**: Guarda defensiva de tiempo mínimo (1200ms) y debounce basado en finalización que previene cancelaciones prematuras en Niri, Hyprland y entornos Wayland/X11.
+- **Smart Dual-Clip sin Duplicados**: Prevención de archivos clonados redundantes `_discord.mp4` cuando el clip original ya cumple con el tamaño objetivo, con límite estricto de 2 hilos CPU.
+- **Telemetría y Benchmark Expandidos**: Detección de GPU, uso de VRAM DRM en Linux, comando ejecutado y eliminación de falsos positivos en clips cortos.
+
 ## v0.7.2 - 2026-11-18 (0.7.2)
 - **Fixed (Windows App-Focus / Window Mode):**
   - **Eliminación del Zoom 800x450 en Modo Ventana / Splash Screens (Fortnite, Unreal Engine, EAC)**:
