@@ -95,8 +95,32 @@ pub fn compress_to_target_size(
     output_path: &Path,
     target_mb: f64,
 ) -> Result<PathBuf, String> {
-    if !input_path.exists() {
-        return Err(format!("El archivo de entrada no existe: {}", input_path.display()));
+    let input_len = input_path.metadata().map(|m| m.len()).unwrap_or(0);
+    if input_len < 1024 {
+        return Err("Archivo de entrada inválido o vacío".into());
+    }
+    if target_mb <= 0.0 {
+        return Err("Tamaño objetivo inválido".into());
+    }
+    if input_len <= (target_mb * 1024.0 * 1024.0) as u64 {
+        if input_path.extension().is_some_and(|e| e.eq_ignore_ascii_case("mp4")) {
+            std::fs::copy(input_path, output_path)
+                .map_err(|e| format!("Error en bypass copy: {}", e))?;
+        } else {
+            let mut cmd = Command::new(crate::discovery::resolve_binary("ffmpeg"));
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000);
+            }
+            let out = cmd.args(["-y", "-i"]).arg(input_path)
+                .args(["-c", "copy", "-movflags", "+faststart"]).arg(output_path)
+                .output().map_err(|e| format!("Error en bypass remux: {}", e))?;
+            if !out.status.success() {
+                return Err("Error en ffmpeg al remuxear".into());
+            }
+        }
+        return Ok(output_path.to_path_buf());
     }
 
     let duration = get_video_duration_secs(input_path).unwrap_or(30.0);
@@ -120,8 +144,10 @@ pub fn compress_to_target_size(
         .args([
             "-c:v",
             "libx264",
+            "-threads",
+            "2",
             "-preset",
-            "fast",
+            "veryfast",
             "-b:v",
             &b_v,
             "-maxrate",
@@ -244,6 +270,8 @@ mod tests {
             let meta = output_file.metadata().unwrap();
             let size_mb = (meta.len() as f64) / (1024.0 * 1024.0);
             assert!(size_mb < 5.0);
+            // Bypass: si el clip ya pesa menos que el objetivo, se copia sin recodificar
+            assert_eq!(std::fs::read(&input_file).unwrap(), std::fs::read(&output_file).unwrap());
         }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
