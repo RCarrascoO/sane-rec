@@ -1149,6 +1149,7 @@ impl ReplayEngine {
         if failed {
             let code = child.try_wait().ok().flatten().and_then(|s| s.code());
             crate::crash_handler::log_engine_failure("Inicio de Grabación Continua", code);
+            let _ = std::fs::remove_file(&output_path);
 
             if is_hardware {
                 let _ = notify_rust::Notification::new()
@@ -1236,7 +1237,10 @@ impl ReplayEngine {
             }
         }
 
-        if current_cfg.storage.dual_clip {
+        let is_valid = output_path.metadata().map(|m| m.len() >= 1024).unwrap_or(false);
+        if !is_valid {
+            let _ = std::fs::remove_file(&output_path);
+        } else if current_cfg.storage.dual_clip {
             let target_mb = current_cfg.storage.discord_target_mb;
             crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
         }
@@ -3242,6 +3246,9 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
         }
         EncoderProfile::AmdHardware | EncoderProfile::IntelHardware => {
             let qp_arg = format!("qp={}", config.video.crf);
+            if std::path::Path::new("/dev/dri/renderD128").exists() {
+                cmd.args(["-d", "/dev/dri/renderD128"]);
+            }
             cmd.args(["-c", "h264_vaapi", "-b", "0", "-p", &qp_arg]);
         }
         EncoderProfile::NvidiaHardware => {
@@ -3263,6 +3270,9 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
                     "h264_vaapi"
                 };
                 let qp_arg = format!("qp={}", crf_str);
+                if codec.contains("vaapi") && std::path::Path::new("/dev/dri/renderD128").exists() {
+                    cmd.args(["-d", "/dev/dri/renderD128"]);
+                }
                 cmd.args(["-c", linux_codec, "-b", "0", "-p", &qp_arg]);
             } else if codec.contains("nvenc") {
                 let nv_preset = match config.video.preset.as_str() {

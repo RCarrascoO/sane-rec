@@ -198,10 +198,7 @@ pub fn spawn_discord_compression(input_path: PathBuf, target_mb: u32) {
                 crate::engine::play_feedback_sound("message");
             }
             Err(e) => {
-                crate::crash_handler::write_crash_report(
-                    "Fallo en compresión de clip para Discord",
-                    &e,
-                );
+                eprintln!("Aviso: No se pudo comprimir clip para Discord: {}", e);
             }
         }
     });
