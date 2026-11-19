@@ -388,7 +388,7 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
             let prev_ms = LAST_IPC_RECORD_MS.load(std::sync::atomic::Ordering::SeqCst);
-            if now_ms.saturating_sub(prev_ms) < 400 {
+            if now_ms.saturating_sub(prev_ms) < 1200 {
                 let is_rec = engine.is_recording();
                 cmd.ok(if is_rec {
                     "Grabación continua iniciada"
@@ -401,6 +401,11 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
 
             match engine.toggle_continuous_recording() {
                 Ok(recording) => {
+                    let finish_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(now_ms);
+                    LAST_IPC_RECORD_MS.store(finish_ms, std::sync::atomic::Ordering::SeqCst);
                     cmd.ok(if recording {
                         "Grabación continua iniciada"
                     } else {
@@ -418,14 +423,41 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
             Ok(path) => cmd.ok(format!("Grabación guardada en {}", path.display())),
             Err(e) => cmd.error(format!("Error deteniendo grabación: {}", e)),
         },
-        "toggle_replay" => match engine.toggle_replay() {
-            Ok(running) => cmd.ok(if running {
-                "Búfer de replay iniciado"
-            } else {
-                "Búfer de replay detenido"
-            }),
-            Err(e) => cmd.error(format!("Error en búfer: {}", e)),
-        },
+        "toggle_replay" => {
+            static LAST_IPC_REPLAY_MS: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let prev_ms = LAST_IPC_REPLAY_MS.load(std::sync::atomic::Ordering::SeqCst);
+            if now_ms.saturating_sub(prev_ms) < 1200 {
+                let is_run = engine.is_running();
+                cmd.ok(if is_run {
+                    "Búfer de replay iniciado"
+                } else {
+                    "Búfer de replay detenido"
+                });
+                return false;
+            }
+            LAST_IPC_REPLAY_MS.store(now_ms, std::sync::atomic::Ordering::SeqCst);
+
+            match engine.toggle_replay() {
+                Ok(running) => {
+                    let finish_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(now_ms);
+                    LAST_IPC_REPLAY_MS.store(finish_ms, std::sync::atomic::Ordering::SeqCst);
+                    cmd.ok(if running {
+                        "Búfer de replay iniciado"
+                    } else {
+                        "Búfer de replay detenido"
+                    });
+                }
+                Err(e) => cmd.error(format!("Error en búfer: {}", e)),
+            }
+        }
         "start_replay" => match engine.start_replay() {
             Ok(()) => cmd.ok("Búfer de replay iniciado"),
             Err(e) => cmd.error(format!("Error iniciando búfer: {}", e)),

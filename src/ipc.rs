@@ -1006,7 +1006,8 @@ fn run_linux_hotkey_loop() {
     let mut save_binding = parse_linux_evdev_shortcut(&current_save);
     let mut rec_binding = parse_linux_evdev_shortcut(&current_record);
 
-    let mut last_trigger = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    let mut last_rec_trigger = std::time::Instant::now() - std::time::Duration::from_secs(2);
+    let mut last_save_trigger = std::time::Instant::now() - std::time::Duration::from_secs(2);
     let mut mod_ctrl = false;
     let mut mod_shift = false;
     let mut mod_alt = false;
@@ -1110,8 +1111,8 @@ fn run_linux_hotkey_loop() {
 
                                         if let Some(rec) = rec_binding {
                                             if ev.code == rec.1 && active_mods == rec.0 {
-                                                if last_trigger.elapsed() >= std::time::Duration::from_millis(350) {
-                                                    last_trigger = std::time::Instant::now();
+                                                if last_rec_trigger.elapsed() >= std::time::Duration::from_millis(1000) {
+                                                    last_rec_trigger = std::time::Instant::now();
                                                     std::thread::spawn(|| {
                                                         let _ = send_command_sync("record_toggle");
                                                     });
@@ -1122,8 +1123,8 @@ fn run_linux_hotkey_loop() {
 
                                         if let Some(save) = save_binding {
                                             if ev.code == save.1 && active_mods == save.0 {
-                                                if last_trigger.elapsed() >= std::time::Duration::from_millis(350) {
-                                                    last_trigger = std::time::Instant::now();
+                                                if last_save_trigger.elapsed() >= std::time::Duration::from_millis(1000) {
+                                                    last_save_trigger = std::time::Instant::now();
                                                     std::thread::spawn(|| {
                                                         let _ = send_command_sync("save");
                                                     });

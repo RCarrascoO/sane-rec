@@ -1075,6 +1075,11 @@ impl ReplayEngine {
     /// Alterna el estado del búfer de repetición instantánea (arranca o detiene).
     pub fn toggle_replay(&self) -> Result<bool> {
         if self.is_running() {
+            if let Some(start_time) = *self.start_time.lock().unwrap() {
+                if start_time.elapsed() < std::time::Duration::from_millis(1200) {
+                    return Ok(true);
+                }
+            }
             self.stop_replay()?;
             Ok(false)
         } else {
@@ -1555,6 +1560,11 @@ impl ReplayEngine {
     /// Alterna el estado de la grabación continua.
     pub fn toggle_continuous_recording(&self) -> Result<bool> {
         if self.is_recording() {
+            if let Some(start_time) = *self.continuous_start_time.lock().unwrap() {
+                if start_time.elapsed() < std::time::Duration::from_millis(1200) {
+                    return Ok(true);
+                }
+            }
             self.stop_continuous_recording()?;
             Ok(false)
         } else {
