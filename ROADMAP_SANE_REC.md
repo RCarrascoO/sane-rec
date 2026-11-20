@@ -1,16 +1,17 @@
-# Hoja de Ruta (Roadmap) — sane-rec (Post v0.7.2)
+# Hoja de Ruta (Roadmap) — sane-rec (Post v0.7.2 / Actualizado v0.7.3)
 
 Documento de planificación técnica para las próximas versiones de sane-rec.
 
 ```
                    HOJA DE RUTA SANE-REC (POST v0.7.2)
   ┌──────────────────────────────────────────────────────────────────┐
-  │ 1. BACKEND & COMPRESSOR UPDATE (Base sólida, YAGNI & Eficiencia) │
-  │    • Limpieza de código muerto, unificación de lógica redundante │
-  │    • Optimización del compresor Discord (bypass si peso <= target│
-  │      y perfiles de transcodificación de bajo impacto en CPU)     │
+  │ 1. BACKEND & COMPRESSOR UPDATE (Base sólida, YAGNI & Eficiencia) │ [✅ COMPLETADO v0.7.3]
+  │    • Limpieza de código muerto (GStreamer), YAGNI & optimización │
+  │    • Smart Dual-Clip: Zero clones si peso <= target & -threads 2 │
+  │    • Estabilización VA-API (renderD128) y blindaje multi-shell   │
+  │    • Telemetría forense expandida (VRAM, GPU, CLI ejecutada)     │
   ├──────────────────────────────────────────────────────────────────┤
-  │ 2. GRAPHICS UPDATE (Aceleración Hardware AMD & Nvidia en Windows)│
+  │ 2. GRAPHICS UPDATE (Aceleración Hardware AMD & Nvidia en Windows)│ [⏳ PRÓXIMA FASE]
   │    • AMD Radeon: Port del perfil VA-API Zero B-Frames (RX 570)   │
   │    • Nvidia NVENC: Corrección de desfase A/V (WASAPI vs DXGI)    │
   │    • HEVC Fix: Solución al cuadro congelado en repeticiones      │
@@ -29,13 +30,33 @@ Documento de planificación técnica para las próximas versiones de sane-rec.
 
 ---
 
-## 1. Backend & Compressor Update (Limpieza, YAGNI y Eficiencia)
-- **Eliminación de Sobreingeniería y Código Redundante:**
-  - Auditar módulos del motor para unificar helpers de video y audio que hoy duplican lógica entre Linux y Windows.
-  - Eliminar estructuras o funciones heredadas de versiones tempranas que ya no se usan tras la estabilización de `ddagrab`.
-- **Discord Compressor Inteligente:**
-  - **Bypass por Umbral:** Si el clip original ya pesa menos o igual que el límite solicitado (ej. 8 MB o 25 MB), omitir por completo la recompresión y reutilizar el archivo existente sin consumir CPU ni demorar al usuario.
-  - **Refactorización de Carga:** Limitar hilos (`-threads 2` o `-threads 4`) y emplear presets de transcodificación ligeros para evitar caídas de FPS o stuttering en juegos mientras se procesa la compresión en segundo plano.
+## 1. Backend & Compressor Update (Limpieza, YAGNI y Eficiencia) — ✅ COMPLETADA (v0.7.3)
+
+Esta fase se consolidó y certificó en la versión **v0.7.3**, estableciendo una base sólida de rendimiento, limpieza de dependencias obsoletas y solución definitiva a los problemas de ciclo de vida, compresión y concurrencia:
+
+- **Eliminación de Código Muerto y Sobreingeniería (Doctrina Ponytail):**
+  - **Poda de GStreamer:** Eliminadas más de 183 líneas de perfiles y pipelines muertos de GStreamer en [`src/profiles.rs`](file:///mnt/Files/Proyectos/sane-rec/src/profiles.rs) que habían quedado en desuso tras la consolidación de `wf-recorder` (Linux) y `ffmpeg` directo (Windows).
+  - Reducción de superficie de mantenimiento y código más predecible.
+
+- **Discord Compressor Inteligente y Eficiente ([`src/compressor.rs`](file:///mnt/Files/Proyectos/sane-rec/src/compressor.rs)):**
+  - **Zero Clones Redundantes (Smart Bypass):** Verificación de tamaño previo (`metadata().len() <= target_bytes`). Si el clip original ya pesa menos o igual al tamaño objetivo configurado (ej. 15 MB), no se genera ningún archivo clon `_discord.mp4` redundante ni se duplica espacio en disco.
+  - **Límite Estricto de Hilos CPU (`-threads 2`):** La transcodificación secundaria limita a 2 hilos el uso de CPU para eliminar caídas de FPS o microstuttering durante gameplay intenso en segundo plano.
+  - **Manejo No Intrusivo de Avisos:** En caso de omisión o interrupción menor de compresión, se eliminaron las alertas críticas falsas (banners rojos), sustituyéndolas por avisos informativos discretos en stderr.
+
+- **Estabilización de VA-API y Ciclo de Vida en Linux ([`src/engine.rs`](file:///mnt/Files/Proyectos/sane-rec/src/engine.rs)):**
+  - **Nodo DRM Explícito (`-d /dev/dri/renderD128`):** Vinculación directa al nodo de renderizado por hardware, eliminando cuelgues del encoder en GPUs AMD Radeon (Polaris / RX 570) y sistemas multi-GPU.
+  - **Framerate Constante (`-r <fps>`):** Inyección de tasa de cuadros fija en `wf-recorder` para que el codificador no quede suspendido esperando eventos de daño de pantalla (damage events) del compositor Wayland.
+  - **Fallback no Destructivo:** En caso de falla de hardware, la degradación a `SaneSafe` (CPU) opera temporalmente en memoria para la sesión activa sin sobreescribir ni corromper de forma permanente el archivo `config.toml` del usuario.
+
+- **Blindaje Multi-Shell contra Rebotes de Atajos (Anti-Chatter / Anti-Race Condition):**
+  - **Diagnóstico y Solución de la Carrera Niri + Evdev:** Se resolvió la colisión donde Niri y el listener global del kernel competían al presionar `F9`, despachando dos eventos en microsegundos y cancelando grabaciones a los 0.01 segundos (archivo de 48 bytes).
+  - **Guarda de Tiempo Mínimo (1200 ms):** Inyección de guarda de ejecución mínima de 1.2 segundos en `toggle_continuous_recording()` y `toggle_replay()`.
+  - **Debounce de Finalización:** Se elevó el debounce IPC a 1200 ms calculado sobre la hora en que el proceso termina de inicializarse, aislando el comportamiento contra colisiones en Niri, Hyprland, Sway, KDE y GNOME.
+
+- **Telemetría Forense y Benchmark Expansivo ([`src/benchmark.rs`](file:///mnt/Files/Proyectos/sane-rec/src/benchmark.rs)):**
+  - Detección precisa de hardware gráfico (GPU y memoria VRAM leída desde sysfs en Linux).
+  - Registro de la línea de comandos exacta ejecutada por el motor.
+  - Eliminación del falso positivo de clip abortado en pruebas rápidas (<0.5s), reconociendo ahora clips válidos de corta duración con veredicto en verde.
 
 ---
 
