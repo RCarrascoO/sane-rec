@@ -125,6 +125,12 @@ pub struct ReplayEngine {
     win_continuous_backend: Mutex<WindowsCaptureBackend>,
     #[allow(dead_code)]
     continuous_stderr_log: Arc<Mutex<String>>,
+    #[allow(dead_code)]
+    win_replay_stderr_log: Arc<Mutex<String>>,
+    #[allow(dead_code)]
+    win_replay_executed_cmd: Mutex<Option<String>>,
+    #[allow(dead_code)]
+    win_continuous_executed_cmd: Mutex<Option<String>>,
 }
 
 impl ReplayEngine {
@@ -165,6 +171,9 @@ impl ReplayEngine {
             win_replay_backend: Mutex::new(WindowsCaptureBackend::DdaGrab),
             win_continuous_backend: Mutex::new(WindowsCaptureBackend::DdaGrab),
             continuous_stderr_log: Arc::new(Mutex::new(String::new())),
+            win_replay_stderr_log: Arc::new(Mutex::new(String::new())),
+            win_replay_executed_cmd: Mutex::new(None),
+            win_continuous_executed_cmd: Mutex::new(None),
         };
 
         // Limpieza automática de segmentos antiguos en RAM al inicializar
@@ -789,7 +798,7 @@ impl ReplayEngine {
 
         self.win_ram_buffer.lock().unwrap().clear();
 
-        let mut config = self.config();
+        let config = self.config();
         let active_profile = config
             .profile
             .active_profile
@@ -814,17 +823,14 @@ impl ReplayEngine {
             let fps = cfg.video.fps.max(15);
             let fps_str = fps.to_string();
 
-            // -bsf:v dump_extra solo aplica a H.264; en HEVC, VP9 o AV1 corrompe el MPEG-TS o falla FFmpeg
-            let is_h264 = cfg.video.codec.contains("264")
-                || cfg.profile.active_profile.contains("264")
-                || cfg.profile.active_profile == "sane-safe"
-                || cfg.profile.active_profile == "amd-hardware"
-                || cfg.profile.active_profile == "nvidia-hardware"
-                || cfg.profile.active_profile == "intel-hardware";
+            // -bsf:v dump_extra solo aplica a H.264/HEVC; en VP9 o AV1 corrompe el MPEG-TS o falla FFmpeg
+            let (_, is_h264, is_hevc) = resolve_windows_encoder(cfg);
 
             cmd.args(["-g", &fps_str, "-keyint_min", &fps_str]);
             if is_h264 {
                 cmd.args(["-bsf:v", "dump_extra"]);
+            } else if is_hevc {
+                cmd.args(["-bsf:v", "dump_extra=keyframe"]);
             }
             cmd.args([
                 "-f",
@@ -842,9 +848,13 @@ impl ReplayEngine {
 
         let (mut cmd, actual_backend) = build_replay_cmd(&config, audio_port, WindowsCaptureBackend::DdaGrab);
         *self.win_replay_backend.lock().unwrap() = actual_backend;
+        *self.win_replay_executed_cmd.lock().unwrap() = Some(render_ffmpeg_command(&cmd));
         let mut child = cmd.spawn()?;
 
-        let stderr_log = Arc::new(Mutex::new(String::new()));
+        let stderr_log = Arc::clone(&self.win_replay_stderr_log);
+        if let Ok(mut g) = stderr_log.lock() {
+            g.clear();
+        }
         if let Some(mut err_pipe) = child.stderr.take() {
             let stderr_log_clone = Arc::clone(&stderr_log);
             std::thread::Builder::new()
@@ -870,8 +880,8 @@ impl ReplayEngine {
                 .ok();
         }
 
-        // Verificación de salud inicial (350ms) para detectar fallos de codificador GPU o ventana inválida
-        std::thread::sleep(Duration::from_millis(350));
+        // Verificación de salud inicial (600ms) para detectar fallos de codificador GPU o ventana inválida
+        std::thread::sleep(Duration::from_millis(600));
         let failed = match child.try_wait() {
             Ok(Some(_)) => true,
             Err(_) => true,
@@ -897,30 +907,33 @@ impl ReplayEngine {
                 || config.video.target.starts_with("window:")
                 || config.video.target.starts_with("title=")
             {
-                config.profile.active_profile = "sane-safe".to_string();
-                config.video.codec = "libx264".to_string();
-                if config.video.target.starts_with("window:")
-                    || config.video.target.starts_with("title=")
+                // Fallback no destructivo: no se guarda ni se sobrescribe la configuración del usuario
+                let mut fallback_config = config.clone();
+                fallback_config.profile.active_profile = "sane-safe".to_string();
+                fallback_config.video.codec = "libx264".to_string();
+                if fallback_config.video.target.starts_with("window:")
+                    || fallback_config.video.target.starts_with("title=")
                 {
-                    config.video.target = "desktop".to_string();
+                    fallback_config.video.target = "desktop".to_string();
                 }
-                let _ = config.save();
-                *self.config.lock().unwrap() = config.clone();
 
-                let (retry_port, retry_stop) = match start_windows_audio_feeder(&config) {
+                let (retry_port, retry_stop) = match start_windows_audio_feeder(&fallback_config) {
                     Ok((port, stop)) => (Some(port), Some(stop)),
                     Err(_) => (None, None),
                 };
                 audio_port = retry_port;
                 audio_stop = retry_stop;
 
-                let (mut fallback_cmd, fallback_backend) = build_replay_cmd(&config, audio_port, WindowsCaptureBackend::GdiGrab);
+                let (mut fallback_cmd, fallback_backend) = build_replay_cmd(&fallback_config, audio_port, WindowsCaptureBackend::GdiGrab);
                 *self.win_replay_backend.lock().unwrap() = fallback_backend;
+                *self.win_replay_executed_cmd.lock().unwrap() = Some(render_ffmpeg_command(&fallback_cmd));
                 child = fallback_cmd.spawn()?;
 
-                let fallback_stderr_log = Arc::new(Mutex::new(String::new()));
+                if let Ok(mut g) = stderr_log.lock() {
+                    g.clear();
+                }
                 if let Some(mut err_pipe) = child.stderr.take() {
-                    let fallback_stderr_clone = Arc::clone(&fallback_stderr_log);
+                    let fallback_stderr_clone = Arc::clone(&stderr_log);
                     std::thread::Builder::new()
                         .name("sane-rec-win-fallback-stderr".into())
                         .spawn(move || {
@@ -944,12 +957,12 @@ impl ReplayEngine {
                         .ok();
                 }
 
-                std::thread::sleep(Duration::from_millis(350));
+                std::thread::sleep(Duration::from_millis(600));
                 if let Ok(Some(status)) = child.try_wait() {
                     if let Some(stop) = audio_stop.take() {
                         stop.store(true, Ordering::SeqCst);
                     }
-                    let err_text = fallback_stderr_log.lock().map(|g| g.clone()).unwrap_or_default();
+                    let err_text = stderr_log.lock().map(|g| g.clone()).unwrap_or_default();
                     if !err_text.is_empty() {
                         crate::crash_handler::write_crash_report(
                             "Fallo de fallback en búfer de repetición (FFmpeg stderr)",
@@ -1286,7 +1299,7 @@ impl ReplayEngine {
             return Err(EngineError::AlreadyRunning);
         }
 
-        let mut config = self.config();
+        let config = self.config();
         config.ensure_output_dir().map_err(|e| {
             EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
         })?;
@@ -1319,6 +1332,10 @@ impl ReplayEngine {
             apply_windows_profile_args(&mut cmd, cfg, port.is_some(), actual_backend);
 
             if out.extension().map_or(false, |ext| ext == "mp4") {
+                let (_, _, is_hevc) = resolve_windows_encoder(cfg);
+                if is_hevc {
+                    cmd.args(["-tag:v", "hvc1"]);
+                }
                 cmd.args(["-movflags", "+faststart"]);
             }
             cmd.arg(out);
@@ -1332,6 +1349,7 @@ impl ReplayEngine {
         *self.continuous_stderr_log.lock().unwrap() = String::new();
         let (mut cmd, actual_backend) = build_cont_cmd(&config, audio_port, &output_path, WindowsCaptureBackend::DdaGrab);
         *self.win_continuous_backend.lock().unwrap() = actual_backend;
+        *self.win_continuous_executed_cmd.lock().unwrap() = Some(render_ffmpeg_command(&cmd));
         let mut child = cmd.spawn()?;
 
         // Captura stderr para telemetría y crash reports (no descartamos errores del encoder)
@@ -1360,8 +1378,8 @@ impl ReplayEngine {
                 .ok();
         }
 
-        // Verificación de salud inicial (350ms) y fallback automático a SaneSafe CPU con GDI
-        std::thread::sleep(Duration::from_millis(350));
+        // Verificación de salud inicial (600ms) y fallback automático a SaneSafe CPU con GDI
+        std::thread::sleep(Duration::from_millis(600));
         let failed = match child.try_wait() {
             Ok(Some(_)) => true,
             Err(_) => true,
@@ -1387,25 +1405,26 @@ impl ReplayEngine {
                 || config.video.target.starts_with("window:")
                 || config.video.target.starts_with("title=")
             {
-                config.profile.active_profile = "sane-safe".to_string();
-                config.video.codec = "libx264".to_string();
-                if config.video.target.starts_with("window:")
-                    || config.video.target.starts_with("title=")
+                // Fallback no destructivo: no se guarda ni se sobrescribe la configuración del usuario
+                let mut fallback_config = config.clone();
+                fallback_config.profile.active_profile = "sane-safe".to_string();
+                fallback_config.video.codec = "libx264".to_string();
+                if fallback_config.video.target.starts_with("window:")
+                    || fallback_config.video.target.starts_with("title=")
                 {
-                    config.video.target = "desktop".to_string();
+                    fallback_config.video.target = "desktop".to_string();
                 }
-                let _ = config.save();
-                *self.config.lock().unwrap() = config.clone();
 
-                let (retry_port, retry_stop) = match start_windows_audio_feeder(&config) {
+                let (retry_port, retry_stop) = match start_windows_audio_feeder(&fallback_config) {
                     Ok((port, stop)) => (Some(port), Some(stop)),
                     Err(_) => (None, None),
                 };
                 audio_port = retry_port;
                 audio_stop = retry_stop;
 
-                let (mut fallback_cmd, fallback_backend) = build_cont_cmd(&config, audio_port, &output_path, WindowsCaptureBackend::GdiGrab);
+                let (mut fallback_cmd, fallback_backend) = build_cont_cmd(&fallback_config, audio_port, &output_path, WindowsCaptureBackend::GdiGrab);
                 *self.win_continuous_backend.lock().unwrap() = fallback_backend;
+                *self.win_continuous_executed_cmd.lock().unwrap() = Some(render_ffmpeg_command(&fallback_cmd));
                 child = fallback_cmd.spawn()?;
 
                 if let Some(mut err_pipe) = child.stderr.take() {
@@ -1433,7 +1452,7 @@ impl ReplayEngine {
                         .ok();
                 }
 
-                std::thread::sleep(Duration::from_millis(350));
+                std::thread::sleep(Duration::from_millis(600));
                 if let Ok(Some(status)) = child.try_wait() {
                     if let Some(stop) = audio_stop.take() {
                         stop.store(true, Ordering::SeqCst);
@@ -1521,24 +1540,21 @@ impl ReplayEngine {
                 WindowsCaptureBackend::DdaGrab => "Desktop Duplication API (ddagrab / DXGI)",
                 WindowsCaptureBackend::GdiGrab => "GDI Screen Grabber (gdigrab)",
             };
-            let mut cmd_probe = Command::new(resolve_binary("ffmpeg"));
-            cmd_probe.arg("-y");
-            apply_windows_input_args(&mut cmd_probe, &current_cfg, None, backend);
-            apply_windows_profile_args(&mut cmd_probe, &current_cfg, false, backend);
-            cmd_probe.arg(&output_path);
-            let executed_cmd = format!(
-                "ffmpeg {}",
-                cmd_probe
-                    .get_args()
-                    .map(|arg| arg.to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
+            let executed_cmd = self
+                .win_continuous_executed_cmd
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or_default();
             let ctx = crate::benchmark::BenchmarkContext {
                 output_path: &output_path,
                 config: &current_cfg,
                 encoder_stderr: if stderr_str.is_empty() { None } else { Some(&stderr_str) },
-                executed_command: Some(&executed_cmd),
+                executed_command: if executed_cmd.is_empty() {
+                    None
+                } else {
+                    Some(&executed_cmd)
+                },
                 capture_backend: backend_name,
                 is_replay_clip: false,
                 elapsed_duration: elapsed,
@@ -1934,6 +1950,10 @@ impl ReplayEngine {
             "-movflags",
             "+faststart",
         ]);
+        let (_, _, is_hevc) = resolve_windows_encoder(&config);
+        if is_hevc && output_path.extension().map_or(false, |ext| ext == "mp4") {
+            remux_cmd.args(["-tag:v", "hvc1"]);
+        }
         remux_cmd.arg(&output_path);
         remux_cmd
             .stdin(Stdio::piped())
@@ -1946,12 +1966,16 @@ impl ReplayEngine {
                     stream_to_pipe(stdin, Arc::clone(&stream_chunks), start_chunk, start_offset);
                 }
                 match child.wait_with_output() {
-                    Ok(ref out) if out.status.success() => {
-                        std::fs::metadata(&output_path)
-                            .map(|m| m.len() >= 1024)
-                            .unwrap_or(false)
+                    Ok(out) => {
+                        let stderr_text = String::from_utf8_lossy(&out.stderr);
+                        out.status.success()
+                            && std::fs::metadata(&output_path)
+                                .map(|m| m.len() >= 1024)
+                                .unwrap_or(false)
+                            && !stderr_text.contains("video:0kB")
+                            && !stderr_text.contains("video:0KiB")
                     }
-                    _ => false,
+                    Err(_) => false,
                 }
             }
             Err(_) => false,
@@ -2056,11 +2080,22 @@ impl ReplayEngine {
                 WindowsCaptureBackend::DdaGrab => "Desktop Duplication API (ddagrab / DXGI) -> RAM Ring Buffer",
                 WindowsCaptureBackend::GdiGrab => "GDI Screen Grabber (gdigrab) -> RAM Ring Buffer",
             };
+            let stderr_str = self.win_replay_stderr_log.lock().map(|g| g.clone()).unwrap_or_default();
+            let executed_cmd = self
+                .win_replay_executed_cmd
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_default();
             let ctx = crate::benchmark::BenchmarkContext {
                 output_path: &output_path,
                 config: &current_cfg,
-                encoder_stderr: None,
-                executed_command: None,
+                encoder_stderr: if stderr_str.is_empty() { None } else { Some(&stderr_str) },
+                executed_command: if executed_cmd.is_empty() {
+                    None
+                } else {
+                    Some(&executed_cmd)
+                },
                 capture_backend: backend_name,
                 is_replay_clip: true,
                 elapsed_duration: Some(Duration::from_secs(current_cfg.replay.duration_secs as u64)),
@@ -2737,6 +2772,70 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
     Ok((port, stop_flag))
 }
 
+/// Resuelve el códec de vídeo efectivo que usará FFmpeg en Windows y si es H.264 o HEVC.
+/// Refleja exactamente la selección de códec de `apply_windows_profile_args`.
+#[cfg(any(target_os = "windows", test))]
+fn resolve_windows_encoder(config: &Config) -> (&'static str, bool, bool) {
+    let profile = config
+        .profile
+        .active_profile
+        .parse::<EncoderProfile>()
+        .unwrap_or(EncoderProfile::SaneSafe);
+
+    match profile {
+        EncoderProfile::SaneSafe => ("libx264", true, false),
+        EncoderProfile::AmdHardware => ("h264_amf", true, false),
+        EncoderProfile::NvidiaHardware => ("h264_nvenc", true, false),
+        EncoderProfile::IntelHardware => ("h264_qsv", true, false),
+        EncoderProfile::Custom(_) => {
+            let codec = if config.video.codec.is_empty() {
+                "libx264"
+            } else {
+                config.video.codec.as_str()
+            };
+            let is_hevc = codec.contains("hevc") || codec.contains("265");
+
+            if codec.contains("nvenc") {
+                if is_hevc {
+                    ("hevc_nvenc", false, true)
+                } else {
+                    ("h264_nvenc", true, false)
+                }
+            } else if codec.contains("amf") || codec.contains("vaapi") {
+                if is_hevc {
+                    ("hevc_amf", false, true)
+                } else {
+                    ("h264_amf", true, false)
+                }
+            } else if codec.contains("qsv") {
+                if is_hevc {
+                    ("hevc_qsv", false, true)
+                } else {
+                    ("h264_qsv", true, false)
+                }
+            } else if codec.contains("vp9") {
+                ("libvpx-vp9", false, false)
+            } else if codec == "libx265" || is_hevc {
+                ("libx265", false, true)
+            } else {
+                ("libx264", true, false)
+            }
+        }
+    }
+}
+
+/// Renderiza el comando FFmpeg completo para telemetría de benchmark.
+#[cfg(target_os = "windows")]
+fn render_ffmpeg_command(cmd: &Command) -> String {
+    format!(
+        "ffmpeg {}",
+        cmd.get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
+}
+
 /// Aplica los argumentos de entrada y captura de pantalla y audio en Windows.
 /// Utiliza Desktop Duplication API (ddagrab / DXGI) para captura nativa a 60 FPS acelerada por hardware,
 /// con fallback automático o selector para gdigrab cuando se capturan ventanas individuales.
@@ -2922,6 +3021,10 @@ pub fn apply_windows_input_args(
         cmd.args([
             "-thread_queue_size",
             "1024",
+            "-fflags",
+            "+nobuffer",
+            "-use_wallclock_as_timestamps",
+            "1",
             "-f",
             "s16le",
             "-ar",
@@ -3015,23 +3118,29 @@ pub fn apply_windows_profile_args(
             ]);
         }
         EncoderProfile::AmdHardware => {
+            let qp = if config.video.crf > 0 {
+                config.video.crf
+            } else {
+                22
+            }
+            .to_string();
             cmd.args([
                 "-c:v",
                 "h264_amf",
                 "-usage",
-                "ultralowlatency",
+                "lowlatency",
                 "-quality",
                 "speed",
                 "-rc",
                 "cqp",
                 "-qp_i",
-                "22",
+                &qp,
                 "-qp_p",
-                "22",
-                "-bf",
-                "0",
+                &qp,
                 "-pix_fmt",
-                "yuv420p",
+                "nv12",
+                "-header_insertion_mode",
+                "gop",
             ]);
         }
         EncoderProfile::NvidiaHardware => {
@@ -3052,18 +3161,36 @@ pub fn apply_windows_profile_args(
                 "0",
                 "-pix_fmt",
                 "yuv420p",
+                "-forced-idr",
+                "1",
+                "-aud",
+                "1",
             ]);
         }
         EncoderProfile::IntelHardware => {
+            let global_quality = if config.video.crf > 0 {
+                config.video.crf
+            } else {
+                23
+            }
+            .to_string();
             cmd.args([
                 "-c:v",
                 "h264_qsv",
                 "-preset",
                 "veryfast",
                 "-global_quality",
-                "23",
+                &global_quality,
                 "-pix_fmt",
-                "yuv420p",
+                "nv12",
+                "-bf",
+                "0",
+                "-async_depth",
+                "1",
+                "-look_ahead",
+                "0",
+                "-forced_idr",
+                "1",
             ]);
         }
         EncoderProfile::Custom(_) => {
@@ -3104,6 +3231,10 @@ pub fn apply_windows_profile_args(
                     "0",
                     "-pix_fmt",
                     "yuv420p",
+                    "-forced-idr",
+                    "1",
+                    "-aud",
+                    "1",
                 ]);
             } else if codec.contains("amf") || codec.contains("vaapi") {
                 let amf_quality = match config.video.preset.as_str() {
@@ -3112,29 +3243,34 @@ pub fn apply_windows_profile_args(
                     "fast" | "quality" => "quality",
                     _ => "speed",
                 };
-                let is_amf_hevc = codec.contains("hevc") || codec.contains("265");
-                let win_codec = if is_amf_hevc { "hevc_amf" } else { "h264_amf" };
-                // hevc_amf: ultralowlatency falla en muchos drivers Adrenalin → usar lowlatency
-                // hevc_amf: nv12 es más compatible que yuv420p para AMF HEVC
-                let amf_usage = if is_amf_hevc { "lowlatency" } else { "ultralowlatency" };
-                let amf_pix_fmt = if is_amf_hevc { "nv12" } else { "yuv420p" };
+                let win_codec = if codec.contains("hevc") || codec.contains("265") {
+                    "hevc_amf"
+                } else {
+                    "h264_amf"
+                };
+                let amf_qp = if config.video.crf > 0 {
+                    config.video.crf
+                } else {
+                    22
+                }
+                .to_string();
                 cmd.args([
                     "-c:v",
                     win_codec,
                     "-usage",
-                    amf_usage,
+                    "lowlatency",
                     "-quality",
                     amf_quality,
                     "-rc",
                     "cqp",
                     "-qp_i",
-                    &crf_str,
+                    &amf_qp,
                     "-qp_p",
-                    &crf_str,
-                    "-bf",
-                    "0",
+                    &amf_qp,
                     "-pix_fmt",
-                    amf_pix_fmt,
+                    "nv12",
+                    "-header_insertion_mode",
+                    "gop",
                 ]);
             } else if codec.contains("qsv") {
                 let qsv_preset = match config.video.preset.as_str() {
@@ -3157,7 +3293,15 @@ pub fn apply_windows_profile_args(
                     "-global_quality",
                     &crf_str,
                     "-pix_fmt",
-                    "yuv420p",
+                    "nv12",
+                    "-bf",
+                    "0",
+                    "-async_depth",
+                    "1",
+                    "-look_ahead",
+                    "0",
+                    "-forced_idr",
+                    "1",
                 ]);
             } else if codec.contains("vp9") {
                 let cpu_used = match config.video.preset.as_str() {
@@ -3231,12 +3375,20 @@ pub fn apply_windows_profile_args(
 
     if has_audio {
         cmd.args([
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-ar", "48000",
-            "-ac", "2",
-            "-map", "0:v:0",
-            "-map", "1:a:0",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-af",
+            "aresample=async=1000:min_hard_comp=0.100000:first_pts=0",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
         ]);
     } else {
         cmd.args([
@@ -3909,5 +4061,118 @@ mod tests {
         let gdi_vf_idx = gdi_args.iter().position(|a| a == "-vf").expect("should have -vf");
         assert!(!gdi_args[gdi_vf_idx + 1].contains("hwdownload"));
         assert_eq!(gdi_args[gdi_vf_idx + 1], "scale=1920:1080,setsar=1/1");
+    }
+
+    fn win_args(cmd: &Command) -> Vec<String> {
+        cmd.get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn win_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .map(|s| s.as_str())
+    }
+
+    #[test]
+    fn test_resolve_windows_encoder_aliases() {
+        let check = |profile: &str, codec: &str, expected: (&str, bool, bool)| {
+            let mut config = Config::default();
+            config.profile.active_profile = profile.to_string();
+            config.video.codec = codec.to_string();
+            assert_eq!(
+                resolve_windows_encoder(&config),
+                expected,
+                "perfil={profile} códec={codec}"
+            );
+        };
+
+        check("sane-safe", "", ("libx264", true, false));
+        check("amd-hardware", "", ("h264_amf", true, false));
+        check("amd-vaapi", "hevc_amf", ("h264_amf", true, false));
+        check("nvidia-hardware", "", ("h264_nvenc", true, false));
+        check("nvidia-nvenc", "hevc_nvenc", ("h264_nvenc", true, false));
+        check("intel-hardware", "", ("h264_qsv", true, false));
+        check("intel-qsv", "h264_nvenc", ("h264_qsv", true, false));
+
+        check("custom", "h264_nvenc", ("h264_nvenc", true, false));
+        check("custom", "hevc_nvenc", ("hevc_nvenc", false, true));
+        check("custom", "h264_amf", ("h264_amf", true, false));
+        check("custom", "hevc_amf", ("hevc_amf", false, true));
+        check("custom", "h264_vaapi", ("h264_amf", true, false));
+        check("custom", "h264_qsv", ("h264_qsv", true, false));
+        check("custom", "hevc_qsv", ("hevc_qsv", false, true));
+        check("custom", "libvpx-vp9", ("libvpx-vp9", false, false));
+        check("custom", "libx265", ("libx265", false, true));
+        check("custom", "libx264", ("libx264", true, false));
+    }
+
+    #[test]
+    fn test_apply_windows_profile_args_hardware_encoders() {
+        let mut qsv_config = Config::default();
+        qsv_config.profile.active_profile = "intel-hardware".to_string();
+        qsv_config.video.target = "desktop".to_string();
+        qsv_config.video.crf = 23;
+        let mut qsv_cmd = Command::new("ffmpeg");
+        apply_windows_profile_args(&mut qsv_cmd, &qsv_config, true, WindowsCaptureBackend::GdiGrab);
+        let qsv = win_args(&qsv_cmd);
+
+        assert!(qsv.contains(&"h264_qsv".to_string()));
+        assert_eq!(win_flag_value(&qsv, "-pix_fmt"), Some("nv12"));
+        assert_eq!(win_flag_value(&qsv, "-bf"), Some("0"));
+        assert_eq!(win_flag_value(&qsv, "-async_depth"), Some("1"));
+        assert_eq!(win_flag_value(&qsv, "-look_ahead"), Some("0"));
+        assert_eq!(win_flag_value(&qsv, "-forced_idr"), Some("1"));
+        assert_eq!(
+            win_flag_value(&qsv, "-af"),
+            Some("aresample=async=1000:min_hard_comp=0.100000:first_pts=0")
+        );
+
+        let mut amf_config = Config::default();
+        amf_config.profile.active_profile = "amd-hardware".to_string();
+        amf_config.video.target = "desktop".to_string();
+        let mut amf_cmd = Command::new("ffmpeg");
+        apply_windows_profile_args(&mut amf_cmd, &amf_config, false, WindowsCaptureBackend::GdiGrab);
+        let amf = win_args(&amf_cmd);
+
+        assert!(amf.contains(&"h264_amf".to_string()));
+        assert_eq!(win_flag_value(&amf, "-usage"), Some("lowlatency"));
+        assert_eq!(win_flag_value(&amf, "-pix_fmt"), Some("nv12"));
+        assert_eq!(win_flag_value(&amf, "-header_insertion_mode"), Some("gop"));
+        assert!(!amf.contains(&"-bf".to_string()), "AMF no debe usar -bf 0");
+        assert!(!amf.contains(&"ultralowlatency".to_string()));
+
+        let mut nvenc_config = Config::default();
+        nvenc_config.profile.active_profile = "nvidia-hardware".to_string();
+        nvenc_config.video.target = "desktop".to_string();
+        let mut nvenc_cmd = Command::new("ffmpeg");
+        apply_windows_profile_args(&mut nvenc_cmd, &nvenc_config, false, WindowsCaptureBackend::GdiGrab);
+        let nvenc = win_args(&nvenc_cmd);
+
+        assert!(nvenc.contains(&"h264_nvenc".to_string()));
+        assert_eq!(win_flag_value(&nvenc, "-forced-idr"), Some("1"));
+        assert_eq!(win_flag_value(&nvenc, "-aud"), Some("1"));
+        assert_eq!(win_flag_value(&nvenc, "-zerolatency"), Some("1"));
+    }
+
+    #[test]
+    fn test_apply_windows_input_args_audio_wallclock() {
+        let mut config = Config::default();
+        config.video.target = "desktop".to_string();
+        config.video.fps = 60;
+
+        let mut cmd = Command::new("ffmpeg");
+        apply_windows_input_args(&mut cmd, &config, Some(12345), WindowsCaptureBackend::GdiGrab);
+        let args = win_args(&cmd);
+
+        assert_eq!(win_flag_value(&args, "-use_wallclock_as_timestamps"), Some("1"));
+        assert!(
+            args.windows(2).any(|w| w[0] == "-fflags" && w[1] == "+nobuffer"),
+            "el audio TCP debe desactivar el buffering: {:?}",
+            args
+        );
+        assert!(args.contains(&"tcp://127.0.0.1:12345".to_string()));
     }
 }

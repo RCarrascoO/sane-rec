@@ -765,7 +765,7 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     report.push_str("\n--- DICTAMEN DE SALUD Y RENDIMIENTO ---\n");
     report.push_str(&format!("ESTADO GENERAL       : {}\n", verdict_title));
     report.push_str(&format!("Diagnóstico          : {}\n", verdict_desc));
-    if duplicate_ratio > 0.10 {
+    if duplicate_ratio > 0.10 && ctx.capture_backend.to_lowercase().contains("gdigrab") {
         report.push_str("ADVERTENCIA CAUSA RAÍZ: Más del 10% de cuadros duplicados; el backend GDI no puede capturar la swapchain de la GPU.\n");
     }
     if short_clip {
@@ -837,5 +837,46 @@ frame=  360 fps= 60.0 q=23.0 size=    3200kB time=00:00:06.00 bitrate=4369.0kbit
         assert_eq!(telem.total_duplicated, Some(2));
         assert_eq!(telem.speed_ratio.as_deref(), Some("1.00x"));
         assert_eq!(telem.total_frames, Some(360));
+    }
+
+    #[test]
+    fn test_gdi_duplicate_warning_only_for_gdigrab() {
+        let temp_dir = std::env::temp_dir().join(format!("sane_rec_bench_gdi_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let dummy_video = temp_dir.join("clip.mp4");
+        let _ = std::fs::write(&dummy_video, vec![0u8; 2048]);
+
+        let config = Config::default();
+        let stderr = "frame=100 fps=60.0 dup=25 drop=0 speed=1.00x";
+
+        let gdi_ctx = BenchmarkContext {
+            output_path: &dummy_video,
+            config: &config,
+            encoder_stderr: Some(stderr),
+            executed_command: None,
+            capture_backend: "GDI Screen Grabber (gdigrab)",
+            is_replay_clip: false,
+            elapsed_duration: Some(Duration::from_secs(2)),
+            ram_buffer_stats: None,
+        };
+        let gdi_report = generate_benchmark_report(&gdi_ctx).unwrap();
+        let gdi_content = std::fs::read_to_string(&gdi_report).unwrap();
+        assert!(gdi_content.contains("el backend GDI no puede capturar"));
+
+        let dda_ctx = BenchmarkContext {
+            output_path: &dummy_video,
+            config: &config,
+            encoder_stderr: Some(stderr),
+            executed_command: None,
+            capture_backend: "Desktop Duplication API (ddagrab / DXGI)",
+            is_replay_clip: false,
+            elapsed_duration: Some(Duration::from_secs(2)),
+            ram_buffer_stats: None,
+        };
+        let dda_report = generate_benchmark_report(&dda_ctx).unwrap();
+        let dda_content = std::fs::read_to_string(&dda_report).unwrap();
+        assert!(!dda_content.contains("el backend GDI no puede capturar"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

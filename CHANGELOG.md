@@ -1,5 +1,14 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.7.4 - 2026-11-20 (0.7.4)
+- **Sincronización de Códec con el Perfil**: Al seleccionar un perfil (UI o IPC `set_profile`) se ajusta automáticamente `video.codec` al encoder correspondiente (`libx264`, `h264_vaapi`/`h264_amf`, `h264_nvenc`, `h264_qsv`).
+- **Intel QSV**: Pixel format `nv12` y baja latencia en el pipeline de codificación.
+- **AMD AMF (Polaris)**: `lowlatency`, `nv12` y `header_insertion_mode gop` para evitar artefactos y recortes de GOP.
+- **HEVC Replay**: Etiqueta `-tag:v hvc1` e inserción de cabeceras IDR para clips reproducibles en cualquier reproductor.
+- **Sincronía A/V en Grabación Continua**: Corrección del drift entre NVENC y WASAPI en grabaciones largas.
+- **Fallback No Destructivo en Windows**: El cambio automático a perfil seguro conserva la configuración previa y el clip en curso.
+- **Telemetría Forense Real**: Métricas efectivas de pipeline en Replay y Grabación Continua.
+
 ## v0.7.3 - 2026-11-19 (0.7.3)
 - **Estabilización VA-API (Linux)**: Vinculación explícita de nodo de renderizado `/dev/dri/renderD128` y framerate constante en `wf-recorder`.
 - **Blindaje Multi-Shell contra Rebotes de Atajos**: Guarda defensiva de tiempo mínimo (1200ms) y debounce basado en finalización que previene cancelaciones prematuras en Niri, Hyprland y entornos Wayland/X11.

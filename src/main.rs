@@ -509,6 +509,9 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
             let mut cfg = engine.config();
             cfg.profile.active_profile = prof.to_string();
             cfg.profile.selected_hardware_profile = None;
+            if let Some(codec) = default_codec_for_profile(prof) {
+                cfg.video.codec = codec.to_string();
+            }
             let _ = cfg.save();
             engine.update_config(cfg);
             cmd.ok(format!("Perfil cambiado a {}", prof));
@@ -573,6 +576,28 @@ fn notify_daemon_reload_async(daemon_flag: &Arc<std::sync::atomic::AtomicBool>) 
         std::thread::spawn(|| {
             let _ = ipc::send_command_sync("reload_config");
         });
+    }
+}
+
+/// Códec por defecto asociado a un perfil de codificación.
+fn default_codec_for_profile(profile: &str) -> Option<&'static str> {
+    match profile {
+        "sane-safe" | "sanesafe" | "cpu" | "x264" => Some("libx264"),
+        "amd-vaapi" | "amd-hardware" | "amdhardware" | "amd" | "vaapi" => {
+            #[cfg(target_os = "windows")]
+            {
+                Some("h264_amf")
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                Some("h264_vaapi")
+            }
+        }
+        "nvidia-nvenc" | "nvidia-hardware" | "nvidiahardware" | "nvidia" | "nvenc" => {
+            Some("h264_nvenc")
+        }
+        "intel-qsv" | "intel-hardware" | "intelhardware" | "intel" | "qsv" => Some("h264_qsv"),
+        _ => None,
     }
 }
 
@@ -903,15 +928,22 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let daemon_flag = daemon_running_flag.clone();
         ui.on_select_profile(move |prof_str| {
             let prof = prof_str.as_str();
+            let codec = default_codec_for_profile(prof);
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_selected_profile_name("".into());
                 ui.set_active_system_profile("".into());
+                if let Some(codec) = codec {
+                    ui.set_custom_codec(codec.into());
+                }
             }
             if let Some(ref eng) = engine_clone {
                 let was_running = eng.is_running();
                 let mut cfg = eng.config();
                 cfg.profile.active_profile = prof.to_string();
                 cfg.profile.selected_hardware_profile = None;
+                if let Some(codec) = codec {
+                    cfg.video.codec = codec.to_string();
+                }
                 let _ = cfg.save();
                 eng.update_config(cfg);
                 if !daemon_flag.load(std::sync::atomic::Ordering::SeqCst) && was_running {
@@ -921,6 +953,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             } else if let Ok(mut cfg) = Config::load() {
                 cfg.profile.active_profile = prof.to_string();
                 cfg.profile.selected_hardware_profile = None;
+                if let Some(codec) = codec {
+                    cfg.video.codec = codec.to_string();
+                }
                 let _ = cfg.save();
             }
             notify_daemon_reload_async(&daemon_flag);
