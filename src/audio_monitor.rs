@@ -271,7 +271,11 @@ fn run_cpal_peak_loop(
         let peak_store_cb = Arc::clone(&peak_store);
         let smoothed = Arc::new(Mutex::new(0.0f32));
 
-        let err_fn = |_err| {};
+        let dead = Arc::new(AtomicBool::new(false));
+        let dead_cb = Arc::clone(&dead);
+        let err_fn = move |_err| {
+            dead_cb.store(true, Ordering::Relaxed);
+        };
 
         let stream_res = match sample_format {
             cpal::SampleFormat::F32 => {
@@ -349,11 +353,38 @@ fn run_cpal_peak_loop(
             continue;
         }
 
+        let bound_name = device.name().ok();
+        let mut next_check = std::time::Instant::now() + Duration::from_millis(1000);
+
+        let mut should_reconnect = false;
         while running.load(Ordering::Relaxed) {
+            if dead.load(Ordering::Relaxed) {
+                should_reconnect = true;
+                break;
+            }
+            if std::time::Instant::now() >= next_check {
+                next_check = std::time::Instant::now() + Duration::from_millis(1000);
+                let use_default = device_opt.as_ref().map_or(true, |s| s.is_empty() || s == "default_output");
+                if use_default {
+                    let current = if is_loopback {
+                        host.default_output_device()
+                    } else {
+                        host.default_input_device()
+                    };
+                    let current_name = current.and_then(|d| d.name().ok());
+                    if current_name != bound_name {
+                        should_reconnect = true;
+                        break;
+                    }
+                }
+            }
             thread::sleep(Duration::from_millis(100));
         }
 
+        drop(stream);
         peak_store.store(0, Ordering::Relaxed);
-        break;
+        if !should_reconnect && !running.load(Ordering::Relaxed) {
+            break;
+        }
     }
 }

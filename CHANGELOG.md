@@ -1,5 +1,10 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.7.5 - 2026-11-20 (0.7.5)
+- **Hotfix Crítico de Audio en Windows (`v0.7.4` regression):** eliminados `-use_wallclock_as_timestamps 1` y `first_pts=0` del pipeline de audio TCP/WASAPI que provocaban silencio total y caída de velocidad a `0.475x` en Replay, manteniendo `-af aresample=async=1000` para sincronía A/V suave.
+- **Hot-Swap y Reconexión Automática WASAPI (`cpal`):** supervisión a 1 Hz en `start_windows_audio_feeder` y monitor VU (`audio_monitor.rs`) que detecta desconexiones (`err_fn`) y cambios del dispositivo predeterminado de Windows (USB/Bluetooth/parlantes), reconstruyendo los streams en caliente sin cortar la grabación ni el búfer de repetición.
+- **Soporte 24-bit/64-bit en Audio Windows:** soporte añadido para formatos `I32` y `F64` en `WindowsAudioResampler`.
+
 ## v0.7.4 - 2026-11-20 (0.7.4)
 - **Sincronización de Códec con el Perfil**: Al seleccionar un perfil (UI o IPC `set_profile`) se ajusta automáticamente `video.codec` al encoder correspondiente (`libx264`, `h264_vaapi`/`h264_amf`, `h264_nvenc`, `h264_qsv`).
 - **Intel QSV**: Pixel format `nv12` y baja latencia en el pipeline de codificación.

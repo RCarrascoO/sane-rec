@@ -2485,6 +2485,163 @@ impl WindowsAudioResampler {
         }
         self.flush(out);
     }
+
+    pub fn process_i32(&mut self, data: &[i32], out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+        for &s in data {
+            self.push_sample_staged(s as f32 / 2147483648.0);
+        }
+        self.flush(out);
+    }
+
+    pub fn process_f64(&mut self, data: &[f64], out: &Arc<Mutex<std::collections::VecDeque<f32>>>) {
+        for &s in data {
+            self.push_sample_staged(s as f32);
+        }
+        self.flush(out);
+    }
+}
+
+/// Decide si hay que reconstruir los streams de un endpoint de audio (desktop o mic).
+#[cfg(any(target_os = "windows", test))]
+fn audio_endpoint_needs_rebuild(
+    enabled: bool,
+    bound: Option<&(String, u32, u16)>,
+    dead: bool,
+    current: Option<&(String, u32, u16)>,
+) -> bool {
+    enabled && (dead || bound != current)
+}
+
+/// Streams WASAPI activos (loopback + mic) junto con los dispositivos a los que están ligados.
+#[cfg(target_os = "windows")]
+struct WinCapture {
+    streams: Vec<cpal::Stream>,
+    dead: Arc<AtomicBool>,
+    /// 0 = loopback de escritorio, 1 = micrófono: (nombre, sample_rate, canales).
+    keys: [Option<(String, u32, u16)>; 2],
+}
+
+#[cfg(target_os = "windows")]
+impl WinCapture {
+    fn key(device: &cpal::Device, output: bool) -> Option<(String, u32, u16)> {
+        use cpal::traits::DeviceTrait;
+        let res = if output {
+            device.default_output_config()
+        } else {
+            device.default_input_config()
+        };
+        let sc = res.ok()?;
+        Some((device.name().unwrap_or_default(), sc.sample_rate().0, sc.channels()))
+    }
+
+    fn open(
+        device: &cpal::Device,
+        sc: cpal::SupportedStreamConfig,
+        volume: f32,
+        buf: &Arc<Mutex<std::collections::VecDeque<f32>>>,
+        dead: &Arc<AtomicBool>,
+    ) -> Option<cpal::Stream> {
+        use cpal::traits::{DeviceTrait, StreamTrait};
+        let format = sc.sample_format();
+        let resampler = Arc::new(Mutex::new(WindowsAudioResampler::new(
+            sc.sample_rate().0,
+            sc.channels() as usize,
+            volume,
+        )));
+        let cfg: cpal::StreamConfig = sc.into();
+
+        macro_rules! build {
+            ($t:ty, $m:ident) => {{
+                let (r, b, d) = (Arc::clone(&resampler), Arc::clone(buf), Arc::clone(dead));
+                device.build_input_stream(
+                    &cfg,
+                    move |data: &[$t], _| {
+                        if let Ok(mut r) = r.lock() {
+                            r.$m(data, &b);
+                        }
+                    },
+                    move |err| {
+                        eprintln!("Aviso en stream WASAPI: {}", err);
+                        d.store(true, Ordering::Relaxed);
+                    },
+                    None,
+                )
+            }};
+        }
+
+        let res = match format {
+            cpal::SampleFormat::F32 => build!(f32, process_f32),
+            cpal::SampleFormat::I16 => build!(i16, process_i16),
+            cpal::SampleFormat::U16 => build!(u16, process_u16),
+            cpal::SampleFormat::I32 => build!(i32, process_i32),
+            cpal::SampleFormat::F64 => build!(f64, process_f64),
+            other => {
+                eprintln!("Formato WASAPI no soportado: {:?}", other);
+                return None;
+            }
+        };
+        let stream = match res {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("No se pudo abrir stream WASAPI: {}", e);
+                return None;
+            }
+        };
+        stream.play().ok()?;
+        Some(stream)
+    }
+
+    fn start(
+        host: &cpal::Host,
+        config: &Config,
+        sys_buf: &Arc<Mutex<std::collections::VecDeque<f32>>>,
+        mic_buf: &Arc<Mutex<std::collections::VecDeque<f32>>>,
+    ) -> Self {
+        use cpal::traits::{DeviceTrait, HostTrait};
+        let dead = Arc::new(AtomicBool::new(false));
+        let mut streams = Vec::new();
+        let mut keys: [Option<(String, u32, u16)>; 2] = [None, None];
+
+        if config.audio.capture_desktop {
+            if let Some(dev) = host.default_output_device() {
+                if let (Some(key), Ok(sc)) = (Self::key(&dev, true), dev.default_output_config()) {
+                    if let Some(s) = Self::open(&dev, sc, config.audio.volume_system, sys_buf, &dead) {
+                        streams.push(s);
+                        keys[0] = Some(key);
+                    }
+                }
+            }
+        }
+        if config.audio.capture_mic {
+            if let Some(dev) = host.default_input_device() {
+                if let (Some(key), Ok(sc)) = (Self::key(&dev, false), dev.default_input_config()) {
+                    if let Some(s) = Self::open(&dev, sc, config.audio.volume_mic, mic_buf, &dead) {
+                        streams.push(s);
+                        keys[1] = Some(key);
+                    }
+                }
+            }
+        }
+        Self { streams, dead, keys }
+    }
+
+    /// `true` si algún dispositivo por defecto cambió, apareció/desapareció o su stream reportó error.
+    fn is_stale(&self, host: &cpal::Host, cfg: &Config) -> bool {
+        use cpal::traits::HostTrait;
+        let dead = self.dead.load(Ordering::Relaxed);
+        let desktop = if cfg.audio.capture_desktop {
+            host.default_output_device().and_then(|d| Self::key(&d, true))
+        } else {
+            None
+        };
+        let mic = if cfg.audio.capture_mic {
+            host.default_input_device().and_then(|d| Self::key(&d, false))
+        } else {
+            None
+        };
+        audio_endpoint_needs_rebuild(cfg.audio.capture_desktop, self.keys[0].as_ref(), dead, desktop.as_ref())
+            || audio_endpoint_needs_rebuild(cfg.audio.capture_mic, self.keys[1].as_ref(), dead, mic.as_ref())
+    }
 }
 
 /// Inicia el feeder de audio WASAPI Loopback y Micrófono con cpal transmitiendo PCM crudo estéreo a 48 kHz vía TCP local.
@@ -2503,138 +2660,9 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
     std::thread::Builder::new()
         .name("sane-rec-win-audio-feeder".into())
         .spawn(move || {
-            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-
             let host = cpal::default_host();
-            let mut streams: Vec<cpal::Stream> = Vec::new();
+            let mut cap = WinCapture::start(&host, &config_clone, &system_buffer, &mic_buffer);
 
-            // 1. WASAPI Loopback (Audio del Sistema)
-            if config_clone.audio.capture_desktop {
-        if let Some(device) = host.default_output_device() {
-            if let Ok(supported_config) = device.default_output_config() {
-                let sample_rate = supported_config.sample_rate().0;
-                let channels = supported_config.channels() as usize;
-                let sample_format = supported_config.sample_format();
-                let stream_config: cpal::StreamConfig = supported_config.into();
-
-                let sys_buf = Arc::clone(&system_buffer);
-                let volume = config_clone.audio.volume_system;
-                let resampler = Arc::new(Mutex::new(WindowsAudioResampler::new(
-                    sample_rate,
-                    channels,
-                    volume,
-                )));
-
-                let r_clone = Arc::clone(&resampler);
-                let buf_clone = Arc::clone(&sys_buf);
-                let err_fn = |err| eprintln!("Aviso en stream WASAPI Loopback: {}", err);
-
-                let stream_res = match sample_format {
-                    cpal::SampleFormat::F32 => device.build_input_stream(
-                        &stream_config,
-                        move |data: &[f32], _| {
-                            if let Ok(mut r) = r_clone.lock() {
-                                r.process_f32(data, &buf_clone);
-                            }
-                        },
-                        err_fn,
-                        None,
-                    ),
-                    cpal::SampleFormat::I16 => device.build_input_stream(
-                        &stream_config,
-                        move |data: &[i16], _| {
-                            if let Ok(mut r) = r_clone.lock() {
-                                r.process_i16(data, &buf_clone);
-                            }
-                        },
-                        err_fn,
-                        None,
-                    ),
-                    cpal::SampleFormat::U16 => device.build_input_stream(
-                        &stream_config,
-                        move |data: &[u16], _| {
-                            if let Ok(mut r) = r_clone.lock() {
-                                r.process_u16(data, &buf_clone);
-                            }
-                        },
-                        err_fn,
-                        None,
-                    ),
-                    _ => Err(cpal::BuildStreamError::StreamConfigNotSupported),
-                };
-
-                if let Ok(stream) = stream_res {
-                    if stream.play().is_ok() {
-                        streams.push(stream);
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. WASAPI Input (Micrófono)
-    if config_clone.audio.capture_mic {
-        if let Some(device) = host.default_input_device() {
-            if let Ok(supported_config) = device.default_input_config() {
-                let sample_rate = supported_config.sample_rate().0;
-                let channels = supported_config.channels() as usize;
-                let sample_format = supported_config.sample_format();
-                let stream_config: cpal::StreamConfig = supported_config.into();
-
-                let mic_buf = Arc::clone(&mic_buffer);
-                let volume = config_clone.audio.volume_mic;
-                let resampler = Arc::new(Mutex::new(WindowsAudioResampler::new(
-                    sample_rate,
-                    channels,
-                    volume,
-                )));
-
-                let r_clone = Arc::clone(&resampler);
-                let buf_clone = Arc::clone(&mic_buf);
-                let err_fn = |err| eprintln!("Aviso en stream WASAPI Mic: {}", err);
-
-                let stream_res = match sample_format {
-                    cpal::SampleFormat::F32 => device.build_input_stream(
-                        &stream_config,
-                        move |data: &[f32], _| {
-                            if let Ok(mut r) = r_clone.lock() {
-                                r.process_f32(data, &buf_clone);
-                            }
-                        },
-                        err_fn,
-                        None,
-                    ),
-                    cpal::SampleFormat::I16 => device.build_input_stream(
-                        &stream_config,
-                        move |data: &[i16], _| {
-                            if let Ok(mut r) = r_clone.lock() {
-                                r.process_i16(data, &buf_clone);
-                            }
-                        },
-                        err_fn,
-                        None,
-                    ),
-                    cpal::SampleFormat::U16 => device.build_input_stream(
-                        &stream_config,
-                        move |data: &[u16], _| {
-                            if let Ok(mut r) = r_clone.lock() {
-                                r.process_u16(data, &buf_clone);
-                            }
-                        },
-                        err_fn,
-                        None,
-                    ),
-                    _ => Err(cpal::BuildStreamError::StreamConfigNotSupported),
-                };
-
-                if let Ok(stream) = stream_res {
-                    if stream.play().is_ok() {
-                        streams.push(stream);
-                    }
-                }
-            }
-        }
-    }
 
             let _ = listener.set_nonblocking(true);
             let mut stream_opt = None;
@@ -2696,6 +2724,7 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
             let start_time = Instant::now();
             let mut total_frames_sent: u64 = 0;
             let mut send_buf = vec![0u8; 3840]; // 960 frames * 2 canales * 2 bytes = 3840 bytes
+            let mut next_health = Instant::now() + Duration::from_millis(1000);
 
             while !stop_flag_clone.load(Ordering::Relaxed) {
                 let elapsed = start_time.elapsed();
@@ -2704,6 +2733,23 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
                 // Protección contra drift / congelación prolongada de reloj (> 1s)
                 if expected_frames > total_frames_sent + 48000 {
                     total_frames_sent = expected_frames;
+                }
+
+                // Tick de salud 1 Hz: reconecta WASAPI si cambió el dispositivo por defecto o el stream murió.
+                if Instant::now() >= next_health {
+                    next_health = Instant::now() + Duration::from_millis(1000);
+                    if cap.is_stale(&host, &config_clone) {
+                        // Soltar los streams ANTES de tocar los buffers (evita deadlock con cpal::Stream::drop).
+                        drop(cap);
+                        if let Ok(mut q) = system_buffer.lock() {
+                            q.clear();
+                        }
+                        if let Ok(mut q) = mic_buffer.lock() {
+                            q.clear();
+                        }
+                        cap = WinCapture::start(&host, &config_clone, &system_buffer, &mic_buffer);
+                        eprintln!("Audio WASAPI: dispositivo reconectado ({} stream(s))", cap.streams.len());
+                    }
                 }
 
                 // Control estricto de ritmo (48 kHz estéreo):
@@ -3023,8 +3069,6 @@ pub fn apply_windows_input_args(
             "1024",
             "-fflags",
             "+nobuffer",
-            "-use_wallclock_as_timestamps",
-            "1",
             "-f",
             "s16le",
             "-ar",
@@ -3384,7 +3428,7 @@ pub fn apply_windows_profile_args(
             "-ac",
             "2",
             "-af",
-            "aresample=async=1000:min_hard_comp=0.100000:first_pts=0",
+            "aresample=async=1000",
             "-map",
             "0:v:0",
             "-map",
@@ -3899,6 +3943,32 @@ mod tests {
     }
 
     #[test]
+    fn test_windows_audio_resampler_i32_and_f64() {
+        let out = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let mut resampler = WindowsAudioResampler::new(48000, 2, 1.0);
+        resampler.process_i32(&[i32::MIN, 1 << 30], &out);
+        resampler.process_f64(&[0.25f64, -0.5f64], &out);
+
+        let q = out.lock().unwrap();
+        assert_eq!(q.len(), 4);
+        assert!((q[0] - (-1.0)).abs() < 1e-4);
+        assert!((q[1] - 0.5).abs() < 1e-4);
+        assert!((q[2] - 0.25).abs() < 1e-4);
+        assert!((q[3] - (-0.5)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_audio_endpoint_needs_rebuild() {
+        let a = ("Speakers".to_string(), 48000u32, 2u16);
+        let b = ("Headset".to_string(), 44100u32, 2u16);
+        assert!(!audio_endpoint_needs_rebuild(true, Some(&a), false, Some(&a)));
+        assert!(audio_endpoint_needs_rebuild(true, Some(&a), false, Some(&b)));
+        assert!(audio_endpoint_needs_rebuild(true, Some(&a), true, Some(&a)));
+        assert!(audio_endpoint_needs_rebuild(true, None, false, Some(&a)));
+        assert!(!audio_endpoint_needs_rebuild(false, Some(&a), true, Some(&b)));
+    }
+
+    #[test]
     fn test_windows_audio_resampler_mono_resample_44100() {
         let out = Arc::new(Mutex::new(std::collections::VecDeque::new()));
         let mut resampler = WindowsAudioResampler::new(44100, 1, 1.0);
@@ -4127,7 +4197,7 @@ mod tests {
         assert_eq!(win_flag_value(&qsv, "-forced_idr"), Some("1"));
         assert_eq!(
             win_flag_value(&qsv, "-af"),
-            Some("aresample=async=1000:min_hard_comp=0.100000:first_pts=0")
+            Some("aresample=async=1000")
         );
 
         let mut amf_config = Config::default();
@@ -4158,7 +4228,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_windows_input_args_audio_wallclock() {
+    fn test_apply_windows_input_args_audio_nobuffer() {
         let mut config = Config::default();
         config.video.target = "desktop".to_string();
         config.video.fps = 60;
@@ -4167,7 +4237,11 @@ mod tests {
         apply_windows_input_args(&mut cmd, &config, Some(12345), WindowsCaptureBackend::GdiGrab);
         let args = win_args(&cmd);
 
-        assert_eq!(win_flag_value(&args, "-use_wallclock_as_timestamps"), Some("1"));
+        assert!(
+            !args.contains(&"-use_wallclock_as_timestamps".to_string()),
+            "no debe usar wallclock en el audio TCP: {:?}",
+            args
+        );
         assert!(
             args.windows(2).any(|w| w[0] == "-fflags" && w[1] == "+nobuffer"),
             "el audio TCP debe desactivar el buffering: {:?}",
