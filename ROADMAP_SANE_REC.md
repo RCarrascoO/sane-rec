@@ -11,13 +11,13 @@ Documento de planificación técnica para las próximas versiones de sane-rec.
   │    • Estabilización VA-API (renderD128) y blindaje multi-shell   │
   │    • Telemetría forense expandida (VRAM, GPU, CLI ejecutada)     │
   ├──────────────────────────────────────────────────────────────────┤
-  │ 2. GRAPHICS UPDATE (Aceleración Hardware AMD & Nvidia en Windows)│ [⏳ PRÓXIMA FASE]
-  │    • AMD Radeon: Port del perfil VA-API Zero B-Frames (RX 570)   │
-  │    • Nvidia NVENC: Corrección de desfase A/V (WASAPI vs DXGI)    │
-  │    • HEVC Fix: Solución al cuadro congelado en repeticiones      │
-  │      (inyección forzada de VPS/SPS/PPS y hevc_mp4toannexb)       │
+  │ 2. GRAPHICS UPDATE (Aceleración Hardware AMD & Nvidia en Windows)│ [✅ COMPLETADO v0.7.6]
+  │    • AMD Radeon & Intel QSV: Mapeo AMF/QSV Zero B-Frames         │
+  │    • Nvidia NVENC: Sincronía A/V WASAPI y normalización de códec │
+  │    • HEVC Fix: Inyección VPS/SPS/PPS (hvc1) + hevc_mp4toannexb   │
+  │    • Resiliencia DXGI: Compuerta MPEG-TS + Watchdog + GdiGrab    │
   ├──────────────────────────────────────────────────────────────────┤
-  │ 3. OPTIMICE UPDATE (Tuning de Recursos en Windows)               │
+  │ 3. OPTIMICE UPDATE (Tuning de Recursos en Windows)               │ [⏳ PRÓXIMA FASE]
   │    • Afinado fino del uso de CPU/GPU en captura DXGI             │
   │    • Reducción al mínimo de overhead durante gameplay            │
   ├──────────────────────────────────────────────────────────────────┤
@@ -60,7 +60,13 @@ Esta fase se consolidó y certificó en la versión **v0.7.3**, estableciendo un
 
 ---
 
-## 2. Graphics Update (Aceleración por Hardware AMD & Nvidia en Windows)
+## 2. Graphics Update (Aceleración por Hardware AMD, Intel & Nvidia en Windows) — ✅ COMPLETADA (v0.7.4 – v0.7.6)
+
+Esta fase se consolidó entre **v0.7.4** y **v0.7.6**, unificando la aceleración por GPU dedicada en Windows, la sincronía de audio WASAPI y la resiliencia del búfer DXGI:
+
+- **v0.7.4:** Mapeo de encoders hardware en Windows (`h264_amf`, `h264_nvenc`, `h264_qsv`), soporte HEVC `hvc1` con `hevc_mp4toannexb`, sincronía A/V con `aresample` y fallback no destructivo.
+- **v0.7.5:** Hotfix de audio WASAPI (eliminación de `-use_wallclock_as_timestamps 1` y `first_pts=0`) + hot-swap y reconexión automática de dispositivos de audio a 1 Hz (`WinCapture` y `audio_monitor.rs`).
+- **v0.7.6:** Compuerta de vídeo real MPEG-TS (`PID 0x100` PUSI) en `save_clip()`, watchdog con auto-reinicio no bloqueante y fallback automático a `GdiGrab` tras 2 stalls DXGI en 60s, `-stats_period 5` para conservar errores en telemetría, desacople de Discord Compressor en grabaciones continuas (`<10 MB` estricto) y normalización de códec al arranque.
 
 Esta actualización unifica el soporte y optimización de aceleración por GPU dedicada en Windows, garantizando paridad de rendimiento tanto en arquitecturas AMD Radeon como en Nvidia GeForce.
 
