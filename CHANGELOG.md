@@ -1,5 +1,10 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.7.6 - 2026-11-21
+- **Discord Compressor:** Desacople de grabaciones continuas (`stop_continuous_recording`) y margen estricto `<10 MB` (`0.88`, `-maxrate 1.05x`, `-bufsize 1.5x`).
+- **Resiliencia DXGI Replay (Windows):** Compuerta de vídeo real MPEG-TS (`PID 0x100` PUSI) en `save_clip()`, detección de stalls con auto-reinicio no bloqueante y fallback automático a `GdiGrab` tras 2 stalls en 60s.
+- **Telemetría y Perfiles:** `-stats_period 5` en FFmpeg Windows para conservar errores DXGI en el anillo de 16 KB, y normalización de `video.codec` al arranque según perfil activo.
+
 ## v0.7.5 - 2026-11-20 (0.7.5)
 - **Hotfix Crítico de Audio en Windows (`v0.7.4` regression):** eliminados `-use_wallclock_as_timestamps 1` y `first_pts=0` del pipeline de audio TCP/WASAPI que provocaban silencio total y caída de velocidad a `0.475x` en Replay, manteniendo `-af aresample=async=1000` para sincronía A/V suave.
 - **Hot-Swap y Reconexión Automática WASAPI (`cpal`):** supervisión a 1 Hz en `start_windows_audio_feeder` y monitor VU (`audio_monitor.rs`) que detecta desconexiones (`err_fn`) y cambios del dispositivo predeterminado de Windows (USB/Bluetooth/parlantes), reconstruyendo los streams en caliente sin cortar la grabación ni el búfer de repetición.

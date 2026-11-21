@@ -54,8 +54,8 @@ pub fn get_discord_clip_path(original_path: &Path) -> PathBuf {
 pub fn calculate_compression_parameters(duration_secs: f64, target_mb: f64) -> (u32, u32, &'static str) {
     let duration = duration_secs.max(1.0);
 
-    // Margen de seguridad del 8% para el contenedor MP4/MKV, moov atom y headers de paquete
-    let total_bits_budget = target_mb * 8.0 * 1024.0 * 1024.0 * 0.92;
+    // Margen de seguridad del 12% para el contenedor MP4/MKV, moov atom y headers de paquete (<10 MB estricto)
+    let total_bits_budget = target_mb * 8.0 * 1024.0 * 1024.0 * 0.88;
     let total_bps = total_bits_budget / duration;
 
     // Asignación de tasa de audio según presupuesto total
@@ -120,8 +120,8 @@ pub fn compress_to_target_size(
     let duration = get_video_duration_secs(input_path).unwrap_or(30.0);
     let (video_kbps, audio_kbps, scale_filter) = calculate_compression_parameters(duration, target_mb);
 
-    let maxrate = format!("{}k", ((video_kbps as f64) * 1.25).round() as u32);
-    let bufsize = format!("{}k", video_kbps * 2);
+    let maxrate = format!("{}k", ((video_kbps as f64) * 1.05).round() as u32);
+    let bufsize = format!("{}k", ((video_kbps as f64) * 1.5).round() as u32);
     let b_v = format!("{}k", video_kbps);
     let b_a = format!("{}k", audio_kbps);
 

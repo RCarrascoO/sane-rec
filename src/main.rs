@@ -605,6 +605,12 @@ fn default_codec_for_profile(profile: &str) -> Option<&'static str> {
 fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     #[allow(unused_mut)]
     let mut config = Config::load().unwrap_or_default();
+    if let Some(codec) = default_codec_for_profile(&config.profile.active_profile) {
+        if config.video.codec != codec {
+            config.video.codec = codec.to_string();
+            let _ = config.save();
+        }
+    }
 
     let out_str = config.storage.output_dir.to_string_lossy().to_string();
     if out_str.starts_with("/mnt/Files") && !std::path::Path::new("/mnt/Files").exists() {
@@ -2411,6 +2417,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let mut ticks: u32 = 0;
         let mut last_sys_peak: f32 = -1.0;
         let mut last_mic_peak: f32 = -1.0;
+        #[cfg(target_os = "windows")]
+        let watchdog_busy = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         timer.start(
             slint::TimerMode::Repeated,
             std::time::Duration::from_millis(50),
@@ -2476,6 +2484,27 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             ui.set_recording_time(time_str.into());
                         } else {
                             ui.set_recording_time("00:00".into());
+                        }
+                    }
+
+                    #[cfg(target_os = "windows")]
+                    {
+                        let is_daemon = daemon_flag.load(std::sync::atomic::Ordering::SeqCst);
+                        if !is_daemon {
+                            if let Some(ref eng) = engine_clone {
+                                if eng.win_video_stale() {
+                                    if !watchdog_busy.load(std::sync::atomic::Ordering::SeqCst) {
+                                        watchdog_busy.store(true, std::sync::atomic::Ordering::SeqCst);
+                                        let eng_clone = eng.clone();
+                                        let busy_clone = watchdog_busy.clone();
+                                        std::thread::spawn(move || {
+                                            let _ = eng_clone.stop_replay();
+                                            let _ = eng_clone.start_replay();
+                                            busy_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+                                        });
+                                    }
+                                }
+                            }
                         }
                     }
                 }

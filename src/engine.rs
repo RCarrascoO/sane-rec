@@ -131,6 +131,31 @@ pub struct ReplayEngine {
     win_replay_executed_cmd: Mutex<Option<String>>,
     #[allow(dead_code)]
     win_continuous_executed_cmd: Mutex<Option<String>>,
+    #[allow(dead_code)]
+    win_last_video_ms: Arc<std::sync::atomic::AtomicU64>,
+    #[allow(dead_code)]
+    win_replay_start_ms: Arc<std::sync::atomic::AtomicU64>,
+    #[allow(dead_code)]
+    win_stale_restarts: Mutex<Vec<Instant>>,
+    #[allow(dead_code)]
+    win_force_gdi_once: AtomicBool,
+}
+
+/// Milisegundos monotónicos desde el primer uso en el proceso.
+#[cfg(target_os = "windows")]
+fn mono_ms() -> u64 {
+    static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    T0.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+/// Devuelve `true` si el chunk MPEG-TS contiene un inicio de PES de vídeo (PID 0x100 con PUSI).
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn chunk_has_video_pusi(data: &[u8]) -> bool {
+    data.chunks_exact(188).any(|pkt| {
+        pkt[0] == 0x47
+            && (pkt[1] & 0x40) != 0
+            && ((((pkt[1] as u16) & 0x1F) << 8) | pkt[2] as u16) == 0x100
+    })
 }
 
 impl ReplayEngine {
@@ -174,6 +199,10 @@ impl ReplayEngine {
             win_replay_stderr_log: Arc::new(Mutex::new(String::new())),
             win_replay_executed_cmd: Mutex::new(None),
             win_continuous_executed_cmd: Mutex::new(None),
+            win_last_video_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            win_replay_start_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            win_stale_restarts: Mutex::new(Vec::new()),
+            win_force_gdi_once: AtomicBool::new(false),
         };
 
         // Limpieza automática de segmentos antiguos en RAM al inicializar
@@ -815,7 +844,7 @@ impl ReplayEngine {
 
         let build_replay_cmd = |cfg: &Config, port: Option<u16>, backend: WindowsCaptureBackend| -> (Command, WindowsCaptureBackend) {
             let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
-            cmd.arg("-y");
+            cmd.args(["-y", "-stats_period", "5"]);
 
             let actual_backend = apply_windows_input_args(&mut cmd, cfg, port, backend);
             apply_windows_profile_args(&mut cmd, cfg, port.is_some(), actual_backend);
@@ -846,7 +875,12 @@ impl ReplayEngine {
             (cmd, actual_backend)
         };
 
-        let (mut cmd, actual_backend) = build_replay_cmd(&config, audio_port, WindowsCaptureBackend::DdaGrab);
+        let first_backend = if self.win_force_gdi_once.swap(false, Ordering::SeqCst) {
+            WindowsCaptureBackend::GdiGrab
+        } else {
+            WindowsCaptureBackend::DdaGrab
+        };
+        let (mut cmd, actual_backend) = build_replay_cmd(&config, audio_port, first_backend);
         *self.win_replay_backend.lock().unwrap() = actual_backend;
         *self.win_replay_executed_cmd.lock().unwrap() = Some(render_ffmpeg_command(&cmd));
         let mut child = cmd.spawn()?;
@@ -990,10 +1024,14 @@ impl ReplayEngine {
 
         *self.replay_process.lock().unwrap() = Some(child);
         *self.start_time.lock().unwrap() = Some(Instant::now());
+        let started_ms = mono_ms();
+        self.win_replay_start_ms.store(started_ms, Ordering::SeqCst);
+        self.win_last_video_ms.store(started_ms, Ordering::SeqCst);
         self.win_buffer_running.store(true, Ordering::SeqCst);
 
         let ram_buf = Arc::clone(&self.win_ram_buffer);
         let running_flag = Arc::clone(&self.win_buffer_running);
+        let last_video = Arc::clone(&self.win_last_video_ms);
         let dur_secs = config.replay.duration_secs;
         // Escalar dinámicamente el límite de RAM según la duración solicitada (12 MB/s para 60 FPS)
         // para garantizar que repeticiones de 120s o superiores nunca se trunquen prematuramente
@@ -1026,6 +1064,9 @@ impl ReplayEngine {
                                 continue;
                             }
                             let chunk: Vec<u8> = leftover.drain(..aligned_len).collect();
+                            if chunk_has_video_pusi(&chunk) {
+                                last_video.store(mono_ms(), Ordering::SeqCst);
+                            }
                             let chunk_arc = Arc::new(chunk);
                             let chunk_len = chunk_arc.len();
                             let now = Instant::now();
@@ -1098,6 +1139,35 @@ impl ReplayEngine {
         } else {
             self.start_replay()?;
             Ok(true)
+        }
+    }
+
+    /// Indica si el búfer de vídeo de Windows lleva demasiado sin recibir vídeo (stall).
+    /// Tras 2 stalls en 60s fuerza GdiGrab en el siguiente inicio del replay.
+    pub fn win_video_stale(&self) -> bool {
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if !self.is_running() {
+                return false;
+            }
+            let now_ms = mono_ms();
+            let start_ms = self.win_replay_start_ms.load(Ordering::SeqCst);
+            let last_ms = self.win_last_video_ms.load(Ordering::SeqCst);
+            if now_ms.saturating_sub(start_ms) <= 6000 || now_ms.saturating_sub(last_ms) <= 4000 {
+                return false;
+            }
+            let now = Instant::now();
+            let mut restarts = self.win_stale_restarts.lock().unwrap();
+            restarts.retain(|t| now.duration_since(*t) <= Duration::from_secs(60));
+            restarts.push(now);
+            if restarts.len() >= 2 {
+                self.win_force_gdi_once.store(true, Ordering::SeqCst);
+            }
+            true
         }
     }
 
@@ -1283,9 +1353,6 @@ impl ReplayEngine {
         let is_valid = output_path.metadata().map(|m| m.len() >= 1024).unwrap_or(false);
         if !is_valid {
             let _ = std::fs::remove_file(&output_path);
-        } else if current_cfg.storage.dual_clip {
-            let target_mb = current_cfg.storage.discord_target_mb;
-            crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
         }
 
         Ok(output_path)
@@ -1326,7 +1393,7 @@ impl ReplayEngine {
 
         let build_cont_cmd = |cfg: &Config, port: Option<u16>, out: &Path, backend: WindowsCaptureBackend| -> (Command, WindowsCaptureBackend) {
             let mut cmd = new_hidden_command(resolve_binary("ffmpeg"));
-            cmd.arg("-y");
+            cmd.args(["-y", "-stats_period", "5"]);
 
             let actual_backend = apply_windows_input_args(&mut cmd, cfg, port, backend);
             apply_windows_profile_args(&mut cmd, cfg, port.is_some(), actual_backend);
@@ -1563,11 +1630,6 @@ impl ReplayEngine {
             if let Err(e) = crate::benchmark::generate_benchmark_report(&ctx) {
                 eprintln!("Aviso: No se pudo generar reporte de benchmark: {}", e);
             }
-        }
-
-        if current_cfg.storage.dual_clip {
-            let target_mb = current_cfg.storage.discord_target_mb;
-            crate::compressor::spawn_discord_compression(output_path.clone(), target_mb);
         }
 
         Ok(output_path)
@@ -1853,6 +1915,11 @@ impl ReplayEngine {
 
         if chunks.is_empty() {
             return Err(EngineError::NoSegments);
+        }
+        if !chunks.iter().any(|c| chunk_has_video_pusi(c)) {
+            return Err(EngineError::Custom(
+                "El búfer en RAM no contiene vídeo válido".into(),
+            ));
         }
 
         self.is_saving.store(true, Ordering::SeqCst);
@@ -3687,6 +3754,26 @@ pub fn play_feedback_sound(_sound_name: &str) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ts_pkt(pusi: bool, pid: u16) -> Vec<u8> {
+        let mut p = vec![0u8; 188];
+        p[0] = 0x47;
+        p[1] = (if pusi { 0x40 } else { 0 }) | ((pid >> 8) as u8 & 0x1F);
+        p[2] = pid as u8;
+        p
+    }
+
+    #[test]
+    fn test_chunk_has_video_pusi() {
+        assert!(chunk_has_video_pusi(&ts_pkt(true, 0x100)));
+        let mut two = ts_pkt(true, 0x101);
+        two.extend(ts_pkt(true, 0x100));
+        assert!(chunk_has_video_pusi(&two));
+        assert!(!chunk_has_video_pusi(&ts_pkt(true, 0x101)));
+        assert!(!chunk_has_video_pusi(&ts_pkt(false, 0x100)));
+        assert!(!chunk_has_video_pusi(&[]));
+        assert!(!chunk_has_video_pusi(&ts_pkt(true, 0x100)[..187]));
+    }
 
     #[test]
     fn test_default_buffer_dir_contains_uid() {

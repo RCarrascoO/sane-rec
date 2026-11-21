@@ -91,6 +91,8 @@ Esta actualización unifica el soporte y optimización de aceleración por GPU d
   - Optimizar el loop de lectura de paquetes MPEG-TS y la gestión de memoria en RAM para minimizar cualquier consumo residual de CPU y GPU.
   - Asegurar la menor latencia posible durante sesiones prolongadas de repetición instantánea (120s / 180s).
   - Reducción al mínimo de la contención de hilos durante gameplay competitivo.
+- **Escalado y conversión Zero-Copy en GPU (`scale_d3d11` / D3D11 → NV12):** Evitar la descarga de frames `1080p BGRA` a RAM para superar el techo de ~36 FPS en iGPUs (Intel UHD 630 en laptops Optimus).
+- **Mapeo explícito de `device_idx` / `output_idx` DXGI:** Selección explícita de adaptador DXGI en sistemas multi-GPU / Optimus para evitar pérdida de captura al alternar entre iGPU y dGPU.
 
 ---
 
