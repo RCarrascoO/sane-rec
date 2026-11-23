@@ -15,6 +15,8 @@ pub struct HardwareProfile {
     pub resolution: String,
     pub max_memory_mb: u64,
     pub audio_track_mode: u32,
+    #[serde(default)]
+    pub quality_tier: Option<crate::config::QualityTier>,
 }
 
 impl Default for HardwareProfile {
@@ -30,6 +32,7 @@ impl Default for HardwareProfile {
             resolution: "none".to_string(),
             max_memory_mb: 150,
             audio_track_mode: 0,
+            quality_tier: None,
         }
     }
 }

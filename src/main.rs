@@ -1907,6 +1907,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 resolution: ui.get_selected_resolution().to_string(),
                 max_memory_mb: ui.get_max_memory_mb() as u64,
                 audio_track_mode: ui.get_audio_track_mode() as u32,
+                quality_tier: None,
             };
 
             match sane_rec::profiles_manager::save_profile(&profile) {
@@ -1954,6 +1955,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     resolution: ui.get_selected_resolution().to_string(),
                     max_memory_mb: ui.get_max_memory_mb() as u64,
                     audio_track_mode: ui.get_audio_track_mode() as u32,
+                    quality_tier: None,
                 },
             };
 

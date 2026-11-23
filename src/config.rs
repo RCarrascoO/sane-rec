@@ -1,6 +1,15 @@
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QualityTier {
+    #[default]
+    Low,
+    Medium,
+    High,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
@@ -148,6 +157,8 @@ pub struct ProfileConfig {
     pub active_profile: String,
     #[serde(default)]
     pub selected_hardware_profile: Option<String>,
+    #[serde(default)]
+    pub quality_tier: QualityTier,
 }
 
 impl Default for ProfileConfig {
@@ -155,6 +166,7 @@ impl Default for ProfileConfig {
         Self {
             active_profile: "sane-safe".to_string(),
             selected_hardware_profile: None,
+            quality_tier: QualityTier::Low,
         }
     }
 }
@@ -887,6 +899,7 @@ mod tests {
 
         assert_eq!(cfg.profile.active_profile, "sane-safe");
         assert_eq!(cfg.profile.selected_hardware_profile, None);
+        assert_eq!(cfg.profile.quality_tier, QualityTier::Low);
         #[cfg(not(target_os = "windows"))]
         {
             assert_eq!(cfg.shortcuts.save_replay, "Mod+Shift+S");
@@ -909,6 +922,36 @@ mod tests {
         let deserialized: Config = toml::from_str(&serialized).expect("Failed to deserialize from TOML");
 
         assert_eq!(cfg, deserialized);
+    }
+
+    #[test]
+    fn test_legacy_config_defaults_quality_tier_to_low() {
+        let mut serialized = toml::to_string_pretty(&Config::default()).expect("Failed to serialize config");
+        serialized = serialized.replace("quality_tier = \"low\"\n", "");
+
+        let deserialized: Config = toml::from_str(&serialized).expect("Failed to deserialize legacy config");
+        assert_eq!(deserialized.profile.quality_tier, QualityTier::Low);
+    }
+
+    #[test]
+    fn test_quality_tier_toml_values_roundtrip() {
+        for (tier, serialized_value) in [
+            (QualityTier::Low, "low"),
+            (QualityTier::Medium, "medium"),
+            (QualityTier::High, "high"),
+        ] {
+            let profile = ProfileConfig {
+                active_profile: "sane-safe".to_string(),
+                selected_hardware_profile: None,
+                quality_tier: tier,
+            };
+            let serialized = toml::to_string(&profile).expect("Failed to serialize profile config");
+            assert!(serialized.contains(&format!("quality_tier = \"{}\"", serialized_value)));
+
+            let deserialized: ProfileConfig =
+                toml::from_str(&serialized).expect("Failed to deserialize profile config");
+            assert_eq!(deserialized.quality_tier, tier);
+        }
     }
 
     #[test]
