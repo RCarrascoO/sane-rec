@@ -348,12 +348,10 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
         "save" => {
             static LAST_IPC_SAVE_MS: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(0);
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+            static IPC_CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            let now_ms = IPC_CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64;
             let prev_ms = LAST_IPC_SAVE_MS.load(std::sync::atomic::Ordering::SeqCst);
-            if now_ms.saturating_sub(prev_ms) < 400 {
+            if prev_ms != 0 && now_ms.saturating_sub(prev_ms) < 400 {
                 cmd.ok("Replay ya en proceso de guardado");
                 return false;
             }
@@ -383,12 +381,10 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
         "record" | "record_toggle" => {
             static LAST_IPC_RECORD_MS: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(0);
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+            static IPC_CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            let now_ms = IPC_CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64;
             let prev_ms = LAST_IPC_RECORD_MS.load(std::sync::atomic::Ordering::SeqCst);
-            if now_ms.saturating_sub(prev_ms) < 1200 {
+            if prev_ms != 0 && now_ms.saturating_sub(prev_ms) < 1200 {
                 let is_rec = engine.is_recording();
                 cmd.ok(if is_rec {
                     "Grabación continua iniciada"
@@ -401,11 +397,7 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
 
             match engine.toggle_continuous_recording() {
                 Ok(recording) => {
-                    let finish_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(now_ms);
-                    LAST_IPC_RECORD_MS.store(finish_ms, std::sync::atomic::Ordering::SeqCst);
+                    LAST_IPC_RECORD_MS.store(now_ms, std::sync::atomic::Ordering::SeqCst);
                     cmd.ok(if recording {
                         "Grabación continua iniciada"
                     } else {
@@ -426,12 +418,10 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
         "toggle_replay" => {
             static LAST_IPC_REPLAY_MS: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(0);
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+            static IPC_CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            let now_ms = IPC_CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64;
             let prev_ms = LAST_IPC_REPLAY_MS.load(std::sync::atomic::Ordering::SeqCst);
-            if now_ms.saturating_sub(prev_ms) < 1200 {
+            if prev_ms != 0 && now_ms.saturating_sub(prev_ms) < 1200 {
                 let is_run = engine.is_running();
                 cmd.ok(if is_run {
                     "Búfer de replay iniciado"
@@ -444,11 +434,7 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
 
             match engine.toggle_replay() {
                 Ok(running) => {
-                    let finish_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(now_ms);
-                    LAST_IPC_REPLAY_MS.store(finish_ms, std::sync::atomic::Ordering::SeqCst);
+                    LAST_IPC_REPLAY_MS.store(now_ms, std::sync::atomic::Ordering::SeqCst);
                     cmd.ok(if running {
                         "Búfer de replay iniciado"
                     } else {
@@ -479,7 +465,9 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
                     let prev_cfg = engine.config();
                     let capture_params_changed = prev_cfg.video != cfg.video
                         || prev_cfg.profile != cfg.profile
-                        || prev_cfg.audio != cfg.audio;
+                        || prev_cfg.audio.capture_desktop != cfg.audio.capture_desktop
+                        || prev_cfg.audio.capture_mic != cfg.audio.capture_mic
+                        || prev_cfg.audio.codec != cfg.audio.codec;
 
                     let _ = sane_rec::update_niri_shortcuts(
                         &cfg.shortcuts.save_replay,
@@ -518,6 +506,10 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
         }
         action if action.starts_with("set_output_dir:") => {
             let dir_str = action.trim_start_matches("set_output_dir:").trim();
+            if dir_str.is_empty() {
+                cmd.error("Carpeta de salida inválida");
+                return should_exit;
+            }
             let dir = PathBuf::from(dir_str);
             let _ = std::fs::create_dir_all(&dir);
             let mut cfg = engine.config();
@@ -529,6 +521,10 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
         action if action.starts_with("set_duration:") => {
             let dur_str = action.trim_start_matches("set_duration:").trim();
             if let Ok(dur) = dur_str.parse::<u32>() {
+                if dur == 0 {
+                    cmd.error("Duración inválida");
+                    return should_exit;
+                }
                 engine.update_duration(dur);
                 cmd.ok(format!("Duración del búfer actualizada a {}s", dur));
             } else {
@@ -538,6 +534,10 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
         action if action.starts_with("set_fps:") => {
             let fps_str = action.trim_start_matches("set_fps:").trim();
             if let Ok(fps) = fps_str.parse::<u32>() {
+                if fps == 0 {
+                    cmd.error("Tasa de FPS inválida");
+                    return should_exit;
+                }
                 let was_running = engine.is_running();
                 let mut cfg = engine.config();
                 cfg.video.fps = fps;
@@ -555,10 +555,48 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
         action if action.starts_with("set_max_memory:") => {
             let ram_str = action.trim_start_matches("set_max_memory:").trim();
             if let Ok(ram) = ram_str.parse::<u32>() {
+                if ram == 0 {
+                    cmd.error("Límite de RAM inválido");
+                    return should_exit;
+                }
                 engine.update_max_memory(ram);
                 cmd.ok(format!("Límite de memoria RAM actualizado a {} MB", ram));
             } else {
                 cmd.error("Límite de RAM inválido");
+            }
+        }
+        action if action.starts_with("set_volume_system:") => {
+            let volume_str = action.trim_start_matches("set_volume_system:").trim();
+            match volume_str.parse::<f32>() {
+                Ok(volume) => {
+                    if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+                        cmd.error("Volumen del sistema inválido");
+                        return should_exit;
+                    }
+                    engine.set_volume_system(volume);
+                    let mut cfg = engine.config();
+                    cfg.audio.volume_system = volume;
+                    let _ = cfg.save();
+                    cmd.ok("Volumen del sistema actualizado");
+                }
+                Err(_) => cmd.error("Volumen del sistema inválido"),
+            }
+        }
+        action if action.starts_with("set_volume_mic:") => {
+            let volume_str = action.trim_start_matches("set_volume_mic:").trim();
+            match volume_str.parse::<f32>() {
+                Ok(volume) => {
+                    if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+                        cmd.error("Volumen del micrófono inválido");
+                        return should_exit;
+                    }
+                    engine.set_volume_mic(volume);
+                    let mut cfg = engine.config();
+                    cfg.audio.volume_mic = volume;
+                    let _ = cfg.save();
+                    cmd.ok("Volumen del micrófono actualizado");
+                }
+                Err(_) => cmd.error("Volumen del micrófono inválido"),
             }
         }
         other => {
@@ -792,7 +830,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     while let Some(cmd) = rx.recv().await {
                         let action = cmd.action.clone();
                         let was_running = engine_for_ipc.is_running();
-                        dispatch_ipc_command(&engine_for_ipc, cmd).await;
+                        let should_stop = dispatch_ipc_command(&engine_for_ipc, cmd).await;
 
                         let status = engine_for_ipc.get_status();
                         let out_dir = engine_for_ipc.config().storage.output_dir;
@@ -822,6 +860,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         });
+                        if should_stop {
+                            break;
+                        }
                     }
                 });
             }
@@ -851,10 +892,16 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
             std::thread::spawn(move || {
                 let res = if is_daemon {
-                    ipc::send_command_sync("save").map(|resp| {
+                    ipc::send_command_sync("save").and_then(|resp| {
+                        if !resp.is_ok() {
+                            return Err(ipc::IpcError::Custom(
+                                resp.message.unwrap_or_else(|| "Error guardando replay".to_string()),
+                            ));
+                        }
                         resp.data
                             .and_then(|d| d.get("path").and_then(|p| p.as_str().map(PathBuf::from)))
-                            .unwrap_or_else(|| PathBuf::from("clip.mp4"))
+                            .filter(|path| !path.as_os_str().is_empty())
+                            .ok_or_else(|| ipc::IpcError::Custom("La respuesta no contiene una ruta válida".into()))
                     })
                 } else if let Some(ref eng) = engine_clone {
                     eng.save_clip()
@@ -893,37 +940,35 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let daemon_flag = daemon_running_flag.clone();
         ui.on_toggle_replay(move || {
             let is_daemon = daemon_flag.load(std::sync::atomic::Ordering::SeqCst);
-            let is_running = if is_daemon {
-                if let Ok(resp) = ipc::send_command_sync("toggle_replay") {
-                    resp.message.map_or(false, |m| m.contains("iniciado"))
+            let ui_weak = ui_weak.clone();
+                let engine_for_task = engine_clone.clone();
+            std::thread::spawn(move || {
+                let result = if is_daemon {
+                    ipc::send_command_sync("toggle_replay")
+                        .map(|resp| resp.is_ok() && resp.message.map_or(false, |m| m.contains("iniciado")))
+                        .map_err(|e| e.to_string())
+                } else if let Some(ref eng) = engine_for_task {
+                    eng.toggle_replay().map_err(|e| e.to_string())
                 } else {
-                    false
-                }
-            } else if let Some(ref eng) = engine_clone {
-                eng.toggle_replay().unwrap_or(false)
-            } else {
-                false
-            };
-
-            if let Some(ui) = ui_weak.upgrade() {
-                ui.set_is_running(is_running);
-                ui.set_buffer_status(
-                    if is_running {
-                        "Búfer Activo".into()
-                    } else {
-                        "Detenido".into()
-                    },
-                );
-                show_toast(
-                    &ui,
-                    "memory",
-                    if is_running {
-                        "Búfer de repetición en RAM activado"
-                    } else {
-                        "Búfer de repetición detenido"
-                    },
-                );
-            }
+                    Err("No engine available".to_string())
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        match result {
+                            Ok(is_running) => {
+                                ui.set_is_running(is_running);
+                                ui.set_buffer_status(if is_running { "Búfer Activo".into() } else { "Detenido".into() });
+                                show_toast(&ui, "memory", if is_running {
+                                    "Búfer de repetición en RAM activado"
+                                } else {
+                                    "Búfer de repetición detenido"
+                                });
+                            }
+                            Err(error) => show_toast(&ui, "warning", &format!("No se pudo cambiar el búfer: {}", error)),
+                        }
+                    }
+                });
+            });
         });
     }
 
@@ -1449,7 +1494,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let engine = engine_clone.clone();
             let d_flag = daemon_flag.clone();
             std::thread::spawn(move || {
-                if let Some(ref eng) = engine {
+                if d_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = ipc::send_command_sync(&format!("set_volume_system:{}", vol));
+                } else if let Some(ref eng) = engine {
                     eng.set_volume_system(vol);
                     let mut cfg = eng.config();
                     cfg.audio.volume_system = vol;
@@ -1459,7 +1506,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = cfg.save();
                     ReplayEngine::apply_sink_input_volume("sane_rec_system", vol);
                 }
-                notify_daemon_reload_async(&d_flag);
             });
         });
     }
@@ -1471,7 +1517,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let engine = engine_clone.clone();
             let d_flag = daemon_flag.clone();
             std::thread::spawn(move || {
-                if let Some(ref eng) = engine {
+                if d_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = ipc::send_command_sync(&format!("set_volume_mic:{}", vol));
+                } else if let Some(ref eng) = engine {
                     eng.set_volume_mic(vol);
                     let mut cfg = eng.config();
                     cfg.audio.volume_mic = vol;
@@ -1481,7 +1529,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = cfg.save();
                     ReplayEngine::apply_sink_input_volume("sane_rec_mic", vol);
                 }
-                notify_daemon_reload_async(&d_flag);
             });
         });
     }
@@ -2408,11 +2455,37 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     // Temporizador Slint para actualizar métricas en vivo y medidores VU.
     // Solo redibuja picos de audio cuando el usuario está en la pestaña Audio (active_view == 2)
     // y el valor cambió > 0.008, evitando que MSI Afterburner / RivaTuner (RTSS) enganche a sane-rec como juego 3D activo.
+    let status_snapshot = Arc::new(std::sync::Mutex::new(None::<EngineStatus>));
+    {
+        let snapshot = status_snapshot.clone();
+        let engine = local_engine.clone();
+        let daemon_flag = daemon_running_flag.clone();
+        std::thread::spawn(move || loop {
+            let status = if daemon_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                ipc::send_command_sync("status")
+                    .ok()
+                    .and_then(|resp| resp.data)
+                    .and_then(|data| serde_json::from_value::<EngineStatus>(data).ok())
+            } else {
+                engine.as_ref().map(|eng| eng.get_status())
+            };
+            if let Some(status) = status {
+                if let Ok(mut current) = snapshot.lock() {
+                    *current = Some(status);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        });
+    }
+
     let _timer = {
         let ui_weak = ui.as_weak();
+        #[cfg(target_os = "windows")]
         let engine_clone = local_engine.clone();
         let audio_mon_clone = audio_monitor.clone();
+        #[cfg(target_os = "windows")]
         let daemon_flag = daemon_running_flag.clone();
+        let status_snapshot = status_snapshot.clone();
         let timer = slint::Timer::default();
         let mut ticks: u32 = 0;
         let mut last_sys_peak: f32 = -1.0;
@@ -2426,6 +2499,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 let Some(ui) = ui_weak.upgrade() else {
                     return;
                 };
+                if !ui.window().is_visible() {
+                    return;
+                }
 
                 // Solo actualiza niveles visuales VU si la pestaña de Audio (vista 2) está visible
                 if ui.get_active_view() == 2 {
@@ -2444,19 +2520,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 ticks += 1;
                 // Cada 500ms consulta el estado del motor y actualiza contadores
                 if ticks % 10 == 0 {
-                    let is_daemon = daemon_flag.load(std::sync::atomic::Ordering::SeqCst);
-                    let status_opt = if is_daemon {
-                        if let Ok(resp) = ipc::send_command_sync("status") {
-                            resp.data
-                                .and_then(|d| serde_json::from_value::<EngineStatus>(d).ok())
-                        } else {
-                            None
-                        }
-                    } else if let Some(ref eng) = engine_clone {
-                        Some(eng.get_status())
-                    } else {
-                        None
-                    };
+                    let status_opt = status_snapshot.lock().ok().and_then(|status| status.clone());
 
                     if let Some(status) = status_opt {
                         ui.set_is_running(status.is_running);

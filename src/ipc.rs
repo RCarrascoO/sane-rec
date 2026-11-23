@@ -3,6 +3,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
+const MAX_IPC_LINE_BYTES: usize = 4096;
+const IPC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Solicitud enviada por el cliente al socket IPC.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IpcRequest {
@@ -152,7 +155,7 @@ pub async fn send_command(action: &str) -> Result<IpcResponse> {
 
 #[cfg(target_os = "windows")]
 pub async fn send_command(action: &str) -> Result<IpcResponse> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
     let mut stream = tokio::net::TcpStream::connect("127.0.0.1:45892").await?;
     let req = IpcRequest {
@@ -164,23 +167,31 @@ pub async fn send_command(action: &str) -> Result<IpcResponse> {
     stream.flush().await?;
 
     let (reader, _) = stream.split();
-    let mut buf_reader = BufReader::new(reader);
-    let mut line = String::new();
-    let bytes_read = buf_reader.read_line(&mut line).await?;
+    let buf_reader = BufReader::new(reader);
+    let mut line = Vec::new();
+    let bytes_read = tokio::time::timeout(
+        IPC_READ_TIMEOUT,
+        buf_reader.take((MAX_IPC_LINE_BYTES + 1) as u64).read_until(b'\n', &mut line),
+    )
+    .await
+    .map_err(|_| IpcError::Custom("IPC read timeout".to_string()))??;
     if bytes_read == 0 {
         return Err(IpcError::Custom(
             "Connection closed by server without response".to_string(),
         ));
     }
 
-    let resp: IpcResponse = serde_json::from_str(&line)?;
+    if bytes_read > MAX_IPC_LINE_BYTES {
+        return Err(IpcError::Custom("IPC response too large".to_string()));
+    }
+    let resp: IpcResponse = serde_json::from_slice(&line)?;
     Ok(resp)
 }
 
 /// Envía una acción a un socket Unix en una ruta específica de forma asíncrona.
 #[cfg(unix)]
 pub async fn send_command_at(path: &Path, action: &str) -> Result<IpcResponse> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
     let mut stream = tokio::net::UnixStream::connect(path).await?;
     let req = IpcRequest {
@@ -192,16 +203,24 @@ pub async fn send_command_at(path: &Path, action: &str) -> Result<IpcResponse> {
     stream.flush().await?;
 
     let (reader, _) = stream.split();
-    let mut buf_reader = BufReader::new(reader);
-    let mut line = String::new();
-    let bytes_read = buf_reader.read_line(&mut line).await?;
+    let buf_reader = BufReader::new(reader);
+    let mut line = Vec::new();
+    let bytes_read = tokio::time::timeout(
+        IPC_READ_TIMEOUT,
+        buf_reader.take((MAX_IPC_LINE_BYTES + 1) as u64).read_until(b'\n', &mut line),
+    )
+    .await
+    .map_err(|_| IpcError::Custom("IPC read timeout".to_string()))??;
     if bytes_read == 0 {
         return Err(IpcError::Custom(
             "Connection closed by server without response".to_string(),
         ));
     }
 
-    let resp: IpcResponse = serde_json::from_str(&line)?;
+    if bytes_read > MAX_IPC_LINE_BYTES {
+        return Err(IpcError::Custom("IPC response too large".to_string()));
+    }
+    let resp: IpcResponse = serde_json::from_slice(&line)?;
     Ok(resp)
 }
 
@@ -213,7 +232,7 @@ pub fn send_command_sync(action: &str) -> Result<IpcResponse> {
 
 #[cfg(target_os = "windows")]
 pub fn send_command_sync(action: &str) -> Result<IpcResponse> {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::SocketAddr;
     use std::time::Duration;
 
@@ -240,23 +259,28 @@ pub fn send_command_sync(action: &str) -> Result<IpcResponse> {
     stream.write_all(&req_bytes)?;
     stream.flush()?;
 
-    let mut buf_reader = BufReader::new(stream);
-    let mut line = String::new();
-    let bytes_read = buf_reader.read_line(&mut line)?;
+    let buf_reader = BufReader::new(stream);
+    let mut line = Vec::new();
+    let bytes_read = buf_reader
+        .take((MAX_IPC_LINE_BYTES + 1) as u64)
+        .read_until(b'\n', &mut line)?;
     if bytes_read == 0 {
         return Err(IpcError::Custom(
             "Connection closed by server without response".to_string(),
         ));
     }
 
-    let resp: IpcResponse = serde_json::from_str(&line)?;
+    if bytes_read > MAX_IPC_LINE_BYTES {
+        return Err(IpcError::Custom("IPC response too large".to_string()));
+    }
+    let resp: IpcResponse = serde_json::from_slice(&line)?;
     Ok(resp)
 }
 
 /// Envía una acción a un socket Unix en una ruta específica de forma síncrona.
 #[cfg(unix)]
 pub fn send_command_sync_at(path: &Path, action: &str) -> Result<IpcResponse> {
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
 
@@ -280,16 +304,21 @@ pub fn send_command_sync_at(path: &Path, action: &str) -> Result<IpcResponse> {
     stream.write_all(&req_bytes)?;
     stream.flush()?;
 
-    let mut buf_reader = BufReader::new(stream);
-    let mut line = String::new();
-    let bytes_read = buf_reader.read_line(&mut line)?;
+    let buf_reader = BufReader::new(stream);
+    let mut line = Vec::new();
+    let bytes_read = buf_reader
+        .take((MAX_IPC_LINE_BYTES + 1) as u64)
+        .read_until(b'\n', &mut line)?;
     if bytes_read == 0 {
         return Err(IpcError::Custom(
             "Connection closed by server without response".to_string(),
         ));
     }
 
-    let resp: IpcResponse = serde_json::from_str(&line)?;
+    if bytes_read > MAX_IPC_LINE_BYTES {
+        return Err(IpcError::Custom("IPC response too large".to_string()));
+    }
+    let resp: IpcResponse = serde_json::from_slice(&line)?;
     Ok(resp)
 }
 
@@ -311,16 +340,31 @@ pub async fn start_listener(tx: tokio::sync::mpsc::Sender<IpcCommand>) -> Result
 
         let tx = tx.clone();
         tokio::spawn(async move {
-            use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+            use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
             let (reader, mut writer) = stream.split();
-            let mut buf_reader = BufReader::new(reader);
-            let mut line = String::new();
+            let buf_reader = BufReader::new(reader);
+            let mut line = Vec::new();
 
-            match buf_reader.read_line(&mut line).await {
+            match tokio::time::timeout(
+                IPC_READ_TIMEOUT,
+                buf_reader.take((MAX_IPC_LINE_BYTES + 1) as u64).read_until(b'\n', &mut line),
+            )
+            .await
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "IPC read timeout"))
+            .and_then(|result| result)
+            {
                 Ok(0) => {}
+                Ok(bytes_read) if bytes_read > MAX_IPC_LINE_BYTES => {
+                    let resp = IpcResponse::error("IPC request too large");
+                    if let Ok(mut bytes) = serde_json::to_vec(&resp) {
+                        bytes.push(b'\n');
+                        let _ = writer.write_all(&bytes).await;
+                        let _ = writer.flush().await;
+                    }
+                }
                 Ok(_) => {
-                    let req: IpcRequest = match serde_json::from_str(&line) {
+                    let req: IpcRequest = match serde_json::from_slice(&line) {
                         Ok(r) => r,
                         Err(e) => {
                             let resp = IpcResponse::error(format!("Invalid request format: {}", e));
@@ -1192,16 +1236,31 @@ pub async fn start_listener_at(
 
         let tx = tx.clone();
         tokio::spawn(async move {
-            use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+            use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
             let (reader, mut writer) = stream.split();
-            let mut buf_reader = BufReader::new(reader);
-            let mut line = String::new();
+            let buf_reader = BufReader::new(reader);
+            let mut line = Vec::new();
 
-            match buf_reader.read_line(&mut line).await {
+            match tokio::time::timeout(
+                IPC_READ_TIMEOUT,
+                buf_reader.take((MAX_IPC_LINE_BYTES + 1) as u64).read_until(b'\n', &mut line),
+            )
+            .await
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "IPC read timeout"))
+            .and_then(|result| result)
+            {
                 Ok(0) => {}
+                Ok(bytes_read) if bytes_read > MAX_IPC_LINE_BYTES => {
+                    let resp = IpcResponse::error("IPC request too large");
+                    if let Ok(mut bytes) = serde_json::to_vec(&resp) {
+                        bytes.push(b'\n');
+                        let _ = writer.write_all(&bytes).await;
+                        let _ = writer.flush().await;
+                    }
+                }
                 Ok(_) => {
-                    let req: IpcRequest = match serde_json::from_str(&line) {
+                    let req: IpcRequest = match serde_json::from_slice(&line) {
                         Ok(r) => r,
                         Err(e) => {
                             let resp = IpcResponse::error(format!("Invalid request format: {}", e));

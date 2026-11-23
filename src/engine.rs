@@ -114,7 +114,12 @@ pub struct ReplayEngine {
     #[allow(dead_code)]
     win_ram_buffer: Arc<Mutex<std::collections::VecDeque<(Instant, Arc<Vec<u8>>)>>>,
     #[allow(dead_code)]
-    win_buffer_running: Arc<AtomicBool>,
+    win_replay_session: Arc<std::sync::atomic::AtomicU64>,
+    /// Ganancia en vivo (f32 bits) del audio de sistema/mic en Windows.
+    #[allow(dead_code)]
+    win_gain_system: Arc<std::sync::atomic::AtomicU32>,
+    #[allow(dead_code)]
+    win_gain_mic: Arc<std::sync::atomic::AtomicU32>,
     #[allow(dead_code)]
     win_replay_audio_stop: Mutex<Option<Arc<AtomicBool>>>,
     #[allow(dead_code)]
@@ -169,13 +174,6 @@ impl ReplayEngine {
         // Asegura que exista el directorio en RAM
         let _ = std::fs::create_dir_all(&buffer_dir);
 
-        // Si `/dev/shm/sane-rec` no existe, intentamos crear un symlink hacia `buffer_dir`
-        let alias = PathBuf::from("/dev/shm/sane-rec");
-        if !alias.exists() && alias != buffer_dir {
-            #[cfg(unix)]
-            let _ = std::os::unix::fs::symlink(&buffer_dir, &alias);
-        }
-
         let engine = Self {
             config: Arc::new(Mutex::new(config)),
             buffer_dir,
@@ -190,7 +188,9 @@ impl ReplayEngine {
             start_lock: Mutex::new(()),
             is_saving: Arc::new(AtomicBool::new(false)),
             win_ram_buffer: Arc::new(Mutex::new(std::collections::VecDeque::new())),
-            win_buffer_running: Arc::new(AtomicBool::new(false)),
+            win_replay_session: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            win_gain_system: Arc::new(std::sync::atomic::AtomicU32::new(1.0f32.to_bits())),
+            win_gain_mic: Arc::new(std::sync::atomic::AtomicU32::new(1.0f32.to_bits())),
             win_replay_audio_stop: Mutex::new(None),
             win_continuous_audio_stop: Mutex::new(None),
             win_replay_backend: Mutex::new(WindowsCaptureBackend::DdaGrab),
@@ -502,6 +502,9 @@ impl ReplayEngine {
             let mut cfg = self.config.lock().unwrap();
             cfg.audio.volume_system = volume;
         }
+        #[cfg(target_os = "windows")]
+        self.win_gain_system.store(volume.clamp(0.0, 1.5).to_bits(), Ordering::Relaxed);
+        #[cfg(not(target_os = "windows"))]
         Self::apply_sink_input_volume("sane_rec_system", volume);
     }
 
@@ -512,6 +515,9 @@ impl ReplayEngine {
             let mut cfg = self.config.lock().unwrap();
             cfg.audio.volume_mic = volume;
         }
+        #[cfg(target_os = "windows")]
+        self.win_gain_mic.store(volume.clamp(0.0, 1.5).to_bits(), Ordering::Relaxed);
+        #[cfg(not(target_os = "windows"))]
         Self::apply_sink_input_volume("sane_rec_mic", volume);
     }
 
@@ -712,7 +718,15 @@ impl ReplayEngine {
         );
 
         let mut cmd = self.build_replay_command(&config);
-        let mut child = cmd.spawn()?;
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if !self.is_recording() {
+                    self.cleanup_audio_modules();
+                }
+                return Err(e.into());
+            }
+        };
 
         // Manejo seguro de inicio y captura de fallos
         std::thread::sleep(std::time::Duration::from_millis(400));
@@ -741,8 +755,19 @@ impl ReplayEngine {
 
                 self.cleanup_audio_modules();
                 let mut fallback_cmd = self.build_replay_command(&fallback_config);
-                child = fallback_cmd.spawn()?;
+                child = match fallback_cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if !self.is_recording() {
+                    self.cleanup_audio_modules();
+                }
+                return Err(e.into());
+            }
+        };
             } else {
+                if !self.is_recording() {
+                    self.cleanup_audio_modules();
+                }
                 return Err(EngineError::Custom("wf-recorder falló al iniciar el búfer de repetición. Revisa ~/.config/sane-rec/crash.log".into()));
             }
         }
@@ -797,8 +822,8 @@ impl ReplayEngine {
     pub fn stop_replay(&self) -> Result<()> {
         self.pruner_running.store(false, Ordering::SeqCst);
         self.replay_session.fetch_add(1, Ordering::SeqCst);
-        let mut guard = self.replay_process.lock().unwrap();
-        if let Some(mut child) = guard.take() {
+        let child = self.replay_process.lock().unwrap().take();
+        if let Some(mut child) = child {
             unsafe {
                 libc::kill(child.id() as i32, libc::SIGINT);
             }
@@ -834,7 +859,7 @@ impl ReplayEngine {
             .parse::<EncoderProfile>()
             .unwrap_or(EncoderProfile::SaneSafe);
 
-        let (mut audio_port, mut audio_stop) = match start_windows_audio_feeder(&config) {
+        let (mut audio_port, mut audio_stop) = match start_windows_audio_feeder(&config, &self.win_gain_system, &self.win_gain_mic) {
             Ok((port, stop)) => (Some(port), Some(stop)),
             Err(e) => {
                 eprintln!("Aviso: No se pudo iniciar el feeder de audio WASAPI: {}", e);
@@ -883,7 +908,15 @@ impl ReplayEngine {
         let (mut cmd, actual_backend) = build_replay_cmd(&config, audio_port, first_backend);
         *self.win_replay_backend.lock().unwrap() = actual_backend;
         *self.win_replay_executed_cmd.lock().unwrap() = Some(render_ffmpeg_command(&cmd));
-        let mut child = cmd.spawn()?;
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if let Some(stop) = audio_stop.take() {
+                    stop.store(true, Ordering::SeqCst);
+                }
+                return Err(e.into());
+            }
+        };
 
         let stderr_log = Arc::clone(&self.win_replay_stderr_log);
         if let Ok(mut g) = stderr_log.lock() {
@@ -951,7 +984,7 @@ impl ReplayEngine {
                     fallback_config.video.target = "desktop".to_string();
                 }
 
-                let (retry_port, retry_stop) = match start_windows_audio_feeder(&fallback_config) {
+                let (retry_port, retry_stop) = match start_windows_audio_feeder(&fallback_config, &self.win_gain_system, &self.win_gain_mic) {
                     Ok((port, stop)) => (Some(port), Some(stop)),
                     Err(_) => (None, None),
                 };
@@ -961,7 +994,15 @@ impl ReplayEngine {
                 let (mut fallback_cmd, fallback_backend) = build_replay_cmd(&fallback_config, audio_port, WindowsCaptureBackend::GdiGrab);
                 *self.win_replay_backend.lock().unwrap() = fallback_backend;
                 *self.win_replay_executed_cmd.lock().unwrap() = Some(render_ffmpeg_command(&fallback_cmd));
-                child = fallback_cmd.spawn()?;
+                child = match fallback_cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if let Some(stop) = audio_stop.take() {
+                    stop.store(true, Ordering::SeqCst);
+                }
+                return Err(e.into());
+            }
+        };
 
                 if let Ok(mut g) = stderr_log.lock() {
                     g.clear();
@@ -1015,22 +1056,28 @@ impl ReplayEngine {
             }
         }
 
+        let mut stdout = match child.stdout.take() {
+            Some(s) => s,
+            None => {
+                if let Some(stop) = audio_stop.take() {
+                    stop.store(true, Ordering::SeqCst);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(EngineError::Custom("Fallo al capturar stdout de ffmpeg".into()));
+            }
+        };
         *self.win_replay_audio_stop.lock().unwrap() = audio_stop;
-
-        let mut stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| EngineError::Custom("Fallo al capturar stdout de ffmpeg".into()))?;
 
         *self.replay_process.lock().unwrap() = Some(child);
         *self.start_time.lock().unwrap() = Some(Instant::now());
         let started_ms = mono_ms();
         self.win_replay_start_ms.store(started_ms, Ordering::SeqCst);
         self.win_last_video_ms.store(started_ms, Ordering::SeqCst);
-        self.win_buffer_running.store(true, Ordering::SeqCst);
+        let session_id = self.win_replay_session.fetch_add(1, Ordering::SeqCst) + 1;
 
         let ram_buf = Arc::clone(&self.win_ram_buffer);
-        let running_flag = Arc::clone(&self.win_buffer_running);
+        let session_tracker = Arc::clone(&self.win_replay_session);
         let last_video = Arc::clone(&self.win_last_video_ms);
         let dur_secs = config.replay.duration_secs;
         // Escalar dinámicamente el límite de RAM según la duración solicitada (12 MB/s para 60 FPS)
@@ -1045,7 +1092,7 @@ impl ReplayEngine {
                 let mut raw_buf = vec![0u8; 65424]; // 348 paquetes MPEG-TS de 188 bytes
                 let mut leftover: Vec<u8> = Vec::with_capacity(376);
                 let mut current_bytes: usize = 0;
-                while running_flag.load(Ordering::Relaxed) {
+                while session_tracker.load(Ordering::Relaxed) == session_id {
                     match stdout.read(&mut raw_buf) {
                         Ok(0) => break,
                         Ok(n) => {
@@ -1107,12 +1154,12 @@ impl ReplayEngine {
     /// Detiene el proceso de repetición instantánea en Windows y libera el buffer en RAM.
     #[cfg(target_os = "windows")]
     pub fn stop_replay(&self) -> Result<()> {
-        self.win_buffer_running.store(false, Ordering::SeqCst);
+        self.win_replay_session.fetch_add(1, Ordering::SeqCst);
         if let Some(stop_flag) = self.win_replay_audio_stop.lock().unwrap().take() {
             stop_flag.store(true, Ordering::SeqCst);
         }
-        let mut guard = self.replay_process.lock().unwrap();
-        if let Some(mut child) = guard.take() {
+        let child = self.replay_process.lock().unwrap().take();
+        if let Some(mut child) = child {
             if let Some(mut stdin) = child.stdin.take() {
                 use std::io::Write;
                 let _ = stdin.write_all(b"q\n");
@@ -1163,7 +1210,10 @@ impl ReplayEngine {
             let now = Instant::now();
             let mut restarts = self.win_stale_restarts.lock().unwrap();
             restarts.retain(|t| now.duration_since(*t) <= Duration::from_secs(60));
-            restarts.push(now);
+            // Un único stall cuenta una sola vez: ignora polls dentro del cooldown de 6s
+            if restarts.last().map_or(true, |t| now.duration_since(*t) > Duration::from_secs(6)) {
+                restarts.push(now);
+            }
             if restarts.len() >= 2 {
                 self.win_force_gdi_once.store(true, Ordering::SeqCst);
             }
@@ -1228,7 +1278,15 @@ impl ReplayEngine {
         );
 
         let mut cmd = self.build_continuous_command(&config, &output_path);
-        let mut child = cmd.spawn()?;
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if !self.is_running() {
+                    self.cleanup_audio_modules();
+                }
+                return Err(e.into());
+            }
+        };
 
         // Manejo seguro de inicio y captura de fallos
         std::thread::sleep(std::time::Duration::from_millis(600));
@@ -1257,8 +1315,19 @@ impl ReplayEngine {
 
                 self.cleanup_audio_modules();
                 let mut fallback_cmd = self.build_continuous_command(&fallback_config, &output_path);
-                child = fallback_cmd.spawn()?;
+                child = match fallback_cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if !self.is_running() {
+                    self.cleanup_audio_modules();
+                }
+                return Err(e.into());
+            }
+        };
             } else {
+                if !self.is_running() {
+                    self.cleanup_audio_modules();
+                }
                 return Err(EngineError::Custom("wf-recorder falló al iniciar la grabación continua. Revisa ~/.config/sane-rec/crash.log".into()));
             }
         }
@@ -1282,8 +1351,7 @@ impl ReplayEngine {
     /// Detiene la grabación continua enviando SIGINT en Linux.
     #[cfg(target_os = "linux")]
     pub fn stop_continuous_recording(&self) -> Result<PathBuf> {
-        let mut guard = self.continuous_process.lock().unwrap();
-        let mut child = guard.take().ok_or(EngineError::NotRunning)?;
+        let mut child = self.continuous_process.lock().unwrap().take().ok_or(EngineError::NotRunning)?;
         let output_path = self
             .continuous_output
             .lock()
@@ -1383,7 +1451,7 @@ impl ReplayEngine {
             .parse::<EncoderProfile>()
             .unwrap_or(EncoderProfile::SaneSafe);
 
-        let (mut audio_port, mut audio_stop) = match start_windows_audio_feeder(&config) {
+        let (mut audio_port, mut audio_stop) = match start_windows_audio_feeder(&config, &self.win_gain_system, &self.win_gain_mic) {
             Ok((port, stop)) => (Some(port), Some(stop)),
             Err(e) => {
                 eprintln!("Aviso: No se pudo iniciar el feeder de audio WASAPI: {}", e);
@@ -1417,7 +1485,15 @@ impl ReplayEngine {
         let (mut cmd, actual_backend) = build_cont_cmd(&config, audio_port, &output_path, WindowsCaptureBackend::DdaGrab);
         *self.win_continuous_backend.lock().unwrap() = actual_backend;
         *self.win_continuous_executed_cmd.lock().unwrap() = Some(render_ffmpeg_command(&cmd));
-        let mut child = cmd.spawn()?;
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if let Some(stop) = audio_stop.take() {
+                    stop.store(true, Ordering::SeqCst);
+                }
+                return Err(e.into());
+            }
+        };
 
         // Captura stderr para telemetría y crash reports (no descartamos errores del encoder)
         if let Some(mut err_pipe) = child.stderr.take() {
@@ -1482,7 +1558,7 @@ impl ReplayEngine {
                     fallback_config.video.target = "desktop".to_string();
                 }
 
-                let (retry_port, retry_stop) = match start_windows_audio_feeder(&fallback_config) {
+                let (retry_port, retry_stop) = match start_windows_audio_feeder(&fallback_config, &self.win_gain_system, &self.win_gain_mic) {
                     Ok((port, stop)) => (Some(port), Some(stop)),
                     Err(_) => (None, None),
                 };
@@ -1492,7 +1568,15 @@ impl ReplayEngine {
                 let (mut fallback_cmd, fallback_backend) = build_cont_cmd(&fallback_config, audio_port, &output_path, WindowsCaptureBackend::GdiGrab);
                 *self.win_continuous_backend.lock().unwrap() = fallback_backend;
                 *self.win_continuous_executed_cmd.lock().unwrap() = Some(render_ffmpeg_command(&fallback_cmd));
-                child = fallback_cmd.spawn()?;
+                child = match fallback_cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if let Some(stop) = audio_stop.take() {
+                    stop.store(true, Ordering::SeqCst);
+                }
+                return Err(e.into());
+            }
+        };
 
                 if let Some(mut err_pipe) = child.stderr.take() {
                     let log_clone = Arc::clone(&self.continuous_stderr_log);
@@ -1559,8 +1643,7 @@ impl ReplayEngine {
         if let Some(stop_flag) = self.win_continuous_audio_stop.lock().unwrap().take() {
             stop_flag.store(true, Ordering::SeqCst);
         }
-        let mut guard = self.continuous_process.lock().unwrap();
-        let mut child = guard.take().ok_or(EngineError::NotRunning)?;
+        let mut child = self.continuous_process.lock().unwrap().take().ok_or(EngineError::NotRunning)?;
         let output_path = self
             .continuous_output
             .lock()
@@ -2305,47 +2388,12 @@ impl ReplayEngine {
             }
         }
 
-        // Si no se encontraron y `/dev/shm/sane-rec` es una ruta distinta y existe, comprobamos allí
-        let fallback = Path::new("/dev/shm/sane-rec");
-        if segments.is_empty() && fallback.exists() && fallback != self.buffer_dir {
-            if let Ok(entries) = std::fs::read_dir(fallback) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() {
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or_default();
-                        let ext = path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .unwrap_or_default();
-
-                        if (name.starts_with("seg_") || name.starts_with("segment_"))
-                            && (ext == "ts" || ext == "mp4" || ext == "mkv")
-                            && !name.contains('%')
-                        {
-                            if let Ok(meta) = entry.metadata() {
-                                if meta.len() > 0 {
-                                    segments.push(path);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         Ok(segments)
     }
 
     /// Limpia todos los segmentos rodantes y temporales en RAM.
     pub fn clean_buffer(&self) -> Result<()> {
         Self::clean_directory(&self.buffer_dir);
-        let fallback = Path::new("/dev/shm/sane-rec");
-        if fallback.exists() && fallback != self.buffer_dir {
-            Self::clean_directory(fallback);
-        }
         Ok(())
     }
 
@@ -2394,7 +2442,7 @@ impl Drop for ReplayEngine {
 
         self.pruner_running.store(false, Ordering::SeqCst);
         self.replay_session.fetch_add(1, Ordering::SeqCst);
-        self.win_buffer_running.store(false, Ordering::SeqCst);
+        self.win_replay_session.fetch_add(1, Ordering::SeqCst);
 
         #[cfg(target_os = "windows")]
         {
@@ -2604,7 +2652,6 @@ impl WinCapture {
     fn open(
         device: &cpal::Device,
         sc: cpal::SupportedStreamConfig,
-        volume: f32,
         buf: &Arc<Mutex<std::collections::VecDeque<f32>>>,
         dead: &Arc<AtomicBool>,
     ) -> Option<cpal::Stream> {
@@ -2613,7 +2660,7 @@ impl WinCapture {
         let resampler = Arc::new(Mutex::new(WindowsAudioResampler::new(
             sc.sample_rate().0,
             sc.channels() as usize,
-            volume,
+            1.0, // la ganancia en vivo se aplica en la mezcla del feeder
         )));
         let cfg: cpal::StreamConfig = sc.into();
 
@@ -2672,7 +2719,7 @@ impl WinCapture {
         if config.audio.capture_desktop {
             if let Some(dev) = host.default_output_device() {
                 if let (Some(key), Ok(sc)) = (Self::key(&dev, true), dev.default_output_config()) {
-                    if let Some(s) = Self::open(&dev, sc, config.audio.volume_system, sys_buf, &dead) {
+                    if let Some(s) = Self::open(&dev, sc, sys_buf, &dead) {
                         streams.push(s);
                         keys[0] = Some(key);
                     }
@@ -2682,7 +2729,7 @@ impl WinCapture {
         if config.audio.capture_mic {
             if let Some(dev) = host.default_input_device() {
                 if let (Some(key), Ok(sc)) = (Self::key(&dev, false), dev.default_input_config()) {
-                    if let Some(s) = Self::open(&dev, sc, config.audio.volume_mic, mic_buf, &dead) {
+                    if let Some(s) = Self::open(&dev, sc, mic_buf, &dead) {
                         streams.push(s);
                         keys[1] = Some(key);
                     }
@@ -2713,7 +2760,11 @@ impl WinCapture {
 
 /// Inicia el feeder de audio WASAPI Loopback y Micrófono con cpal transmitiendo PCM crudo estéreo a 48 kHz vía TCP local.
 #[cfg(target_os = "windows")]
-fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<AtomicBool>)> {
+fn start_windows_audio_feeder(
+    config: &Config,
+    gain_system: &Arc<std::sync::atomic::AtomicU32>,
+    gain_mic: &Arc<std::sync::atomic::AtomicU32>,
+) -> std::io::Result<(u16, Arc<AtomicBool>)> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -2722,6 +2773,9 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
     let system_buffer = Arc::new(Mutex::new(std::collections::VecDeque::<f32>::new()));
     let mic_buffer = Arc::new(Mutex::new(std::collections::VecDeque::<f32>::new()));
     let config_clone = config.clone();
+    gain_system.store(config.audio.volume_system.clamp(0.0, 1.5).to_bits(), Ordering::Relaxed);
+    gain_mic.store(config.audio.volume_mic.clamp(0.0, 1.5).to_bits(), Ordering::Relaxed);
+    let (gain_system, gain_mic) = (Arc::clone(gain_system), Arc::clone(gain_mic));
 
     // Feeder Thread continuo hacia FFmpeg a 48000 Hz estéreo cada 20ms
     std::thread::Builder::new()
@@ -2837,6 +2891,8 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
                 {
                     let mut sys_q = system_buffer.lock().unwrap();
                     let mut mic_q = mic_buffer.lock().unwrap();
+                    let gain_sys = f32::from_bits(gain_system.load(Ordering::Relaxed));
+                    let gain_mic = f32::from_bits(gain_mic.load(Ordering::Relaxed));
 
                     // Purgar acumulación si el buffer excede 100ms (4800 frames = 9600 muestras)
                     if sys_q.len() > 9600 {
@@ -2855,8 +2911,8 @@ fn start_windows_audio_feeder(config: &Config) -> std::io::Result<(u16, Arc<Atom
                         let mic_l = mic_q.pop_front().unwrap_or(0.0);
                         let mic_r = mic_q.pop_front().unwrap_or(0.0);
 
-                        let mixed_l = (sys_l + mic_l).clamp(-1.0, 1.0);
-                        let mixed_r = (sys_r + mic_r).clamp(-1.0, 1.0);
+                        let mixed_l = (sys_l * gain_sys + mic_l * gain_mic).clamp(-1.0, 1.0);
+                        let mixed_r = (sys_r * gain_sys + mic_r * gain_mic).clamp(-1.0, 1.0);
 
                         let s16_l = (mixed_l * 32767.0) as i16;
                         let s16_r = (mixed_r * 32767.0) as i16;
