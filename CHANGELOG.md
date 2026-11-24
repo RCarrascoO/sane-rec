@@ -1,5 +1,9 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.8.1 - 2026-11-23
+- **Fix crítico Windows (`NVIDIA`/`AMD`):** Restaurado pipeline `hwdownload,format=bgra` de `v0.7.6` en `DdaGrab` y `pop_front` seguro en `win_ram_buffer`.
+- **Fix sincronización Replay/UI (`status_epoch`):** Eliminado falso positivo/desync de `Daemon replay`, rollback en fallo de toggle, debounce post-operación de 1200 ms, persistencia del listener IPC de la GUI tras `stop` y límite IPC a 64 KB.
+
 ## v0.8.0 - 2026-11-23
 - **Estabilización Backend P0/P1:** Deadlock AB-BA en Linux, `/dev/shm` aislado por UID, sesión atómica en Windows, volumen en vivo sin reinicio de búfer, UI Slint no bloqueante e IPC acotado.
 - **Perfiles `Low / Medium / High`:** Preset `Low` por defecto manteniendo compatibilidad `v0.7.6` y VA-API Zero B-Frames (`-b 0`) en Polaris.

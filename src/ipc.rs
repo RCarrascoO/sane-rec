@@ -3,7 +3,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
-const MAX_IPC_LINE_BYTES: usize = 4096;
+const MAX_IPC_LINE_BYTES: usize = 65536;
 const IPC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Solicitud enviada por el cliente al socket IPC.

@@ -768,7 +768,7 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
     report.push_str("\n--- DICTAMEN DE SALUD Y RENDIMIENTO ---\n");
     report.push_str(&format!("ESTADO GENERAL       : {}\n", verdict_title));
     report.push_str(&format!("Diagnóstico          : {}\n", verdict_desc));
-    if !ctx.is_replay_clip && duplicate_ratio > 0.10 && ctx.capture_backend.to_lowercase().contains("gdigrab") {
+    if duplicate_ratio > 0.10 && ctx.capture_backend.to_lowercase().contains("gdigrab") {
         report.push_str("ADVERTENCIA CAUSA RAÍZ: Más del 10% de cuadros duplicados; el backend GDI no puede capturar la swapchain de la GPU.\n");
     }
     if short_clip {

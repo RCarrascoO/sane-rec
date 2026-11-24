@@ -393,11 +393,11 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
                 });
                 return false;
             }
-            LAST_IPC_RECORD_MS.store(now_ms, std::sync::atomic::Ordering::SeqCst);
-
-            match engine.toggle_continuous_recording() {
+            let result = engine.toggle_continuous_recording();
+            let finished_ms = IPC_CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64;
+            LAST_IPC_RECORD_MS.store(finished_ms, std::sync::atomic::Ordering::SeqCst);
+            match result {
                 Ok(recording) => {
-                    LAST_IPC_RECORD_MS.store(now_ms, std::sync::atomic::Ordering::SeqCst);
                     cmd.ok(if recording {
                         "Grabación continua iniciada"
                     } else {
@@ -430,11 +430,11 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
                 });
                 return false;
             }
-            LAST_IPC_REPLAY_MS.store(now_ms, std::sync::atomic::Ordering::SeqCst);
-
-            match engine.toggle_replay() {
+            let result = engine.toggle_replay();
+            let finished_ms = IPC_CLOCK.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64;
+            LAST_IPC_REPLAY_MS.store(finished_ms, std::sync::atomic::Ordering::SeqCst);
+            match result {
                 Ok(running) => {
-                    LAST_IPC_REPLAY_MS.store(now_ms, std::sync::atomic::Ordering::SeqCst);
                     cmd.ok(if running {
                         "Búfer de replay iniciado"
                     } else {
@@ -854,7 +854,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     while let Some(cmd) = rx.recv().await {
                         let action = cmd.action.clone();
                         let was_running = engine_for_ipc.is_running();
-                        let should_stop = dispatch_ipc_command(&engine_for_ipc, cmd).await;
+                        dispatch_ipc_command(&engine_for_ipc, cmd).await;
 
                         let status = engine_for_ipc.get_status();
                         let out_dir = engine_for_ipc.config().storage.output_dir;
@@ -884,9 +884,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         });
-                        if should_stop {
-                            break;
-                        }
                     }
                 });
             }
@@ -957,15 +954,26 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    let status_snapshot = Arc::new(std::sync::Mutex::new(None::<EngineStatus>));
+    let status_epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
     // Callback toggle-replay
     {
         let ui_weak = ui.as_weak();
         let engine_clone = local_engine.clone();
         let daemon_flag = daemon_running_flag.clone();
+        let status_snapshot_for_toggle = status_snapshot.clone();
+        let status_epoch_for_toggle = status_epoch.clone();
         ui.on_toggle_replay(move || {
             let is_daemon = daemon_flag.load(std::sync::atomic::Ordering::SeqCst);
             let ui_weak = ui_weak.clone();
-                let engine_for_task = engine_clone.clone();
+            let engine_for_task = engine_clone.clone();
+            status_epoch_for_toggle.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Ok(mut snapshot) = status_snapshot_for_toggle.lock() {
+                *snapshot = None;
+            }
+            let status_epoch = status_epoch_for_toggle.clone();
+            let status_snapshot = status_snapshot_for_toggle.clone();
             std::thread::spawn(move || {
                 let result = if is_daemon {
                     ipc::send_command_sync("toggle_replay")
@@ -976,6 +984,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     Err("No engine available".to_string())
                 };
+                let actual_state = match &result {
+                    Ok(is_running) => *is_running,
+                    Err(_) if is_daemon => false,
+                    Err(_) => engine_for_task.as_ref().map(|eng| eng.is_running()).unwrap_or(false),
+                };
+                status_epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if let Ok(mut snapshot) = status_snapshot.lock() {
+                    *snapshot = None;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_weak.upgrade() {
                         match result {
@@ -988,7 +1005,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                     "Búfer de repetición detenido"
                                 });
                             }
-                            Err(error) => show_toast(&ui, "warning", &format!("No se pudo cambiar el búfer: {}", error)),
+                            Err(error) => {
+                                ui.set_is_running(actual_state);
+                                show_toast(&ui, "warning", &format!("No se pudo cambiar el búfer: {}", error));
+                            }
                         }
                     }
                 });
@@ -2525,12 +2545,14 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     // Temporizador Slint para actualizar métricas en vivo y medidores VU.
     // Solo redibuja picos de audio cuando el usuario está en la pestaña Audio (active_view == 2)
     // y el valor cambió > 0.008, evitando que MSI Afterburner / RivaTuner (RTSS) enganche a sane-rec como juego 3D activo.
-    let status_snapshot = Arc::new(std::sync::Mutex::new(None::<EngineStatus>));
     {
         let snapshot = status_snapshot.clone();
+        let epoch_counter = status_epoch.clone();
         let engine = local_engine.clone();
         let daemon_flag = daemon_running_flag.clone();
         std::thread::spawn(move || loop {
+            let epoch = epoch_counter.load(std::sync::atomic::Ordering::SeqCst);
+            let is_daemon = daemon_flag.load(std::sync::atomic::Ordering::SeqCst);
             let status = if daemon_flag.load(std::sync::atomic::Ordering::SeqCst) {
                 ipc::send_command_sync("status")
                     .ok()
@@ -2539,9 +2561,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 engine.as_ref().map(|eng| eng.get_status())
             };
-            if let Some(status) = status {
-                if let Ok(mut current) = snapshot.lock() {
-                    *current = Some(status);
+            if let Ok(mut current) = snapshot.lock() {
+                if is_daemon && status.is_none() {
+                    *current = None;
+                } else if epoch == epoch_counter.load(std::sync::atomic::Ordering::SeqCst) {
+                    *current = status;
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -2562,6 +2586,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let mut last_mic_peak: f32 = -1.0;
         #[cfg(target_os = "windows")]
         let watchdog_busy = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let status_epoch = status_epoch.clone();
         timer.start(
             slint::TimerMode::Repeated,
             std::time::Duration::from_millis(50),
@@ -2590,9 +2615,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 ticks += 1;
                 // Cada 500ms consulta el estado del motor y actualiza contadores
                 if ticks % 10 == 0 {
+                    let epoch = status_epoch.load(std::sync::atomic::Ordering::SeqCst);
                     let status_opt = status_snapshot.lock().ok().and_then(|status| status.clone());
 
-                    if let Some(status) = status_opt {
+                    if epoch == status_epoch.load(std::sync::atomic::Ordering::SeqCst) {
+                        if let Some(status) = status_opt {
                         ui.set_is_running(status.is_running);
                         ui.set_is_recording(status.is_recording);
                         ui.set_max_memory_mb(status.max_memory_mb as i32);
@@ -2619,6 +2646,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             ui.set_recording_time("00:00".into());
                         }
+                    }
                     }
 
                     #[cfg(target_os = "windows")]

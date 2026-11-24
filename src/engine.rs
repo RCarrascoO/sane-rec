@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(any(target_os = "windows", test))]
-use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -1123,8 +1121,8 @@ impl ReplayEngine {
                         Ok(0) => break,
                         Ok(n) => {
                             leftover.extend_from_slice(&raw_buf[..n]);
-                            // Alinear al primer byte de sincronización MPEG-TS (0x47) validando +188
-                            if let Some(sync_pos) = find_ts_sync(&leftover) {
+                            // Alinear al primer byte de sincronización MPEG-TS (0x47)
+                            if let Some(sync_pos) = leftover.iter().position(|&b| b == 0x47) {
                                 if sync_pos > 0 {
                                     leftover.drain(..sync_pos);
                                 }
@@ -1158,21 +1156,11 @@ impl ReplayEngine {
                                     }
                                 }
 
-                                if current_bytes > max_bytes && q.len() > 10 {
-                                    let mut bytes_to_remove = current_bytes - max_bytes;
-                                    let max_prune = q.len() - 10;
-                                    let mut prune_count = 0;
-                                    for (_, chunk) in q.iter().take(max_prune) {
-                                        if bytes_to_remove == 0 {
-                                            break;
-                                        }
-                                        bytes_to_remove = bytes_to_remove.saturating_sub(chunk.len());
-                                        prune_count += 1;
-                                    }
-                                    if prune_count > 0 {
-                                        let removed_bytes: usize =
-                                            q.drain(..prune_count).map(|(_, chunk)| chunk.len()).sum();
-                                        current_bytes = current_bytes.saturating_sub(removed_bytes);
+                                while current_bytes > max_bytes && q.len() > 10 {
+                                    if let Some(removed) = q.pop_front() {
+                                        current_bytes = current_bytes.saturating_sub(removed.1.len());
+                                    } else {
+                                        break;
                                     }
                                 }
                             }
@@ -1246,10 +1234,7 @@ impl ReplayEngine {
             let now = Instant::now();
             let mut restarts = self.win_stale_restarts.lock().unwrap();
             restarts.retain(|t| now.duration_since(*t) <= Duration::from_secs(60));
-            // Un único stall cuenta una sola vez: ignora polls dentro del cooldown de 6s
-            if restarts.last().map_or(true, |t| now.duration_since(*t) > Duration::from_secs(6)) {
-                restarts.push(now);
-            }
+            restarts.push(now);
             if restarts.len() >= 2 {
                 self.win_force_gdi_once.store(true, Ordering::SeqCst);
             }
@@ -3255,28 +3240,6 @@ pub fn build_windows_scale_filter(scale: &str) -> String {
     }
 }
 
-#[cfg(any(target_os = "windows", test))]
-fn supports_scale_d3d11() -> bool {
-    static SUPPORTED: OnceLock<bool> = OnceLock::new();
-    *SUPPORTED.get_or_init(|| {
-        #[cfg(all(target_os = "windows", not(test)))]
-        {
-            new_hidden_command(&resolve_binary("ffmpeg"))
-                .args(["-hide_banner", "-filters"])
-                .output()
-                .map(|output| {
-                    output.status.success()
-                        && String::from_utf8_lossy(&output.stdout).contains("scale_d3d11")
-                })
-                .unwrap_or(false)
-        }
-        #[cfg(not(all(target_os = "windows", not(test))))]
-        {
-            false
-        }
-    })
-}
-
 /// Retorna `(preset_or_quality, qp_or_crf)` para los 4 encoders base en Windows según `QualityTier`.
 #[cfg(any(target_os = "windows", test))]
 fn windows_tier_params(profile: &EncoderProfile, tier: QualityTier) -> (&'static str, &'static str) {
@@ -3326,24 +3289,7 @@ pub fn apply_windows_profile_args(
         None
     };
 
-    let d3d11_profile = matches!(
-        profile,
-        EncoderProfile::NvidiaHardware | EncoderProfile::AmdHardware
-    );
-    let use_d3d11_scale = backend == WindowsCaptureBackend::DdaGrab
-        && crop_filter.is_none()
-        && d3d11_profile
-        && supports_scale_d3d11();
-    let full_filter = if use_d3d11_scale {
-        let scale = config.video.scale.trim();
-        if scale.is_empty() || scale.eq_ignore_ascii_case("none") || scale == "Nativa (100%)" {
-            "scale_d3d11=format=nv12".to_string()
-        } else if let Some((width, height)) = scale.split_once('x') {
-            format!("scale_d3d11=w={}:h={}:format=nv12", width, height)
-        } else {
-            "scale_d3d11=format=nv12".to_string()
-        }
-    } else if backend == WindowsCaptureBackend::DdaGrab {
+    let full_filter = if backend == WindowsCaptureBackend::DdaGrab {
         if let Some(crop) = crop_filter {
             format!("hwdownload,format=bgra,{},{}", crop, scale_filter)
         } else {
@@ -3396,9 +3342,7 @@ pub fn apply_windows_profile_args(
                 "-qp_p",
                 tier_qp,
             ]);
-            if !use_d3d11_scale {
-                cmd.arg("-pix_fmt").arg("nv12");
-            }
+            cmd.arg("-pix_fmt").arg("nv12");
             cmd.args(["-header_insertion_mode", "gop"]);
         }
         EncoderProfile::NvidiaHardware => {
@@ -3418,9 +3362,7 @@ pub fn apply_windows_profile_args(
                 "-bf",
                 "0",
             ]);
-            if !use_d3d11_scale {
-                cmd.arg("-pix_fmt").arg("yuv420p");
-            }
+            cmd.arg("-pix_fmt").arg("yuv420p");
             cmd.args(["-forced-idr", "1", "-aud", "1"]);
         }
         EncoderProfile::IntelHardware => {
