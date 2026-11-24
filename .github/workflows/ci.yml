@@ -13,9 +13,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libasound2-dev libfontconfig1-dev libxkbcommon-dev
+          sudo apt-get install -y pkg-config libasound2-dev libfontconfig1-dev libxkbcommon-dev xvfb
       - name: Run tests
-        run: cargo test --quiet
+        run: xvfb-run -a cargo test --quiet
 
   test-windows:
     runs-on: windows-latest

@@ -287,11 +287,13 @@ mod tests {
         assert!(profiles.contains(&"Universal-Safe".to_string()));
         assert!(profiles.contains(&"Sane-Desktop-Polaris".to_string()));
         assert!(profiles.contains(&"Notebook-Universal-Safe".to_string()));
-        assert!(profiles.contains(&"hime-config".to_string()));
         assert!(profiles.contains(&"Pavilion-Gaming-Celsius".to_string()));
 
         #[cfg(not(target_os = "windows"))]
-        assert!(profiles.contains(&"Polaris-VAAPI-ZeroBFrames".to_string()));
+        {
+            assert!(profiles.contains(&"hime-config".to_string()));
+            assert!(profiles.contains(&"Polaris-VAAPI-ZeroBFrames".to_string()));
+        }
 
         #[cfg(target_os = "windows")]
         {

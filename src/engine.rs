@@ -3938,6 +3938,7 @@ mod tests {
         assert!(!chunk_has_video_pusi(&ts_pkt(true, 0x100)[..187]));
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_default_buffer_dir_contains_uid() {
         let dir = default_buffer_dir();
@@ -4133,6 +4134,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_is_source_available_nonexistent() {
         assert!(!super::is_source_available("nonexistent_device_source_xyz_12345"));
