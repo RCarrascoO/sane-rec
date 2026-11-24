@@ -1,5 +1,11 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.8.0 - 2026-11-23
+- **Estabilización Backend P0/P1:** Deadlock AB-BA en Linux, `/dev/shm` aislado por UID, sesión atómica en Windows, volumen en vivo sin reinicio de búfer, UI Slint no bloqueante e IPC acotado.
+- **Perfiles `Low / Medium / High`:** Preset `Low` por defecto manteniendo compatibilidad `v0.7.6` y VA-API Zero B-Frames (`-b 0`) en Polaris.
+- **Fix RTX 3060:** Prevención de `win_video_stale` sin downgrade prematuro a `gdigrab` e integración de telemetría Replay en `benchmark.rs`.
+- **DXGI Zero-Copy:** Optimización con `scale_d3d11=format=nv12`, auto-detección y poda por lotes en `win_ram_buffer`.
+
 ## v0.7.6 - 2026-11-21
 - **Discord Compressor:** Desacople de grabaciones continuas (`stop_continuous_recording`) y margen estricto `<10 MB` (`0.88`, `-maxrate 1.05x`, `-bufsize 1.5x`).
 - **Resiliencia DXGI Replay (Windows):** Compuerta de vídeo real MPEG-TS (`PID 0x100` PUSI) en `save_clip()`, detección de stalls con auto-reinicio no bloqueante y fallback automático a `GdiGrab` tras 2 stalls en 60s.
