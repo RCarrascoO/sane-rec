@@ -504,6 +504,29 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
             engine.update_config(cfg);
             cmd.ok(format!("Perfil cambiado a {}", prof));
         }
+        action if action.starts_with("set_quality_tier:") => {
+            let tier = action.trim_start_matches("set_quality_tier:").trim();
+            let parsed_tier = match tier.parse::<sane_rec::config::QualityTier>() {
+                Ok(t) => t,
+                Err(_) => {
+                    cmd.error("Nivel de calidad inválido");
+                    return should_exit;
+                }
+            };
+            let mut cfg = engine.config();
+            cfg.profile.quality_tier = parsed_tier;
+            let was_running = engine.is_running();
+            if let Err(e) = cfg.save() {
+                cmd.error(format!("Error guardando nivel de calidad: {}", e));
+                return should_exit;
+            }
+            engine.update_config(cfg);
+            if was_running {
+                let _ = engine.stop_replay();
+                let _ = engine.start_replay();
+            }
+            cmd.ok(format!("Nivel de calidad cambiado a {}", tier));
+        }
         action if action.starts_with("set_output_dir:") => {
             let dir_str = action.trim_start_matches("set_output_dir:").trim();
             if dir_str.is_empty() {
@@ -670,6 +693,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     // Inicializar propiedades de la ventana desde la configuración en memoria (<1ms)
     ui.set_active_profile(config.profile.active_profile.clone().into());
+    ui.set_quality_tier(config.profile.quality_tier.to_string().into());
     ui.set_custom_section_expanded(config.profile.active_profile == "custom");
 
     // Inicializar temas de la comunidad (~/.config/sane-rec/themes/) y aplicar tema activo
@@ -1010,6 +1034,50 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = cfg.save();
             }
             notify_daemon_reload_async(&daemon_flag);
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let engine_clone = local_engine.clone();
+        let daemon_flag = daemon_running_flag.clone();
+        ui.on_set_quality_tier(move |tier_str| {
+            let tier = tier_str.trim().to_ascii_lowercase();
+            if !matches!(tier.as_str(), "low" | "medium" | "high") {
+                if let Some(ui) = ui_weak.upgrade() {
+                    show_toast(&ui, "warning", "Nivel de calidad inválido");
+                }
+                return;
+            }
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_quality_tier(tier.clone().into());
+            }
+
+            let parsed_tier = tier.parse::<sane_rec::config::QualityTier>().unwrap_or_default();
+            let engine = engine_clone.clone();
+            let daemon_flag = daemon_flag.clone();
+            std::thread::spawn(move || {
+                if let Some(eng) = engine {
+                    let was_running = eng.is_running();
+                    let mut cfg = eng.config();
+                    cfg.profile.quality_tier = parsed_tier;
+                    if let Err(e) = cfg.save() {
+                        eprintln!("Error guardando nivel de calidad: {}", e);
+                        return;
+                    }
+                    eng.update_config(cfg);
+                    if !daemon_flag.load(std::sync::atomic::Ordering::SeqCst) && was_running {
+                        let _ = eng.stop_replay();
+                        let _ = eng.start_replay();
+                    }
+                } else if let Ok(mut cfg) = Config::load() {
+                    cfg.profile.quality_tier = parsed_tier;
+                    let _ = cfg.save();
+                }
+                if daemon_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = ipc::send_command_sync(&format!("set_quality_tier:{}", tier));
+                }
+            });
         });
     }
 

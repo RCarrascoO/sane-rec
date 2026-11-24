@@ -79,6 +79,7 @@ export component AppWindow inherits Window {
     callback toggle-recording();
     callback select-output-dir();
     callback select-profile(string);
+    callback set-quality-tier(string);
     callback play-clip(string);
     callback open-clip-folder(string);
     callback open-output-folder();
@@ -130,6 +131,7 @@ export component AppWindow inherits Window {
     property <int> tutorial-step: 0;
 
     in-out property <string> active-profile: "sane-safe";
+    in-out property <string> quality-tier: "low";
     in-out property <bool> is-running: false;
     in-out property <bool> is-recording: false;
     in-out property <string> recording-time: "00:00";
@@ -1786,6 +1788,33 @@ export component AppWindow inherits Window {
                                 font-size: 15px;
                                 font-weight: 600;
                                 color: Theme.primary;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                for tier in [
+                                    { name: "Low", value: "low", subtitle: "Máximo rendimiento (v0.7.6)" },
+                                    { name: "Medium", value: "medium", subtitle: "Equilibrio" },
+                                    { name: "High", value: "high", subtitle: "Calidad máxima" }
+                                ]: VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 4px;
+                                    M3PresetChip {
+                                        text: tier.name;
+                                        is-active: root.quality-tier == tier.value;
+                                        clicked => {
+                                            root.quality-tier = tier.value;
+                                            root.set-quality-tier(tier.value);
+                                        }
+                                    }
+                                    Text {
+                                        text: tier.subtitle;
+                                        font-size: Theme.font-label-small;
+                                        color: root.quality-tier == tier.value ? Theme.primary : Theme.on-surface-variant;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
+                                    }
+                                }
                             }
 
                             // 1. Sane Safe (CPU x264)

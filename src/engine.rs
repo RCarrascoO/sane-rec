@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
+use crate::config::{Config, QualityTier};
 use crate::discovery::{new_hidden_command, resolve_binary};
 use crate::profiles::EncoderProfile;
 
@@ -161,6 +161,26 @@ pub(crate) fn chunk_has_video_pusi(data: &[u8]) -> bool {
             && (pkt[1] & 0x40) != 0
             && ((((pkt[1] as u16) & 0x1F) << 8) | pkt[2] as u16) == 0x100
     })
+}
+
+/// Localiza el primer byte de sincronización MPEG-TS (`0x47`) válido, verificando `pos + 188` cuando hay bytes suficientes.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn find_ts_sync(leftover: &[u8]) -> Option<usize> {
+    (0..leftover.len()).find(|&pos| {
+        leftover[pos] == 0x47
+            && (leftover.len() <= pos + 188 || leftover.get(pos + 188) == Some(&0x47))
+    })
+}
+
+/// Calcula el límite dinámico de RAM (MB) para `win_ram_buffer` según duración y `QualityTier`.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn win_ram_buffer_max_mb(duration_secs: u32, max_memory_mb: u32, tier: QualityTier) -> usize {
+    let factor = match tier {
+        QualityTier::Low => 12,
+        QualityTier::Medium => 16,
+        QualityTier::High => 22,
+    };
+    ((duration_secs as usize) * factor).max(max_memory_mb as usize)
 }
 
 impl ReplayEngine {
@@ -1080,9 +1100,13 @@ impl ReplayEngine {
         let session_tracker = Arc::clone(&self.win_replay_session);
         let last_video = Arc::clone(&self.win_last_video_ms);
         let dur_secs = config.replay.duration_secs;
-        // Escalar dinámicamente el límite de RAM según la duración solicitada (12 MB/s para 60 FPS)
-        // para garantizar que repeticiones de 120s o superiores nunca se trunquen prematuramente
-        let max_mb = (config.replay.max_memory_mb as usize).max((dur_secs as usize) * 12);
+        // Escalar dinámicamente el límite de RAM según la duración solicitada y el tier de calidad
+        // (Low=12 MB/s, Medium=16 MB/s, High=22 MB/s) para garantizar que repeticiones largas no se trunquen
+        let max_mb = win_ram_buffer_max_mb(
+            dur_secs,
+            config.replay.max_memory_mb,
+            config.profile.quality_tier,
+        );
         let max_bytes = max_mb * 1024 * 1024;
 
         std::thread::Builder::new()
@@ -1097,8 +1121,8 @@ impl ReplayEngine {
                         Ok(0) => break,
                         Ok(n) => {
                             leftover.extend_from_slice(&raw_buf[..n]);
-                            // Alinear al primer byte de sincronización MPEG-TS (0x47)
-                            if let Some(sync_pos) = leftover.iter().position(|&b| b == 0x47) {
+                            // Alinear al primer byte de sincronización MPEG-TS (0x47) validando +188
+                            if let Some(sync_pos) = find_ts_sync(&leftover) {
                                 if sync_pos > 0 {
                                     leftover.drain(..sync_pos);
                                 }
@@ -3219,6 +3243,26 @@ pub fn build_windows_scale_filter(scale: &str) -> String {
     }
 }
 
+/// Retorna `(preset_or_quality, qp_or_crf)` para los 4 encoders base en Windows según `QualityTier`.
+#[cfg(any(target_os = "windows", test))]
+fn windows_tier_params(profile: &EncoderProfile, tier: QualityTier) -> (&'static str, &'static str) {
+    match (profile, tier) {
+        (EncoderProfile::SaneSafe, QualityTier::Low) => ("ultrafast", "23"),
+        (EncoderProfile::SaneSafe, QualityTier::Medium) => ("superfast", "21"),
+        (EncoderProfile::SaneSafe, QualityTier::High) => ("faster", "18"),
+        (EncoderProfile::AmdHardware, QualityTier::Low) => ("speed", "22"),
+        (EncoderProfile::AmdHardware, QualityTier::Medium) => ("balanced", "20"),
+        (EncoderProfile::AmdHardware, QualityTier::High) => ("quality", "18"),
+        (EncoderProfile::NvidiaHardware, QualityTier::Low) => ("p1", "23"),
+        (EncoderProfile::NvidiaHardware, QualityTier::Medium) => ("p4", "21"),
+        (EncoderProfile::NvidiaHardware, QualityTier::High) => ("p5", "19"),
+        (EncoderProfile::IntelHardware, QualityTier::Low) => ("veryfast", "23"),
+        (EncoderProfile::IntelHardware, QualityTier::Medium) => ("faster", "21"),
+        (EncoderProfile::IntelHardware, QualityTier::High) => ("medium", "18"),
+        (EncoderProfile::Custom(_), _) => ("", ""),
+    }
+}
+
 /// Configura los parámetros de codificación de hardware y CPU en Windows según el perfil activo.
 #[cfg(any(target_os = "windows", test))]
 pub fn apply_windows_profile_args(
@@ -3265,19 +3309,21 @@ pub fn apply_windows_profile_args(
         .unwrap_or(4)
         .to_string();
 
+    let (tier_preset, tier_qp) = windows_tier_params(&profile, config.profile.quality_tier);
+
     match profile {
         EncoderProfile::SaneSafe => {
             cmd.args([
                 "-c:v",
                 "libx264",
                 "-preset",
-                "ultrafast",
+                tier_preset,
                 "-tune",
                 "zerolatency",
                 "-threads",
                 &cpu_threads,
                 "-crf",
-                "23",
+                tier_qp,
                 "-bf",
                 "0",
                 "-pix_fmt",
@@ -3285,25 +3331,19 @@ pub fn apply_windows_profile_args(
             ]);
         }
         EncoderProfile::AmdHardware => {
-            let qp = if config.video.crf > 0 {
-                config.video.crf
-            } else {
-                22
-            }
-            .to_string();
             cmd.args([
                 "-c:v",
                 "h264_amf",
                 "-usage",
                 "lowlatency",
                 "-quality",
-                "speed",
+                tier_preset,
                 "-rc",
                 "cqp",
                 "-qp_i",
-                &qp,
+                tier_qp,
                 "-qp_p",
-                &qp,
+                tier_qp,
                 "-pix_fmt",
                 "nv12",
                 "-header_insertion_mode",
@@ -3315,7 +3355,7 @@ pub fn apply_windows_profile_args(
                 "-c:v",
                 "h264_nvenc",
                 "-preset",
-                "p1",
+                tier_preset,
                 "-tune",
                 "ull",
                 "-zerolatency",
@@ -3323,7 +3363,7 @@ pub fn apply_windows_profile_args(
                 "-rc",
                 "constqp",
                 "-qp",
-                "23",
+                tier_qp,
                 "-bf",
                 "0",
                 "-pix_fmt",
@@ -3335,19 +3375,13 @@ pub fn apply_windows_profile_args(
             ]);
         }
         EncoderProfile::IntelHardware => {
-            let global_quality = if config.video.crf > 0 {
-                config.video.crf
-            } else {
-                23
-            }
-            .to_string();
             cmd.args([
                 "-c:v",
                 "h264_qsv",
                 "-preset",
-                "veryfast",
+                tier_preset,
                 "-global_quality",
-                &global_quality,
+                tier_qp,
                 "-pix_fmt",
                 "nv12",
                 "-bf",
@@ -3587,6 +3621,23 @@ fn apply_target_args(cmd: &mut Command, target: &str) {
     }
 }
 
+/// Retorna `(preset, qp_or_crf)` para los 4 encoders base en Linux según `QualityTier`.
+/// En VA-API (AMD/Intel) el preset es vacío porque solo varía `qp` (Polaris safe).
+fn linux_tier_qp(profile: &EncoderProfile, tier: QualityTier) -> (&'static str, &'static str) {
+    match (profile, tier) {
+        (EncoderProfile::SaneSafe, QualityTier::Low) => ("ultrafast", "23"),
+        (EncoderProfile::SaneSafe, QualityTier::Medium) => ("superfast", "21"),
+        (EncoderProfile::SaneSafe, QualityTier::High) => ("faster", "18"),
+        (EncoderProfile::AmdHardware | EncoderProfile::IntelHardware, QualityTier::Low) => ("", "22"),
+        (EncoderProfile::AmdHardware | EncoderProfile::IntelHardware, QualityTier::Medium) => ("", "20"),
+        (EncoderProfile::AmdHardware | EncoderProfile::IntelHardware, QualityTier::High) => ("", "18"),
+        (EncoderProfile::NvidiaHardware, QualityTier::Low) => ("p3", "23"),
+        (EncoderProfile::NvidiaHardware, QualityTier::Medium) => ("p4", "21"),
+        (EncoderProfile::NvidiaHardware, QualityTier::High) => ("p5", "19"),
+        (EncoderProfile::Custom(_), _) => ("", ""),
+    }
+}
+
 /// Aplica los argumentos de perfil de encoder al comando wf-recorder.
 fn apply_profile_args(cmd: &mut Command, config: &Config) {
     let profile = config
@@ -3595,13 +3646,19 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
         .parse::<EncoderProfile>()
         .unwrap_or(EncoderProfile::SaneSafe);
 
+    let (tier_preset, tier_qp) = linux_tier_qp(&profile, config.profile.quality_tier);
+
     match profile {
         EncoderProfile::SaneSafe => {
+            let preset_arg = format!("preset={}", tier_preset);
+            let crf_arg = format!("crf={}", tier_qp);
             cmd.args([
                 "-c",
                 "libx264",
                 "-p",
-                "preset=ultrafast",
+                &preset_arg,
+                "-p",
+                &crf_arg,
                 "-p",
                 "tune=zerolatency",
                 "-p",
@@ -3616,15 +3673,16 @@ fn apply_profile_args(cmd: &mut Command, config: &Config) {
             ]);
         }
         EncoderProfile::AmdHardware | EncoderProfile::IntelHardware => {
-            let qp_arg = format!("qp={}", config.video.crf);
+            let qp_arg = format!("qp={}", tier_qp);
             if std::path::Path::new("/dev/dri/renderD128").exists() {
                 cmd.args(["-d", "/dev/dri/renderD128"]);
             }
             cmd.args(["-c", "h264_vaapi", "-b", "0", "-p", &qp_arg]);
         }
         EncoderProfile::NvidiaHardware => {
-            let cq_arg = format!("cq={}", config.video.crf);
-            cmd.args(["-c", "h264_nvenc", "-b", "0", "-p", "preset=p3", "-p", &cq_arg]);
+            let preset_arg = format!("preset={}", tier_preset);
+            let cq_arg = format!("cq={}", tier_qp);
+            cmd.args(["-c", "h264_nvenc", "-b", "0", "-p", &preset_arg, "-p", &cq_arg]);
         }
         EncoderProfile::Custom(_) => {
             let codec = if config.video.codec.is_empty() {
@@ -4391,5 +4449,192 @@ mod tests {
             args
         );
         assert!(args.contains(&"tcp://127.0.0.1:12345".to_string()));
+    }
+
+    #[test]
+    fn test_windows_quality_tiers_all_base_encoders_and_custom() {
+        let run_win = |profile: &str, tier: QualityTier| -> Vec<String> {
+            let mut cfg = Config::default();
+            cfg.profile.active_profile = profile.to_string();
+            cfg.profile.quality_tier = tier;
+            let mut cmd = Command::new("ffmpeg");
+            apply_windows_profile_args(&mut cmd, &cfg, false, WindowsCaptureBackend::GdiGrab);
+            win_args(&cmd)
+        };
+
+        // SaneSafe: Low=ultrafast/23, Medium=superfast/21, High=faster/18
+        for (tier, preset, crf) in [
+            (QualityTier::Low, "ultrafast", "23"),
+            (QualityTier::Medium, "superfast", "21"),
+            (QualityTier::High, "faster", "18"),
+        ] {
+            let args = run_win("sane-safe", tier);
+            assert_eq!(win_flag_value(&args, "-c:v"), Some("libx264"));
+            assert_eq!(win_flag_value(&args, "-preset"), Some(preset));
+            assert_eq!(win_flag_value(&args, "-crf"), Some(crf));
+            assert_eq!(win_flag_value(&args, "-tune"), Some("zerolatency"));
+            assert_eq!(win_flag_value(&args, "-bf"), Some("0"));
+        }
+
+        // AmdHardware (AMF): Low=speed/22, Medium=balanced/20, High=quality/18
+        for (tier, quality, qp) in [
+            (QualityTier::Low, "speed", "22"),
+            (QualityTier::Medium, "balanced", "20"),
+            (QualityTier::High, "quality", "18"),
+        ] {
+            let args = run_win("amd-hardware", tier);
+            assert_eq!(win_flag_value(&args, "-c:v"), Some("h264_amf"));
+            assert_eq!(win_flag_value(&args, "-usage"), Some("lowlatency"));
+            assert_eq!(win_flag_value(&args, "-quality"), Some(quality));
+            assert_eq!(win_flag_value(&args, "-qp_i"), Some(qp));
+            assert_eq!(win_flag_value(&args, "-qp_p"), Some(qp));
+            assert_eq!(win_flag_value(&args, "-header_insertion_mode"), Some("gop"));
+            assert!(!args.contains(&"-bf".to_string()));
+        }
+
+        // NvidiaHardware (NVENC): Low=p1/23, Medium=p4/21, High=p5/19
+        for (tier, preset, qp) in [
+            (QualityTier::Low, "p1", "23"),
+            (QualityTier::Medium, "p4", "21"),
+            (QualityTier::High, "p5", "19"),
+        ] {
+            let args = run_win("nvidia-hardware", tier);
+            assert_eq!(win_flag_value(&args, "-c:v"), Some("h264_nvenc"));
+            assert_eq!(win_flag_value(&args, "-preset"), Some(preset));
+            assert_eq!(win_flag_value(&args, "-qp"), Some(qp));
+            assert_eq!(win_flag_value(&args, "-tune"), Some("ull"));
+            assert_eq!(win_flag_value(&args, "-rc"), Some("constqp"));
+            assert_eq!(win_flag_value(&args, "-bf"), Some("0"));
+            assert_eq!(win_flag_value(&args, "-forced-idr"), Some("1"));
+            assert_eq!(win_flag_value(&args, "-aud"), Some("1"));
+        }
+
+        // IntelHardware (QSV): Low=veryfast/23, Medium=faster/21, High=medium/18
+        for (tier, preset, gq) in [
+            (QualityTier::Low, "veryfast", "23"),
+            (QualityTier::Medium, "faster", "21"),
+            (QualityTier::High, "medium", "18"),
+        ] {
+            let args = run_win("intel-hardware", tier);
+            assert_eq!(win_flag_value(&args, "-c:v"), Some("h264_qsv"));
+            assert_eq!(win_flag_value(&args, "-preset"), Some(preset));
+            assert_eq!(win_flag_value(&args, "-global_quality"), Some(gq));
+            assert_eq!(win_flag_value(&args, "-bf"), Some("0"));
+            assert_eq!(win_flag_value(&args, "-async_depth"), Some("1"));
+            assert_eq!(win_flag_value(&args, "-look_ahead"), Some("0"));
+            assert_eq!(win_flag_value(&args, "-forced_idr"), Some("1"));
+        }
+
+        // Custom sigue usando config.video.preset y config.video.crf incluso en High
+        let mut custom_cfg = Config::default();
+        custom_cfg.profile.active_profile = "custom".to_string();
+        custom_cfg.profile.quality_tier = QualityTier::High;
+        custom_cfg.video.codec = "libx264".to_string();
+        custom_cfg.video.preset = "veryfast".to_string();
+        custom_cfg.video.crf = 26;
+        let mut custom_cmd = Command::new("ffmpeg");
+        apply_windows_profile_args(&mut custom_cmd, &custom_cfg, false, WindowsCaptureBackend::GdiGrab);
+        let custom_args = win_args(&custom_cmd);
+        assert_eq!(win_flag_value(&custom_args, "-preset"), Some("veryfast"));
+        assert_eq!(win_flag_value(&custom_args, "-crf"), Some("26"));
+    }
+
+    #[test]
+    fn test_linux_quality_tiers_all_base_encoders_and_custom() {
+        let run_linux = |profile: &str, tier: QualityTier| -> Vec<String> {
+            let mut cfg = Config::default();
+            cfg.profile.active_profile = profile.to_string();
+            cfg.profile.quality_tier = tier;
+            let mut cmd = Command::new("wf-recorder");
+            apply_profile_args(&mut cmd, &cfg);
+            win_args(&cmd)
+        };
+
+        // SaneSafe: Low=ultrafast/23, Medium=superfast/21, High=faster/18
+        for (tier, preset, crf) in [
+            (QualityTier::Low, "preset=ultrafast", "crf=23"),
+            (QualityTier::Medium, "preset=superfast", "crf=21"),
+            (QualityTier::High, "preset=faster", "crf=18"),
+        ] {
+            let args = run_linux("sane-safe", tier);
+            assert_eq!(win_flag_value(&args, "-c"), Some("libx264"));
+            assert_eq!(win_flag_value(&args, "-b"), Some("0"));
+            assert!(args.contains(&preset.to_string()));
+            assert!(args.contains(&crf.to_string()));
+            assert!(args.contains(&"tune=zerolatency".to_string()));
+        }
+
+        // AmdHardware & IntelHardware (VA-API): solo varía qp (22/20/18), mantiene -b 0, sin preset
+        for profile in ["amd-hardware", "intel-hardware"] {
+            for (tier, qp) in [
+                (QualityTier::Low, "qp=22"),
+                (QualityTier::Medium, "qp=20"),
+                (QualityTier::High, "qp=18"),
+            ] {
+                let args = run_linux(profile, tier);
+                assert_eq!(win_flag_value(&args, "-c"), Some("h264_vaapi"));
+                assert_eq!(win_flag_value(&args, "-b"), Some("0"));
+                assert!(args.contains(&qp.to_string()));
+                assert!(
+                    !args.iter().any(|a| a.starts_with("preset=")),
+                    "VA-API no debe incluir preset en {}",
+                    profile
+                );
+            }
+        }
+
+        // NvidiaHardware (Linux NVENC): Low=p3/23, Medium=p4/21, High=p5/19
+        for (tier, preset, cq) in [
+            (QualityTier::Low, "preset=p3", "cq=23"),
+            (QualityTier::Medium, "preset=p4", "cq=21"),
+            (QualityTier::High, "preset=p5", "cq=19"),
+        ] {
+            let args = run_linux("nvidia-hardware", tier);
+            assert_eq!(win_flag_value(&args, "-c"), Some("h264_nvenc"));
+            assert_eq!(win_flag_value(&args, "-b"), Some("0"));
+            assert!(args.contains(&preset.to_string()));
+            assert!(args.contains(&cq.to_string()));
+        }
+
+        // Custom sigue usando config.video.preset y crf
+        let mut custom_cfg = Config::default();
+        custom_cfg.profile.active_profile = "custom".to_string();
+        custom_cfg.profile.quality_tier = QualityTier::High;
+        custom_cfg.video.codec = "libx264".to_string();
+        custom_cfg.video.preset = "veryfast".to_string();
+        custom_cfg.video.crf = 25;
+        let mut custom_cmd = Command::new("wf-recorder");
+        apply_profile_args(&mut custom_cmd, &custom_cfg);
+        let custom_args = win_args(&custom_cmd);
+        assert!(custom_args.contains(&"preset=veryfast".to_string()));
+        assert!(custom_args.contains(&"crf=25".to_string()));
+    }
+
+    #[test]
+    fn test_win_ram_buffer_max_mb_scaling_and_ts_sync_validation() {
+        assert_eq!(win_ram_buffer_max_mb(60, 500, QualityTier::Low), 720);
+        assert_eq!(win_ram_buffer_max_mb(60, 500, QualityTier::Medium), 960);
+        assert_eq!(win_ram_buffer_max_mb(60, 500, QualityTier::High), 1320);
+        assert_eq!(win_ram_buffer_max_mb(10, 500, QualityTier::Low), 500);
+
+        // Resincronización MPEG-TS segura: ignora 0x47 falso en basura/payload cuando pos+188 != 0x47
+        let mut buf = vec![0x00, 0x47, 0x99, 0x11]; // 0x47 falso en pos=1
+        let mut pkt1 = vec![0xAAu8; 188];
+        pkt1[0] = 0x47;
+        pkt1[7] = 0x47; // 0x47 falso dentro del payload
+        let mut pkt2 = vec![0xBBu8; 188];
+        pkt2[0] = 0x47;
+        buf.extend_from_slice(&pkt1);
+        buf.extend_from_slice(&pkt2);
+
+        assert_eq!(find_ts_sync(&buf), Some(4));
+
+        // Si no hay suficientes bytes para pos+188, acepta el primer 0x47 candidato
+        assert_eq!(find_ts_sync(&[0x00, 0x47, 0x12]), Some(1));
+
+        // Si hay >= 189 bytes pero pos+188 != 0x47 y no hay otro 0x47, retorna None
+        let mut invalid = vec![0u8; 200];
+        invalid[0] = 0x47;
+        assert_eq!(find_ts_sync(&invalid), None);
     }
 }

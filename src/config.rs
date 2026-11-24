@@ -10,6 +10,28 @@ pub enum QualityTier {
     High,
 }
 
+impl std::fmt::Display for QualityTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            QualityTier::Low => "low",
+            QualityTier::Medium => "medium",
+            QualityTier::High => "high",
+        })
+    }
+}
+
+impl std::str::FromStr for QualityTier {
+    type Err = ();
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "low" => Ok(QualityTier::Low),
+            "medium" => Ok(QualityTier::Medium),
+            "high" => Ok(QualityTier::High),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
