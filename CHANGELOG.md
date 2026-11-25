@@ -1,5 +1,9 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.8.2 - 2026-11-24
+- **Fix Switch Replay (`M3Switch`):** Enlace bidireccional (`checked <=> ...`), eliminación del parpadeo de estado y apagado instantáneo desde la GUI (manteniendo anti-chatter de 1200 ms en hotkeys).
+- **Resiliencia Windows & Telemetría:** Watchdog DXGI activo con ventana minimizada, cooldown de 6 s en `win_video_stale()` (evita caída a `gdigrab` 40 FPS en RTX 3060), aplicación de volumen en `reload_config` y `Nivel de Perfil` visible en `.benchmark.txt`.
+
 ## v0.8.1 - 2026-11-23
 - **Fix crítico Windows (`NVIDIA`/`AMD`):** Restaurado pipeline `hwdownload,format=bgra` de `v0.7.6` en `DdaGrab` y `pop_front` seguro en `win_ram_buffer`.
 - **Fix sincronización Replay/UI (`status_epoch`):** Eliminado falso positivo/desync de `Daemon replay`, rollback en fallo de toggle, debounce post-operación de 1200 ms, persistencia del listener IPC de la GUI tras `stop` y límite IPC a 64 KB.

@@ -1234,7 +1234,7 @@ impl ReplayEngine {
             let now = Instant::now();
             let mut restarts = self.win_stale_restarts.lock().unwrap();
             restarts.retain(|t| now.duration_since(*t) <= Duration::from_secs(60));
-            restarts.push(now);
+            if restarts.last().map_or(true, |t| now.duration_since(*t) >= Duration::from_secs(6)) { restarts.push(now); }
             if restarts.len() >= 2 {
                 self.win_force_gdi_once.store(true, Ordering::SeqCst);
             }

@@ -478,6 +478,8 @@ async fn dispatch_ipc_command(engine: &Arc<ReplayEngine>, cmd: ipc::IpcCommand) 
                         &cfg.shortcuts.toggle_record,
                     );
 
+                    engine.set_volume_system(cfg.audio.volume_system);
+                    engine.set_volume_mic(cfg.audio.volume_mic);
                     engine.update_config(cfg);
 
                     if was_running && capture_params_changed {
@@ -984,8 +986,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             std::thread::spawn(move || {
                 let result = if is_daemon {
                     ipc::send_command_sync(if target_state { "start_replay" } else { "stop_replay" })
-                        .map(|resp| resp.is_ok() && resp.message.map_or(false, |m| m.contains("iniciado")))
                         .map_err(|e| e.to_string())
+                        .and_then(|resp| if resp.is_ok() {
+                            Ok(resp.message.map_or(false, |m| m.contains("iniciado")))
+                        } else {
+                            Err(resp.message.unwrap_or_else(|| "Error en búfer".to_string()))
+                        })
                 } else if let Some(ref eng) = engine_for_task {
                     if eng.is_running() {
                         eng.stop_replay().map(|_| false).map_err(|e| e.to_string())
@@ -2610,12 +2616,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 let Some(ui) = ui_weak.upgrade() else {
                     return;
                 };
-                if !ui.window().is_visible() {
-                    return;
-                }
+                let window_visible = ui.window().is_visible();
 
                 // Solo actualiza niveles visuales VU si la pestaña de Audio (vista 2) está visible
-                if ui.get_active_view() == 2 {
+                if window_visible && ui.get_active_view() == 2 {
                     let sys_peak = audio_mon_clone.system_peak();
                     let mic_peak = audio_mon_clone.mic_peak();
                     if (sys_peak - last_sys_peak).abs() > 0.008 {
@@ -2634,7 +2638,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     let epoch = status_epoch.load(std::sync::atomic::Ordering::SeqCst);
                     let status_opt = status_snapshot.lock().ok().and_then(|status| status.clone());
 
-                    if !replay_toggling.load(std::sync::atomic::Ordering::SeqCst)
+                    if window_visible
+                        && !replay_toggling.load(std::sync::atomic::Ordering::SeqCst)
                         && epoch == status_epoch.load(std::sync::atomic::Ordering::SeqCst)
                     {
                         if let Some(status) = status_opt {
@@ -2688,6 +2693,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                if !window_visible { return; }
             },
         );
         timer

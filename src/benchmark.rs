@@ -612,6 +612,7 @@ pub fn generate_benchmark_report(ctx: &BenchmarkContext) -> Result<PathBuf, Stri
         "Perfil de Encoder    : {}\n",
         ctx.config.profile.active_profile
     ));
+    report.push_str(&format!("Nivel de Perfil      : {}\n", ctx.config.profile.quality_tier));
     report.push_str(&format!(
         "Códec Solicitado     : {}\n",
         if ctx.config.video.codec.is_empty() {
