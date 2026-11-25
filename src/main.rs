@@ -964,7 +964,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let daemon_flag = daemon_running_flag.clone();
         let status_snapshot_for_toggle = status_snapshot.clone();
         let status_epoch_for_toggle = status_epoch.clone();
+        let replay_toggling = Arc::new(std::sync::atomic::AtomicBool::new(false));
         ui.on_toggle_replay(move || {
+            if replay_toggling.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
             let is_daemon = daemon_flag.load(std::sync::atomic::Ordering::SeqCst);
             let ui_weak = ui_weak.clone();
             let engine_for_task = engine_clone.clone();
@@ -974,6 +978,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             }
             let status_epoch = status_epoch_for_toggle.clone();
             let status_snapshot = status_snapshot_for_toggle.clone();
+            let replay_toggling = replay_toggling.clone();
             std::thread::spawn(move || {
                 let result = if is_daemon {
                     ipc::send_command_sync("toggle_replay")
@@ -1012,6 +1017,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 });
+                replay_toggling.store(false, std::sync::atomic::Ordering::SeqCst);
             });
         });
     }

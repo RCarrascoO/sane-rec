@@ -493,9 +493,8 @@ export component AppWindow inherits Window {
 
                                         M3Switch {
                                             y: Math.floor((parent.height - self.height) / 2px) * 1px;
-                                            checked: root.is-running;
+                                            checked <=> root.is-running;
                                             toggled(state) => {
-                                                root.is-running = state;
                                                 root.toggle-replay();
                                             }
                                         }
@@ -1548,9 +1547,8 @@ export component AppWindow inherits Window {
                                             }
                                             M3Switch {
                                                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
-                                                checked: root.audio-system;
+                                                checked <=> root.audio-system;
                                                 toggled(state) => {
-                                                    root.audio-system = state;
                                                     root.toggle-audio-system(state);
                                                 }
                                             }
@@ -1607,9 +1605,8 @@ export component AppWindow inherits Window {
                                             }
                                             M3Switch {
                                                 y: Math.floor((parent.height - self.height) / 2px) * 1px;
-                                                checked: root.audio-mic;
+                                                checked <=> root.audio-mic;
                                                 toggled(state) => {
-                                                    root.audio-mic = state;
                                                     root.toggle-audio-mic(state);
                                                 }
                                             }
@@ -2766,9 +2763,8 @@ export component AppWindow inherits Window {
 
                                         M3Switch {
                                             y: Math.floor((parent.height - self.height) / 2px) * 1px;
-                                            checked: root.dual-clip;
+                                            checked <=> root.dual-clip;
                                             toggled(state) => {
-                                                root.dual-clip = state;
                                                 root.toggle-dual-clip(state);
                                             }
                                         }
@@ -2843,9 +2839,8 @@ export component AppWindow inherits Window {
 
                                         M3Switch {
                                             y: Math.floor((parent.height - self.height) / 2px) * 1px;
-                                            checked: root.benchmark-mode;
+                                            checked <=> root.benchmark-mode;
                                             toggled(state) => {
-                                                root.benchmark-mode = state;
                                                 root.toggle-benchmark-mode(state);
                                             }
                                         }
