@@ -956,6 +956,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     let status_snapshot = Arc::new(std::sync::Mutex::new(None::<EngineStatus>));
     let status_epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let replay_toggling = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // Callback toggle-replay
     {
@@ -964,11 +965,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let daemon_flag = daemon_running_flag.clone();
         let status_snapshot_for_toggle = status_snapshot.clone();
         let status_epoch_for_toggle = status_epoch.clone();
-        let replay_toggling = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let replay_toggling_for_toggle = replay_toggling.clone();
         ui.on_toggle_replay(move || {
-            if replay_toggling.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            if replay_toggling_for_toggle.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 return;
             }
+            let target_state = ui_weak.upgrade().map(|u| u.get_is_running()).unwrap_or(false);
             let is_daemon = daemon_flag.load(std::sync::atomic::Ordering::SeqCst);
             let ui_weak = ui_weak.clone();
             let engine_for_task = engine_clone.clone();
@@ -978,14 +980,18 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             }
             let status_epoch = status_epoch_for_toggle.clone();
             let status_snapshot = status_snapshot_for_toggle.clone();
-            let replay_toggling = replay_toggling.clone();
+            let replay_toggling = replay_toggling_for_toggle.clone();
             std::thread::spawn(move || {
                 let result = if is_daemon {
-                    ipc::send_command_sync("toggle_replay")
+                    ipc::send_command_sync(if target_state { "start_replay" } else { "stop_replay" })
                         .map(|resp| resp.is_ok() && resp.message.map_or(false, |m| m.contains("iniciado")))
                         .map_err(|e| e.to_string())
                 } else if let Some(ref eng) = engine_for_task {
-                    eng.toggle_replay().map_err(|e| e.to_string())
+                    if eng.is_running() {
+                        eng.stop_replay().map(|_| false).map_err(|e| e.to_string())
+                    } else {
+                        eng.start_replay().map(|_| true).map_err(|e| e.to_string())
+                    }
                 } else {
                     Err("No engine available".to_string())
                 };
@@ -1016,8 +1022,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
+                    replay_toggling.store(false, std::sync::atomic::Ordering::SeqCst);
                 });
-                replay_toggling.store(false, std::sync::atomic::Ordering::SeqCst);
             });
         });
     }
@@ -2553,6 +2559,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     // y el valor cambió > 0.008, evitando que MSI Afterburner / RivaTuner (RTSS) enganche a sane-rec como juego 3D activo.
     {
         let snapshot = status_snapshot.clone();
+        let replay_toggling = replay_toggling.clone();
         let epoch_counter = status_epoch.clone();
         let engine = local_engine.clone();
         let daemon_flag = daemon_running_flag.clone();
@@ -2567,11 +2574,13 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 engine.as_ref().map(|eng| eng.get_status())
             };
-            if let Ok(mut current) = snapshot.lock() {
-                if is_daemon && status.is_none() {
-                    *current = None;
-                } else if epoch == epoch_counter.load(std::sync::atomic::Ordering::SeqCst) {
-                    *current = status;
+            if !replay_toggling.load(std::sync::atomic::Ordering::SeqCst) {
+                if let Ok(mut current) = snapshot.lock() {
+                    if is_daemon && status.is_none() {
+                        *current = None;
+                    } else if epoch == epoch_counter.load(std::sync::atomic::Ordering::SeqCst) {
+                        *current = status;
+                    }
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -2586,6 +2595,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(target_os = "windows")]
         let daemon_flag = daemon_running_flag.clone();
         let status_snapshot = status_snapshot.clone();
+        let replay_toggling = replay_toggling.clone();
         let timer = slint::Timer::default();
         let mut ticks: u32 = 0;
         let mut last_sys_peak: f32 = -1.0;
@@ -2624,7 +2634,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     let epoch = status_epoch.load(std::sync::atomic::Ordering::SeqCst);
                     let status_opt = status_snapshot.lock().ok().and_then(|status| status.clone());
 
-                    if epoch == status_epoch.load(std::sync::atomic::Ordering::SeqCst) {
+                    if !replay_toggling.load(std::sync::atomic::Ordering::SeqCst)
+                        && epoch == status_epoch.load(std::sync::atomic::Ordering::SeqCst)
+                    {
                         if let Some(status) = status_opt {
                         ui.set_is_running(status.is_running);
                         ui.set_is_recording(status.is_recording);
