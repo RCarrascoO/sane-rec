@@ -1214,7 +1214,7 @@ impl ReplayEngine {
     }
 
     /// Indica si el búfer de vídeo de Windows lleva demasiado sin recibir vídeo (stall).
-    /// Tras 2 stalls en 60s fuerza GdiGrab en el siguiente inicio del replay.
+    /// Tras 3 stalls en 60s fuerza GdiGrab en el siguiente inicio del replay.
     pub fn win_video_stale(&self) -> bool {
         #[cfg(not(target_os = "windows"))]
         {
@@ -1228,14 +1228,14 @@ impl ReplayEngine {
             let now_ms = mono_ms();
             let start_ms = self.win_replay_start_ms.load(Ordering::SeqCst);
             let last_ms = self.win_last_video_ms.load(Ordering::SeqCst);
-            if now_ms.saturating_sub(start_ms) <= 6000 || now_ms.saturating_sub(last_ms) <= 4000 {
+            if now_ms.saturating_sub(start_ms) <= 6000 || now_ms.saturating_sub(last_ms) <= 10000 {
                 return false;
             }
             let now = Instant::now();
             let mut restarts = self.win_stale_restarts.lock().unwrap();
             restarts.retain(|t| now.duration_since(*t) <= Duration::from_secs(60));
             if restarts.last().map_or(true, |t| now.duration_since(*t) >= Duration::from_secs(6)) { restarts.push(now); }
-            if restarts.len() >= 2 {
+            if restarts.len() >= 3 {
                 self.win_force_gdi_once.store(true, Ordering::SeqCst);
             }
             true
