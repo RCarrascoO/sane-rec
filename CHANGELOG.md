@@ -1,5 +1,9 @@
 # Historial de Cambios (Changelog) — sane-rec
 
+## v0.8.3 - 2026-11-27
+- Windows DXGI watchdog: raised video stall threshold from 4s to 10s and required 3 stalls in 60s (instead of 2) before falling back to `gdigrab`, preventing premature 40 FPS lock on Alt-Tab/loading screens.
+- UI idle GPU temperature: throttled Slint UI timer from 50ms (20 Hz) to 250ms (4 Hz) to avoid waking the GPU unnecessarily.
+
 ## v0.8.2 - 2026-11-24
 - **Fix Switch Replay (`M3Switch`):** Enlace bidireccional (`checked <=> ...`), eliminación del parpadeo de estado y apagado instantáneo desde la GUI (manteniendo anti-chatter de 1200 ms en hotkeys).
 - **Resiliencia Windows & Telemetría:** Watchdog DXGI activo con ventana minimizada, cooldown de 6 s en `win_video_stale()` (evita caída a `gdigrab` 40 FPS en RTX 3060), aplicación de volumen en `reload_config` y `Nivel de Perfil` visible en `.benchmark.txt`.
