@@ -2611,7 +2611,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let status_epoch = status_epoch.clone();
         timer.start(
             slint::TimerMode::Repeated,
-            std::time::Duration::from_millis(50),
+            std::time::Duration::from_millis(250),
             move || {
                 let Some(ui) = ui_weak.upgrade() else {
                     return;
@@ -2634,7 +2634,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
                 ticks += 1;
                 // Cada 500ms consulta el estado del motor y actualiza contadores
-                if ticks % 10 == 0 {
+                if ticks % 2 == 0 {
                     let epoch = status_epoch.load(std::sync::atomic::Ordering::SeqCst);
                     let status_opt = status_snapshot.lock().ok().and_then(|status| status.clone());
 
